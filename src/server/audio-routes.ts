@@ -1,10 +1,11 @@
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { chunkText } from "./chunk";
+import { chunkTextWithSentenceLead } from "./chunk";
 import { DATA_DIR, db, type ChapterRow } from "./db";
 import { getProvider } from "./tts";
 import { acquireWarmSession, releaseWarmSession } from "./tts/warm";
+import { charsPerSecond } from "./progress";
 
 const PREVIEW_DIR = path.join(DATA_DIR, "previews");
 const PREVIEW_TEXT =
@@ -29,18 +30,12 @@ function spawnMp3Encoder(sampleRate: number) {
 /**
  * Streaming wants different chunking from batch conversion.
  *
- * Kokoro renders at roughly realtime on a laptop CPU, so the buffer never gets
- * far ahead of playback. Smaller chunks than the batch default (420) deliver
- * audio more often, which keeps the buffer growing smoothly instead of in big
- * steps, and a short opening chunk gets sound playing sooner.
+ * Use the normal TTS chunker so every ordinary boundary is a paragraph or a
+ * complete sentence. A sentence longer than Kokoro's safe input limit is the
+ * sole exception and is split on words by chunkText.
  */
-const STREAM_CHUNK_CHARS = 220;
-const STREAM_LEAD_CHARS = 120;
-
 function streamChunks(text: string): string[] {
-  const chunks = chunkText(text, STREAM_CHUNK_CHARS);
-  const [first, ...rest] = chunks;
-  return first ? [...chunkText(first, STREAM_LEAD_CHARS), ...rest] : chunks;
+  return chunkTextWithSentenceLead(text);
 }
 
 const inFlightPreviews = new Map<string, Promise<string>>();
@@ -144,7 +139,20 @@ export async function streamChapter(req: Request, chapterId: string): Promise<Re
   if (!info.available) return Response.json({ error: info.reason ?? "Engine unavailable" }, { status: 409 });
 
   const voice = url.searchParams.get("voice") || info.defaultVoice;
-  const chunks = streamChunks(chapter.text);
+  const allChunks = streamChunks(chapter.text);
+  const estimatedDuration = chapter.char_count / charsPerSecond(db, chapter.book_id);
+  const requestedStart = Math.min(
+    Math.max(0, Number(url.searchParams.get("start")) || 0),
+    Math.max(0, estimatedDuration - 1),
+  );
+  const targetChars = estimatedDuration > 0 ? requestedStart / estimatedDuration * chapter.text.length : 0;
+  let consumedChars = 0;
+  let startIndex = 0;
+  while (startIndex + 1 < allChunks.length && consumedChars + allChunks[startIndex]!.length <= targetChars) {
+    consumedChars += allChunks[startIndex]!.length;
+    startIndex++;
+  }
+  const chunks = allChunks.slice(startIndex);
   if (chunks.length === 0) return Response.json({ error: "Chapter is empty" }, { status: 422 });
 
   if (activeStreams >= MAX_CONCURRENT_STREAMS) {
@@ -195,6 +203,7 @@ export async function streamChapter(req: Request, chapterId: string): Promise<Re
       "Content-Type": "audio/mpeg",
       "Cache-Control": "no-store",
       "X-Chunk-Count": String(chunks.length),
+      "X-Stream-Start": String(requestedStart),
     },
   });
 }

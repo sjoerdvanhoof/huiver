@@ -61,3 +61,14 @@ export function chunkText(text: string, max = DEFAULT_MAX_CHARS): string[] {
 
   return chunks;
 }
+
+/** Give live playback a fast first byte without cutting the opening sentence. */
+export function chunkTextWithSentenceLead(text: string, max = DEFAULT_MAX_CHARS): string[] {
+  const chunks = chunkText(text, max);
+  const first = chunks[0];
+  if (!first) return chunks;
+
+  const sentences = splitSentences(first);
+  if (sentences.length < 2) return chunks;
+  return [sentences[0]!, sentences.slice(1).join(" "), ...chunks.slice(1)].filter(Boolean);
+}

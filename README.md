@@ -65,8 +65,12 @@ Kokoro renders around 5x faster than realtime on Apple silicon, so playback stay
 comfortably ahead. If your machine is short on RAM the model will swap and throughput
 can drop below realtime, which makes long chapters stutter — convert them instead.
 
-Each worker holds about 1 GB of weights. One is kept warm for 5 minutes between
-previews and streams, then retired; it also exits on its own if it is ever orphaned.
+An idle worker holds roughly 1 GB for the loaded model. During sustained MPS
+synthesis, expect roughly 2–4 GB; audio is streamed to disk and completed Metal
+allocations are released so usage does not grow with chapter length. One worker is
+kept warm for 5 minutes between previews and streams, then retired; it also exits on
+its own if it is ever orphaned. For the lowest memory use, select the CPU with
+`HUIVER_DEVICE=cpu` at the cost of slower synthesis.
 
 ## GPU
 
@@ -89,6 +93,18 @@ count). On startup the server logs which device it got:
 
 Force it with `HUIVER_DEVICE=cpu|mps|cuda` in `.env`. Anything unavailable falls back
 to CPU rather than failing.
+
+By default, huiver synchronizes and clears the MPS cache after each generated segment
+to keep memory bounded. Set `HUIVER_MPS_CACHE_CLEAR=0` to allow more aggressive Metal
+caching when maximum throughput matters more than memory use. Accepted values are `0`
+and `1`; the default is `1`.
+
+PyTorch's MPS/LSTM path can also retain native Metal objects that are outside that
+cache. Huiver therefore replaces the MPS worker after every 6 text chunks. Conversion
+batches append to one continuous WAV, and live playback consumes the audio already
+buffered while the replacement model loads. Tune the interval with
+`HUIVER_MPS_RECYCLE_CHUNKS`; a higher value reduces reload overhead but allows a larger
+temporary memory footprint.
 
 ## What leaves your machine
 

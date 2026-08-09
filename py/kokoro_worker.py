@@ -143,6 +143,31 @@ def select_device():
 
 
 _device = select_device()
+_clear_mps_cache = os.environ.get("HUIVER_MPS_CACHE_CLEAR", "1") != "0"
+
+
+def log_mps_memory(label):
+    """Log allocator state without making diagnostics part of the protocol."""
+    if _device != "mps":
+        return
+    try:
+        allocated = torch.mps.current_allocated_memory() / (1024**2)
+        driver = torch.mps.driver_allocated_memory() / (1024**2)
+        print(
+            f"[kokoro] MPS memory {label}: allocated={allocated:.0f} MiB "
+            f"driver={driver:.0f} MiB",
+            file=sys.stderr,
+            flush=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - diagnostics must never break speech
+        print(f"[kokoro] MPS memory unavailable: {exc}", file=sys.stderr, flush=True)
+
+
+def release_inference_memory():
+    """Return completed Metal allocations instead of growing to MPS's ceiling."""
+    if _device == "mps" and _clear_mps_cache:
+        torch.mps.synchronize()
+        torch.mps.empty_cache()
 
 
 def get_pipeline(lang_code):
@@ -181,38 +206,62 @@ def handle_track(req):
     voice = req.get("voice") or "af_heart"
     speed = float(req.get("speed") or 1.0)
     out = req["out"]
+    append = bool(req.get("append"))
 
     pipeline = get_pipeline(lang_for_voice(voice))
     gap = np.zeros(int(SAMPLE_RATE * GAP_SECONDS), dtype=np.float32)
-    parts = []
     total = len(chunks)
+    frames = 0
 
-    for index, text in enumerate(chunks):
-        if is_cancelled(rid):
-            emit({"type": "cancelled", "id": rid})
-            return
-
-        text = (text or "").strip()
-        if text:
-            for _, _, audio in pipeline(
-                text, voice=voice, speed=speed, split_pattern=None
-            ):
-                if audio is not None:
-                    parts.append(to_numpy(audio))
-            parts.append(gap)
-        emit({"type": "chunk", "id": rid, "index": index + 1, "total": total})
-
-    full = np.concatenate(parts) if parts else np.zeros(1, dtype=np.float32)
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    sf.write(out, full, SAMPLE_RATE)
+    mode = "r+" if append and os.path.exists(out) else "w"
+    wav_file = (
+        sf.SoundFile(out, mode="r+")
+        if mode == "r+"
+        else sf.SoundFile(out, mode="w", samplerate=SAMPLE_RATE, channels=1)
+    )
+    with wav_file as wav:
+        if mode == "r+":
+            wav.seek(0, sf.SEEK_END)
+        for index, text in enumerate(chunks):
+            if is_cancelled(rid):
+                emit({"type": "cancelled", "id": rid})
+                return
+
+            text = (text or "").strip()
+            if text:
+                for _, _, audio in pipeline(
+                    text, voice=voice, speed=speed, split_pattern=None
+                ):
+                    if audio is None:
+                        continue
+                    samples = None
+                    try:
+                        samples = to_numpy(audio)
+                        wav.write(samples)
+                        frames += len(samples)
+                    finally:
+                        del samples
+                        del audio
+                        release_inference_memory()
+                wav.write(gap)
+                frames += len(gap)
+            emit({"type": "chunk", "id": rid, "index": index + 1, "total": total})
+
+        # Preserve the previous behavior: even an empty track is a valid WAV.
+        if frames == 0 and not append:
+            wav.write(np.zeros(1, dtype=np.float32))
+            frames = 1
+
     emit(
         {
             "type": "track",
             "id": rid,
-            "duration": len(full) / SAMPLE_RATE,
+            "duration": frames / SAMPLE_RATE,
             "path": out,
         }
     )
+    log_mps_memory("after track")
 
 
 def handle_stream(req):
@@ -236,16 +285,29 @@ def handle_stream(req):
         if not text:
             continue
 
-        parts = []
-        for _, _, audio in pipeline(text, voice=voice, speed=speed, split_pattern=None):
-            if audio is not None:
-                parts.append(to_numpy(audio))
-        if not parts:
-            continue
-
-        parts.append(gap)
         path = os.path.join(out_dir, f"{rid}-{index:05d}.wav")
-        sf.write(path, np.concatenate(parts), SAMPLE_RATE)
+        frames = 0
+        with sf.SoundFile(path, mode="w", samplerate=SAMPLE_RATE, channels=1) as wav:
+            for _, _, audio in pipeline(
+                text, voice=voice, speed=speed, split_pattern=None
+            ):
+                if audio is None:
+                    continue
+                samples = None
+                try:
+                    samples = to_numpy(audio)
+                    wav.write(samples)
+                    frames += len(samples)
+                finally:
+                    del samples
+                    del audio
+                    release_inference_memory()
+            if frames:
+                wav.write(gap)
+
+        if not frames:
+            os.remove(path)
+            continue
         emit({"type": "audio", "id": rid, "index": index, "path": path})
 
     emit({"type": "done", "id": rid})
@@ -276,6 +338,7 @@ def main():
     threading.Thread(target=read_stdin, daemon=True).start()
 
     emit({"type": "ready", "sampleRate": SAMPLE_RATE, "device": _device})
+    log_mps_memory("startup")
 
     while True:
         req = _requests.get()

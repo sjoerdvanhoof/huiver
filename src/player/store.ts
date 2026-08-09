@@ -4,7 +4,7 @@ import { coverArtworkDataUrl } from "../lib/cover";
 
 export type PlayerSource =
   | { kind: "track"; url: string; trackId: string; duration: number | null }
-  | { kind: "live"; url: string; estimatedDuration: number };
+  | { kind: "live"; url: string; estimatedDuration: number; startPosition?: number };
 
 export type QueueItem = {
   bookId: string;
@@ -132,7 +132,9 @@ function audioEl(): HTMLAudioElement {
   });
 
   audio.addEventListener("timeupdate", () => {
-    store.state.position = audio.currentTime;
+    const item = currentItem(store.state);
+    const offset = item?.source.kind === "live" ? (item.source.startPosition ?? 0) : 0;
+    store.state.position = offset + audio.currentTime;
     emit();
     updatePositionState();
     maybeAutosave();
@@ -195,6 +197,14 @@ const itemKey = (item: QueueItem): string => `${item.chapterId}:${item.source.ur
 
 function loadItem(item: QueueItem, startPosition: number | null): void {
   const audio = audioEl();
+  if (item.source.kind === "live") {
+    const url = new URL(item.source.url, location.origin);
+    url.searchParams.delete("start");
+    const start = Math.max(0, Math.min(startPosition ?? 0, Math.max(0, item.source.estimatedDuration - 1)));
+    if (start > MIN_SAVE_SECONDS) url.searchParams.set("start", String(Math.floor(start)));
+    item.source.url = `${url.pathname}${url.search}`;
+    item.source.startPosition = start;
+  }
   const key = itemKey(item);
 
   if (store.loadedKey !== key) {
@@ -306,8 +316,17 @@ export function pause(): void {
 
 export function seekTo(seconds: number): void {
   const item = currentItem(store.state);
-  if (!item || item.source.kind !== "track") return;
+  if (!item) return;
   const audio = audioEl();
+  if (item.source.kind === "live") {
+    const wasPlaying = store.state.status === "playing" || store.state.status === "loading";
+    store.loadedKey = null;
+    loadItem(item, seconds);
+    emit();
+    if (wasPlaying) void audio.play().catch(() => undefined);
+    void persistNow(false);
+    return;
+  }
   const max = Number.isFinite(audio.duration) ? audio.duration - 0.25 : seconds;
   audio.currentTime = Math.max(0, Math.min(seconds, max));
   store.state.position = audio.currentTime;
@@ -317,8 +336,8 @@ export function seekTo(seconds: number): void {
 
 export function seekBy(delta: number): void {
   const item = currentItem(store.state);
-  if (!item || item.source.kind !== "track") return;
-  seekTo(audioEl().currentTime + delta);
+  if (!item) return;
+  seekTo(store.state.position + delta);
 }
 
 export function playIndex(index: number): void {
@@ -496,13 +515,13 @@ function maybeAutosave(): void {
   void persistNow(false);
 }
 
-/** Write the current spot to the server. Live streams aren't resumable — skip them. */
+/** Write the current spot to the server for converted and live chapters. */
 async function persistNow(useBeacon: boolean): Promise<void> {
   const item = currentItem(store.state);
   const audio = store.audio;
-  if (!item || !audio || item.source.kind !== "track" || !store.state.loaded) return;
+  if (!item || !audio || !store.state.loaded) return;
 
-  const position = audio.currentTime;
+  const position = store.state.position;
   if (position < MIN_SAVE_SECONDS) return;
 
   store.lastSaveAt = Date.now();
@@ -522,7 +541,6 @@ async function persistNow(useBeacon: boolean): Promise<void> {
 }
 
 async function persistCompleted(item: QueueItem): Promise<void> {
-  if (item.source.kind !== "track") return;
   store.lastSaveAt = Date.now();
   await fetch(`/api/chapters/${item.chapterId}/position`, {
     method: "POST",
@@ -625,10 +643,12 @@ function installGlobals(): void {
 export function liveStreamUrl(
   chapterId: string,
   settings: Pick<SettingsDTO, "defaultProvider" | "defaultVoice">,
+  startPosition = 0,
 ): string {
   // Rendered at 1.0; the audio element's playbackRate handles the rest.
   const params = new URLSearchParams({ provider: settings.defaultProvider });
   if (settings.defaultVoice) params.set("voice", settings.defaultVoice);
+  if (startPosition > MIN_SAVE_SECONDS) params.set("start", String(Math.floor(startPosition)));
   return `/api/chapters/${chapterId}/stream?${params}`;
 }
 
@@ -644,6 +664,11 @@ export function buildQueueFromBook(book: BookDetailDTO, settings: SettingsDTO): 
     chapterTitle: chapter.title,
     source: chapter.audio
       ? { kind: "track", url: chapter.audio.url, trackId: chapter.audio.trackId, duration: chapter.audio.duration }
-      : { kind: "live", url: liveStreamUrl(chapter.id, settings), estimatedDuration: chapter.estimatedDurationSeconds },
+      : {
+          kind: "live",
+          url: liveStreamUrl(chapter.id, settings, chapter.position?.positionSeconds ?? 0),
+          estimatedDuration: chapter.estimatedDurationSeconds,
+          startPosition: chapter.position?.positionSeconds ?? 0,
+        },
   }));
 }

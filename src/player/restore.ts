@@ -31,8 +31,9 @@ function resumeItem(book: BookDTO, settings: SettingsDTO): QueueItem | null {
         }
       : {
           kind: "live",
-          url: liveStreamUrl(resume.chapterId, settings),
+          url: liveStreamUrl(resume.chapterId, settings, resume.positionSeconds),
           estimatedDuration: resume.durationSeconds ?? 0,
+          startPosition: resume.positionSeconds,
         },
   };
 }
@@ -52,10 +53,7 @@ function extendWithDetail(bookId: string, settings: SettingsDTO): void {
 export function playResume(book: BookDTO, settings: SettingsDTO): boolean {
   const item = resumeItem(book, settings);
   if (!item) return false;
-  const position =
-    item.source.kind === "track" && book.progress.resume!.positionSeconds > 0
-      ? book.progress.resume!.positionSeconds
-      : null;
+  const position = book.progress.resume!.positionSeconds > 0 ? book.progress.resume!.positionSeconds : null;
   playQueue([item], 0, position);
   extendWithDetail(book.id, settings);
   return true;

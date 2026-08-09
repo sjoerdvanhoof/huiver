@@ -69,7 +69,7 @@ export function BookPage({ bookId }: { bookId: string }) {
     const index = queue.findIndex(q => q.chapterId === chapter.id);
     if (index < 0) return;
     const startAt =
-      chapter.audio && chapter.position && !chapter.position.completed && chapter.position.positionSeconds > 3
+      chapter.position && !chapter.position.completed && chapter.position.positionSeconds > 3
         ? chapter.position.positionSeconds
         : null;
     playQueue(queue, index, startAt);

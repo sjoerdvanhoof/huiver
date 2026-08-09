@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chunkText } from "./chunk";
+import { chunkText, chunkTextWithSentenceLead } from "./chunk";
 
 const MAX = 420;
 
@@ -37,4 +37,21 @@ test("empty and whitespace-only input yields no chunks", () => {
 
 test("paragraphs are packed together when they fit", () => {
   expect(chunkText("First para.\n\nSecond para.")).toEqual(["First para. Second para."]);
+});
+
+test("ordinary chunk boundaries never split a sentence", () => {
+  const sentences = Array.from(
+    { length: 20 },
+    (_, index) => `Sentence ${index + 1} has enough words to make the chapter realistically long.`,
+  );
+  const chunks = chunkText(sentences.join(" "));
+
+  expect(chunks.length).toBeGreaterThan(1);
+  for (const chunk of chunks) expect(chunk).toMatch(/[.!?…]["'”’)\]]*$/);
+  expect(chunks.join(" ")).toBe(sentences.join(" "));
+});
+
+test("live chunking uses the first complete sentence as its lead", () => {
+  expect(chunkTextWithSentenceLead("A quick opening. A longer second sentence follows. And a third."))
+    .toEqual(["A quick opening.", "A longer second sentence follows. And a third."]);
 });

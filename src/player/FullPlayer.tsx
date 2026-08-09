@@ -117,14 +117,9 @@ export function FullPlayer() {
         </div>
 
         <div className="space-y-6">
-          {/* Scrubber — or a shimmer for unseekable live streams. */}
+          {/* Live seeks restart synthesis at the nearest short text chunk. */}
           <div>
-            {live ? (
-              <div className="h-1.5 overflow-hidden rounded-full">
-                {playing ? <div className="h-full animate-shimmer" /> : <div className="h-full bg-muted" />}
-              </div>
-            ) : (
-              <Slider
+            <Slider
                 value={[shownPosition]}
                 min={0}
                 max={Math.max(duration ?? 0, shownPosition, 1)}
@@ -136,7 +131,6 @@ export function FullPlayer() {
                 }}
                 aria-label="Seek"
               />
-            )}
             <div className="mt-2 flex justify-between text-xs tabular-nums text-muted-foreground">
               <span>{formatDuration(shownPosition)}</span>
               <span>
@@ -161,7 +155,6 @@ export function FullPlayer() {
             </button>
             <button
               onClick={() => seekBy(-15)}
-              disabled={live}
               aria-label="Back 15 seconds"
               className="relative rounded-full p-3 text-foreground transition-colors hover:bg-accent disabled:opacity-30"
             >
@@ -185,7 +178,6 @@ export function FullPlayer() {
 
             <button
               onClick={() => seekBy(30)}
-              disabled={live}
               aria-label="Forward 30 seconds"
               className="relative rounded-full p-3 text-foreground transition-colors hover:bg-accent disabled:opacity-30"
             >

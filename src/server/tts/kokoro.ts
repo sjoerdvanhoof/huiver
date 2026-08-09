@@ -7,6 +7,7 @@ import type { ProviderInfo, StreamRequest, TTSProvider, TTSSession, TrackRequest
 
 const PYTHON = process.env.HUIVER_PYTHON ?? path.join(process.cwd(), ".venv", "bin", "python");
 const WORKER = path.join(process.cwd(), "py", "kokoro_worker.py");
+const RECYCLE_CHUNKS = Math.max(1, Number(process.env.HUIVER_MPS_RECYCLE_CHUNKS) || 6);
 
 // Kokoro ships a fixed voice set; the prefix encodes accent + gender
 // (a = American, b = British; f = female, m = male).
@@ -62,6 +63,7 @@ class KokoroSession implements TTSSession {
   private ready: Promise<void>;
   private signalReady!: () => void;
   private failReady!: (error: Error) => void;
+  private device = "cpu";
 
   constructor() {
     this.ready = new Promise((resolve, reject) => {
@@ -79,6 +81,10 @@ class KokoroSession implements TTSSession {
     void this.readStdout();
     void this.readStderr();
     void this.proc.exited.then(code => {
+      if (this.closed) {
+        this.signalReady();
+        return;
+      }
       this.failAll(new Error(`Kokoro worker exited (code ${code}). ${this.stderr.trim().slice(-500)}`));
     });
   }
@@ -114,6 +120,7 @@ class KokoroSession implements TTSSession {
 
     switch (message.type) {
       case "ready":
+        this.device = message.device ?? "cpu";
         console.log(`[kokoro] worker ready on ${message.device ?? "cpu"}`);
         this.signalReady();
         return;
@@ -159,7 +166,12 @@ class KokoroSession implements TTSSession {
     this.pending.clear();
   }
 
-  async synthesize(req: TrackRequest): Promise<{ durationSec: number }> {
+  async usesMps() {
+    await this.ready;
+    return this.device === "mps";
+  }
+
+  async synthesize(req: TrackRequest & { append?: boolean }): Promise<{ durationSec: number }> {
     await this.ready;
     if (this.closed) throw new Error("Kokoro session is closed");
 
@@ -189,6 +201,7 @@ class KokoroSession implements TTSSession {
         voice: req.voice,
         speed: req.speed,
         out: req.outWav,
+        append: req.append,
       })}\n`,
     );
     this.proc.stdin.flush();
@@ -273,6 +286,101 @@ class KokoroSession implements TTSSession {
   }
 }
 
+/**
+ * Metal currently leaks native objects during repeated Kokoro/LSTM inference,
+ * outside the memory managed by torch.mps.empty_cache(). Give each MPS process
+ * a small chunk budget, then replace it. Conversion appends each batch to the
+ * same WAV; live playback already has the earlier batches buffered.
+ */
+class RecyclingKokoroSession implements TTSSession {
+  readonly sampleRate = 24000;
+  private session: KokoroSession | null = new KokoroSession();
+  private usedChunks = 0;
+  private closed = false;
+  private tail: Promise<void> = Promise.resolve();
+
+  private exclusive<T>(work: () => Promise<T>): Promise<T> {
+    const result = this.tail.then(work, work);
+    this.tail = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private async rotate() {
+    const session = this.session;
+    this.session = null;
+    await session?.close();
+    this.usedChunks = 0;
+  }
+
+  private currentSession() {
+    if (this.closed) throw new Error("Kokoro session is closed");
+    return (this.session ??= new KokoroSession());
+  }
+
+  private capacity() {
+    return Math.max(1, RECYCLE_CHUNKS - this.usedChunks);
+  }
+
+  async synthesize(req: TrackRequest): Promise<{ durationSec: number }> {
+    return this.exclusive(() => this.synthesizeBatched(req));
+  }
+
+  private async synthesizeBatched(req: TrackRequest): Promise<{ durationSec: number }> {
+    let session = this.currentSession();
+    if (!(await session.usesMps())) return session.synthesize(req);
+    let offset = 0;
+    let durationSec = 0;
+
+    while (offset < req.chunks.length) {
+      if (req.signal?.aborted) break;
+      const batch = req.chunks.slice(offset, offset + this.capacity());
+      const base = offset;
+      session = this.currentSession();
+      const result = await session.synthesize({
+        ...req,
+        chunks: batch,
+        append: offset > 0,
+        onChunk: req.onChunk ? done => req.onChunk!(base + done, req.chunks.length) : undefined,
+      });
+      durationSec += result.durationSec;
+      offset += batch.length;
+      this.usedChunks += batch.length;
+
+      if (this.usedChunks >= RECYCLE_CHUNKS || req.signal?.aborted) await this.rotate();
+    }
+
+    return { durationSec };
+  }
+
+  async stream(req: StreamRequest): Promise<void> {
+    return this.exclusive(() => this.streamBatched(req));
+  }
+
+  private async streamBatched(req: StreamRequest): Promise<void> {
+    let session = this.currentSession();
+    if (!(await session.usesMps())) return session.stream(req);
+    let offset = 0;
+    while (offset < req.chunks.length) {
+      if (req.signal?.aborted) break;
+      const batch = req.chunks.slice(offset, offset + this.capacity());
+      session = this.currentSession();
+      await session.stream({ ...req, chunks: batch });
+      offset += batch.length;
+      this.usedChunks += batch.length;
+
+      if (this.usedChunks >= RECYCLE_CHUNKS || req.signal?.aborted) await this.rotate();
+    }
+  }
+
+  async close() {
+    if (this.closed) return;
+    this.closed = true;
+    await this.tail;
+    await this.session?.close();
+    this.session = null;
+  }
+}
+
 export const kokoroProvider: TTSProvider = {
   async info(): Promise<ProviderInfo> {
     const missing = !existsSync(PYTHON)
@@ -296,6 +404,7 @@ export const kokoroProvider: TTSProvider = {
   async open(): Promise<TTSSession> {
     const { available, reason } = await kokoroProvider.info();
     if (!available) throw new Error(reason ?? "Kokoro is not available");
-    return new KokoroSession();
+    const device = (process.env.HUIVER_DEVICE ?? "auto").toLowerCase();
+    return device === "cpu" || device === "cuda" ? new KokoroSession() : new RecyclingKokoroSession();
   },
 };
