@@ -1,60 +1,98 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import type { JobDTO } from "../shared";
 import { api } from "../lib/api";
 
-export const ACTIVE_JOB_STATES = new Set(["queued", "running"]);
+const ACTIVE_JOB_STATES = new Set(["queued", "running"]);
+
+export const isActiveJob = (job: JobDTO) => ACTIVE_JOB_STATES.has(job.status);
+
+type JobsState = { jobs: JobDTO[]; error: string | null };
 
 /**
- * Job list with 1.5s polling while anything is queued or running. When a job
- * changes status (queued → running → done/error), `onJobSettled` fires so the
- * page can refresh book/library data and the status icons flip.
+ * Conversions run in the background, so several views watch them at once (the
+ * app bar, the library grid, the open book). One module-level poller feeds all
+ * of them: it ticks every 1.5s only while something is queued or running.
  */
-export function useJobs(onJobSettled?: () => void) {
-  const [jobs, setJobs] = useState<JobDTO[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const statuses = useRef(new Map<string, string>());
-  const settled = useRef(onJobSettled);
-  settled.current = onJobSettled;
+const POLL_MS = 1500;
 
-  const reload = useCallback(async () => {
-    try {
-      const list = await api<JobDTO[]>("/api/jobs");
-      setJobs(list);
+let state: JobsState = { jobs: [], error: null };
+let snapshot = state;
+const listeners = new Set<() => void>();
+/** Fires when a job leaves the queued/running states, so pages can refetch. */
+const settledCallbacks = new Set<() => void>();
+const lastStatus = new Map<string, string>();
 
-      let finished = false;
-      for (const job of list) {
-        const previous = statuses.current.get(job.id);
-        if (previous && previous !== job.status && !ACTIVE_JOB_STATES.has(job.status)) finished = true;
-        statuses.current.set(job.id, job.status);
-      }
-      if (finished) settled.current?.();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+let timer: ReturnType<typeof setInterval> | null = null;
+let inFlight = false;
+
+function emit(): void {
+  snapshot = state;
+  listeners.forEach(listener => listener());
+}
+
+async function poll(): Promise<void> {
+  if (inFlight) return;
+  inFlight = true;
+  try {
+    const jobs = await api<JobDTO[]>("/api/jobs");
+
+    let settled = false;
+    for (const job of jobs) {
+      const previous = lastStatus.get(job.id);
+      if (previous && previous !== job.status && !isActiveJob(job)) settled = true;
+      lastStatus.set(job.id, job.status);
     }
+
+    state = { jobs, error: null };
+    emit();
+    schedule();
+    if (settled) settledCallbacks.forEach(callback => callback());
+  } catch (error) {
+    state = { ...state, error: error instanceof Error ? error.message : String(error) };
+    emit();
+  } finally {
+    inFlight = false;
+  }
+}
+
+/** Poll only while there is something to watch. */
+function schedule(): void {
+  const wanted = listeners.size > 0 && state.jobs.some(isActiveJob);
+  if (wanted && !timer) timer = setInterval(() => void poll(), POLL_MS);
+  else if (!wanted && timer) {
+    clearInterval(timer);
+    timer = null;
+  }
+}
+
+export const reloadJobs = () => poll();
+
+const subscribe = (listener: () => void) => {
+  listeners.add(listener);
+  if (listeners.size === 1) void poll();
+  return () => {
+    listeners.delete(listener);
+    schedule();
+  };
+};
+
+export function useJobs(onJobSettled?: () => void) {
+  const jobs = useSyncExternalStore(subscribe, () => snapshot);
+
+  const callback = useRef(onJobSettled);
+  callback.current = onJobSettled;
+  useEffect(() => {
+    const wrapper = () => callback.current?.();
+    settledCallbacks.add(wrapper);
+    return () => {
+      settledCallbacks.delete(wrapper);
+    };
   }, []);
 
-  useEffect(() => {
-    void reload();
-  }, [reload]);
+  return { jobs: jobs.jobs, error: jobs.error, reload: reloadJobs };
+}
 
-  const hasActive = jobs.some(j => ACTIVE_JOB_STATES.has(j.status));
-  useEffect(() => {
-    if (!hasActive) return;
-    const timer = setInterval(() => void reload(), 1500);
-    return () => clearInterval(timer);
-  }, [hasActive, reload]);
-
-  const cancel = useCallback(
-    async (id: string) => {
-      try {
-        await api(`/api/jobs/${id}/cancel`, { method: "POST" });
-        await reload();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      }
-    },
-    [reload],
-  );
-
-  return { jobs, error, reload, cancel, hasActive, clearError: () => setError(null) };
+export async function cancelJob(id: string): Promise<void> {
+  await api(`/api/jobs/${id}/cancel`, { method: "POST" });
+  await poll();
 }

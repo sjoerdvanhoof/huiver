@@ -1,5 +1,6 @@
 import { ChevronLeft, Headphones, Moon, Settings, Sun } from "lucide-react";
 import { useEffect } from "react";
+import { ConversionIndicator } from "./components/ConversionIndicator";
 import { href, navigate, useHashRoute } from "./hooks/useHashRoute";
 import { useTheme } from "./hooks/useTheme";
 import { BookPage } from "./pages/BookPage";
@@ -45,6 +46,7 @@ export function App() {
           </span>
 
           <div className="ml-auto flex items-center gap-1">
+            <ConversionIndicator />
             <button
               onClick={() => setTheme(resolved === "dark" ? "light" : "dark")}
               aria-label={resolved === "dark" ? "Switch to light mode" : "Switch to dark mode"}

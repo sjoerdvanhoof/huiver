@@ -4,7 +4,7 @@ import { BookCard } from "@/components/BookCard";
 import { BookCover } from "@/components/BookCover";
 import { UploadDropzone } from "@/components/UploadDropzone";
 import { formatApproxDuration } from "@/lib/format";
-import { ACTIVE_JOB_STATES, useJobs } from "../hooks/useJobs";
+import { isActiveJob, useJobs } from "../hooks/useJobs";
 import { navigate } from "../hooks/useHashRoute";
 import { useLibrary } from "../hooks/useLibrary";
 import { useSettings } from "../hooks/useSettings";
@@ -16,10 +16,7 @@ export function LibraryPage() {
   const { settings } = useSettings();
   const { jobs } = useJobs(() => void reload());
 
-  const convertingBooks = useMemo(
-    () => new Set(jobs.filter(j => ACTIVE_JOB_STATES.has(j.status)).map(j => j.bookId)),
-    [jobs],
-  );
+  const convertingBooks = useMemo(() => new Set(jobs.filter(isActiveJob).map(j => j.bookId)), [jobs]);
 
   const continueListening = useMemo(
     () =>

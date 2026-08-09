@@ -1,65 +1,38 @@
-import { AlertCircle, Check, Download, ListChecks, Play, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { AlertCircle, Check, Download, ListChecks, Loader2, Play, Sparkles, Trash2, X } from "lucide-react";
+import { useMemo, useState } from "react";
 import { BookCover } from "@/components/BookCover";
-import { JobPanel } from "@/components/JobPanel";
 import { StatusIcon, type ConversionState } from "@/components/StatusIcon";
-import { VoicePicker } from "@/components/VoicePicker";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
 import { api } from "@/lib/api";
 import { formatApproxDuration, formatDuration, formatEstimate } from "@/lib/format";
 import { useBookDetail } from "../hooks/useBookDetail";
-import { ACTIVE_JOB_STATES, useJobs } from "../hooks/useJobs";
+import { cancelJob, isActiveJob, useJobs } from "../hooks/useJobs";
 import { navigate } from "../hooks/useHashRoute";
 import { useProviders } from "../hooks/useProviders";
 import { useSettings } from "../hooks/useSettings";
 import { buildQueueFromBook, playQueue, usePlayer } from "../player/store";
-import type { BookDetailDTO, ChapterDTO, JobDTO, SettingsDTO } from "../shared";
+import type { BookDetailDTO, ChapterDTO, JobDTO } from "../shared";
 
 export function BookPage({ bookId }: { bookId: string }) {
   const { book, error: bookError, reload, clearError } = useBookDetail(bookId);
-  const { jobs, cancel, error: jobsError } = useJobs(() => void reload());
+  const { jobs, error: jobsError } = useJobs(() => void reload());
   const { providers } = useProviders();
-  const { settings, loaded: settingsLoaded } = useSettings();
+  const { settings } = useSettings();
   const [actionError, setActionError] = useState<string | null>(null);
-
-  // Conversion settings for THIS run, seeded from the persisted defaults.
-  const [providerId, setProviderId] = useState<string | null>(null);
-  const [voice, setVoice] = useState<string>("");
-  const [speed, setSpeed] = useState(1);
-  const [speedDraft, setSpeedDraft] = useState(1);
-
-  useEffect(() => {
-    if (!settingsLoaded || providerId !== null) return;
-    setProviderId(settings.defaultProvider);
-    setSpeed(settings.defaultSpeed);
-    setSpeedDraft(settings.defaultSpeed);
-  }, [settingsLoaded, settings, providerId]);
-
-  const provider = useMemo(
-    () => providers.find(p => p.id === (providerId ?? settings.defaultProvider)),
-    [providers, providerId, settings.defaultProvider],
-  );
-
-  useEffect(() => {
-    if (!provider || voice) return;
-    setVoice(settings.defaultVoice ?? provider.defaultVoice);
-  }, [provider, voice, settings.defaultVoice]);
 
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const bookJobs = useMemo(() => jobs.filter(j => j.bookId === bookId), [jobs, bookId]);
-  const chapterStates = useMemo(() => deriveChapterStates(book, bookJobs), [book, bookJobs]);
+  // Conversion uses whatever the Settings page has stored; the engine, voice
+  // and speed pickers live there, not here.
+  const engine = useMemo(
+    () => providers.find(p => p.id === settings.defaultProvider),
+    [providers, settings.defaultProvider],
+  );
 
-  const effectiveSettings: SettingsDTO = {
-    defaultProvider: providerId ?? settings.defaultProvider,
-    defaultVoice: voice || settings.defaultVoice,
-    defaultSpeed: speed,
-    theme: settings.theme,
-  };
+  const bookJobs = useMemo(() => jobs.filter(j => j.bookId === bookId), [jobs, bookId]);
+  const activeJobs = useMemo(() => bookJobs.filter(isActiveJob), [bookJobs]);
+  const chapterStates = useMemo(() => deriveChapterStates(book, bookJobs), [book, bookJobs]);
 
   const playingChapterId = usePlayer(s => s.queue[s.index]?.chapterId ?? null);
   const playerStatus = usePlayer(s => s.status);
@@ -67,24 +40,21 @@ export function BookPage({ bookId }: { bookId: string }) {
   const error = actionError ?? bookError ?? jobsError;
 
   if (!book) {
-    return (
-      <div className="py-16 text-center text-sm text-muted-foreground">
-        {bookError ?? "Loading book…"}
-      </div>
-    );
+    return <div className="py-16 text-center text-sm text-muted-foreground">{bookError ?? "Loading book…"}</div>;
   }
 
   const p = book.progress;
   const unconverted = book.chapters.filter(c => !c.audio);
+  const queued = new Set(
+    activeJobs.flatMap(j => j.tracks.filter(t => t.status !== "done").map(t => t.chapterId)),
+  );
   const toConvert = selectMode
     ? book.chapters.filter(c => selected.has(c.id))
-    : unconverted.length > 0
-      ? unconverted
-      : book.chapters;
+    : unconverted.filter(c => !queued.has(c.id));
   const toConvertSeconds = toConvert.reduce((sum, c) => sum + c.estimatedDurationSeconds, 0);
 
   const playChapter = (chapter: ChapterDTO) => {
-    const queue = buildQueueFromBook(book, effectiveSettings);
+    const queue = buildQueueFromBook(book, settings);
     const index = queue.findIndex(q => q.chapterId === chapter.id);
     if (index < 0) return;
     const startAt =
@@ -96,29 +66,34 @@ export function BookPage({ bookId }: { bookId: string }) {
 
   const resume = () => {
     if (!p.resume) return;
-    const queue = buildQueueFromBook(book, effectiveSettings);
+    const queue = buildQueueFromBook(book, settings);
     const index = queue.findIndex(q => q.chapterId === p.resume!.chapterId);
     if (index < 0) return;
     playQueue(queue, index, p.resume.positionSeconds > 0 ? p.resume.positionSeconds : null);
   };
 
+  /** Queue chapters and get out of the way — progress shows up inline. */
   const convert = async () => {
     setActionError(null);
     try {
+      // No provider/voice/speed: the server falls back to the saved settings.
       await api<JobDTO>(`/api/books/${book.id}/convert`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider: effectiveSettings.defaultProvider,
-          voice: effectiveSettings.defaultVoice ?? undefined,
-          speed,
-          chapterIds: toConvert.map(c => c.id),
-        }),
+        body: JSON.stringify({ chapterIds: toConvert.map(c => c.id) }),
       });
       setSelectMode(false);
       setSelected(new Set());
-      // Poll picks the job up; reload now so statuses flip to "queued" immediately.
-      window.setTimeout(() => window.location.hash === `#/book/${book.id}` && void reload(), 300);
+      await reload();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const stopConverting = async () => {
+    try {
+      await Promise.all(activeJobs.map(job => cancelJob(job.id)));
+      await reload();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : String(e));
     }
@@ -152,7 +127,6 @@ export function BookPage({ bookId }: { bookId: string }) {
         </div>
       )}
 
-      {/* Header */}
       <section className="flex gap-4 sm:gap-6">
         <BookCover
           bookId={book.id}
@@ -166,13 +140,25 @@ export function BookPage({ bookId }: { bookId: string }) {
               <h1 className="break-words font-serif text-xl font-bold tracking-tight sm:text-3xl">{book.title}</h1>
               {book.author && <p className="mt-0.5 text-sm text-muted-foreground">{book.author}</p>}
             </div>
-            <button
-              onClick={() => void removeBook()}
-              aria-label={`Delete ${book.title}`}
-              className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-            >
-              <Trash2 className="size-4" />
-            </button>
+            <div className="flex shrink-0 items-center">
+              {p.convertedChapters > 0 && (
+                <a
+                  href={`/api/books/${book.id}/download`}
+                  aria-label={`Download ${book.title} as a zip`}
+                  title="Download converted chapters"
+                  className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <Download className="size-4" />
+                </a>
+              )}
+              <button
+                onClick={() => void removeBook()}
+                aria-label={`Delete ${book.title}`}
+                className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="size-4" />
+              </button>
+            </div>
           </div>
 
           <p className="mt-2 text-xs text-muted-foreground sm:text-sm">
@@ -199,85 +185,41 @@ export function BookPage({ bookId }: { bookId: string }) {
                   onClick={() => playChapter(book.chapters[0]!)}
                   size="lg"
                   className="gap-2"
-                  disabled={!book.chapters[0]!.audio && !provider?.available}
+                  disabled={!book.chapters[0]!.audio && !engine?.available}
                 >
                   <Play className="size-4" /> Play
                 </Button>
               )
             )}
+
+            {activeJobs.length > 0 ? (
+              <ConversionStatus jobs={activeJobs} onStop={() => void stopConverting()} />
+            ) : (
+              toConvert.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="gap-2"
+                  onClick={() => void convert()}
+                  disabled={!engine?.available}
+                  title={engine?.available ? undefined : engine?.reason}
+                >
+                  <Sparkles className="size-4" />
+                  Convert {toConvert.length} chapter{toConvert.length === 1 ? "" : "s"}
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {formatEstimate(toConvertSeconds)}
+                  </span>
+                </Button>
+              )
+            )}
           </div>
+
+          {!engine?.available && engine?.reason && (
+            <p className="mt-2 text-xs text-muted-foreground">{engine.reason}</p>
+          )}
         </div>
       </section>
 
-      {/* Convert */}
-      {p.conversionStatus !== "full" || selectMode ? (
-        <section className="rounded-xl border bg-card p-4">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div className="min-w-0 space-y-1.5">
-              <Label>Engine</Label>
-              <Select
-                value={providerId ?? settings.defaultProvider}
-                onValueChange={id => {
-                  setProviderId(id);
-                  setVoice(providers.find(pr => pr.id === id)?.defaultVoice ?? "");
-                }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {providers.map(pr => (
-                    <SelectItem key={pr.id} value={pr.id} disabled={!pr.available}>
-                      {pr.label}
-                      {!pr.available && " (unavailable)"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="min-w-0 space-y-1.5">
-              <Label>Voice</Label>
-              <VoicePicker provider={provider} voice={voice} onVoiceChange={setVoice} onError={setActionError} />
-            </div>
-
-            <div className="min-w-0 space-y-1.5">
-              <div className="flex items-baseline justify-between">
-                <Label>Speed</Label>
-                <span className="text-xs tabular-nums text-muted-foreground">{speedDraft.toFixed(2)}×</span>
-              </div>
-              <div className="flex h-9 items-center">
-                <Slider
-                  value={[speedDraft]}
-                  onValueChange={([v]) => setSpeedDraft(v ?? 1)}
-                  onValueCommit={([v]) => setSpeed(v ?? 1)}
-                  min={0.5}
-                  max={2}
-                  step={0.05}
-                  disabled={!provider?.supportsSpeed}
-                  aria-label="Speech speed"
-                />
-              </div>
-            </div>
-          </div>
-
-          {provider && !provider.available && (
-            <p className="mt-3 text-xs text-muted-foreground">{provider.reason}</p>
-          )}
-
-          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
-            <Button onClick={() => void convert()} disabled={toConvert.length === 0 || !provider?.available}>
-              Convert {toConvert.length} chapter{toConvert.length === 1 ? "" : "s"}
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              {formatEstimate(toConvertSeconds)} of audio
-              {!selectMode && unconverted.length > 0 && unconverted.length < book.chapters.length && " (remaining)"}
-            </span>
-          </div>
-        </section>
-      ) : null}
-
-      {/* Chapters */}
       <section className="overflow-hidden rounded-xl border bg-card">
         <div className="flex items-center justify-between border-b px-4 py-2.5">
           <h3 className="text-sm font-semibold">Chapters</h3>
@@ -323,66 +265,48 @@ export function BookPage({ bookId }: { bookId: string }) {
               selected={selected.has(chapter.id)}
               onToggleSelect={() =>
                 setSelected(prev => {
-                  const nextSet = new Set(prev);
-                  nextSet.has(chapter.id) ? nextSet.delete(chapter.id) : nextSet.add(chapter.id);
-                  return nextSet;
+                  const next = new Set(prev);
+                  next.has(chapter.id) ? next.delete(chapter.id) : next.add(chapter.id);
+                  return next;
                 })
               }
               playing={playingChapterId === chapter.id && (playerStatus === "playing" || playerStatus === "loading")}
-              canStream={provider?.available ?? false}
+              canStream={engine?.available ?? false}
               onPlay={() => playChapter(chapter)}
             />
           ))}
         </ul>
       </section>
-
-      {bookJobs
-        .filter(j => ACTIVE_JOB_STATES.has(j.status) || j.status === "error" || j.status === "cancelled")
-        .map(job => (
-          <JobPanel
-            key={job.id}
-            job={job}
-            onCancel={() => void cancel(job.id)}
-            onPlayChapter={chapterId => {
-              const chapter = book.chapters.find(c => c.id === chapterId);
-              if (chapter) playChapter(chapter);
-            }}
-          />
-        ))}
-
-      <FinishedJobs jobs={bookJobs.filter(j => j.status === "done")} />
     </div>
   );
 }
 
-/** Past conversions stay reachable for their zip download, without the noise. */
-function FinishedJobs({ jobs }: { jobs: JobDTO[] }) {
-  if (jobs.length === 0) return null;
+/** Inline, unobtrusive replacement for the old per-job panels. */
+function ConversionStatus({ jobs, onStop }: { jobs: JobDTO[]; onStop: () => void }) {
+  const done = jobs.reduce((sum, j) => sum + j.chunksDone, 0);
+  const total = jobs.reduce((sum, j) => sum + j.chunksTotal, 0);
+  const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+  const chapters = jobs.flatMap(j => j.tracks);
+  const finished = chapters.filter(t => t.status === "done").length;
+
   return (
-    <section className="overflow-hidden rounded-xl border bg-card">
-      <h3 className="border-b px-4 py-2.5 text-sm font-semibold">Conversions</h3>
-      <ul className="divide-y">
-        {jobs.map(job => {
-          const done = job.tracks.filter(t => t.status === "done").length;
-          return (
-            <li key={job.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
-              <StatusIcon state="done" />
-              <span className="min-w-0 flex-1 truncate">
-                {job.provider} · {job.voice} · {job.speed}×
-                <span className="ml-2 text-xs text-muted-foreground">
-                  {done} track{done === 1 ? "" : "s"}
-                </span>
-              </span>
-              <Button variant="outline" size="sm" asChild>
-                <a href={`/api/jobs/${job.id}/download`}>
-                  <Download className="size-4" /> Zip
-                </a>
-              </Button>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+    <div className="flex min-w-0 items-center gap-3 rounded-lg border bg-card px-3 py-2">
+      <Loader2 className="size-4 shrink-0 animate-spin text-primary" />
+      <div className="min-w-0">
+        <p className="text-sm font-medium">
+          Converting… {percent}%
+          <span className="ml-2 text-xs font-normal text-muted-foreground">
+            {finished} of {chapters.length} chapters
+          </span>
+        </p>
+        <div className="mt-1 h-1 w-40 overflow-hidden rounded-full bg-muted">
+          <div className="h-full bg-primary transition-all" style={{ width: `${percent}%` }} />
+        </div>
+      </div>
+      <button onClick={onStop} className="shrink-0 text-xs text-muted-foreground hover:text-destructive">
+        Stop
+      </button>
+    </div>
   );
 }
 
@@ -429,7 +353,7 @@ function deriveChapterStates(book: BookDetailDTO | null, jobs: JobDTO[]): Map<st
 
   // Newest jobs first so the freshest attempt wins the badge.
   for (const job of [...jobs].sort((a, b) => b.createdAt - a.createdAt)) {
-    const active = ACTIVE_JOB_STATES.has(job.status);
+    const active = isActiveJob(job);
     for (const track of job.tracks) {
       const current = map.get(track.chapterId);
       if (!current) continue;

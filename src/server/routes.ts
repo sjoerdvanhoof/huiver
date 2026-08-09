@@ -282,6 +282,45 @@ export const apiRoutes = {
 
   "/api/books/:id/cover": (req: Bun.BunRequest<"/api/books/:id/cover">) => serveCover(req.params.id),
 
+  /** Every converted chapter of a book as one zip, numbered in reading order. */
+  "/api/books/:id/download": async (req: Bun.BunRequest<"/api/books/:id/download">) => {
+    const book = db.query("SELECT * FROM books WHERE id = ?").get(req.params.id) as BookRow | null;
+    if (!book) return fail("Book not found", 404);
+
+    // Oldest job first, so the newest conversion of a chapter overwrites it.
+    const rows = db
+      .query(
+        `SELECT c.idx AS idx, c.title AS title, t.path AS path
+         FROM tracks t
+         JOIN chapters c ON c.id = t.chapter_id
+         JOIN jobs j ON j.id = t.job_id
+         WHERE c.book_id = ? AND t.status = 'done' AND t.path IS NOT NULL
+         ORDER BY j.created_at ASC, t.id ASC`,
+      )
+      .all(book.id) as { idx: number; title: string; path: string }[];
+
+    const byChapter = new Map<number, { title: string; path: string }>();
+    for (const row of rows) byChapter.set(row.idx, { title: row.title, path: row.path });
+    if (byChapter.size === 0) return fail("Nothing converted yet", 409);
+
+    const slug = (value: string) => value.replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60);
+    const entries: Record<string, Uint8Array> = {};
+    for (const [idx, track] of [...byChapter].sort((a, b) => a[0] - b[0])) {
+      const file = Bun.file(track.path);
+      if (!(await file.exists())) continue;
+      const name = `${String(idx + 1).padStart(3, "0")}-${slug(track.title) || "chapter"}${path.extname(track.path)}`;
+      entries[name] = new Uint8Array(await file.arrayBuffer());
+    }
+
+    const zip = zipSync(entries, { level: 0 }); // audio is already compressed
+    return new Response(zip, {
+      headers: {
+        "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="${slug(book.title) || "audiobook"}.zip"`,
+      },
+    });
+  },
+
   "/api/books/:id/convert": {
     POST: async (req: Bun.BunRequest<"/api/books/:id/convert">) => {
       const book = db.query("SELECT * FROM books WHERE id = ?").get(req.params.id) as BookRow | null;
