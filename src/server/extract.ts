@@ -3,11 +3,14 @@ import path from "node:path";
 
 export type ExtractedChapter = { title: string; text: string };
 
+export type ExtractedCover = { bytes: Uint8Array; ext: string };
+
 export type ExtractedBook = {
   title: string;
   author: string | null;
   format: string;
   chapters: ExtractedChapter[];
+  cover: ExtractedCover | null;
 };
 
 /** Chapters shorter than this are almost always covers, nav docs or copyright pages. */
@@ -263,13 +266,23 @@ function isNavigationPage(html: string): boolean {
   return linked / total > 0.6;
 }
 
-function extractEpub(bytes: Uint8Array): ExtractedBook {
+type EpubEnv = {
+  read: (entry: string) => string | null;
+  readBytes: (entry: string) => Uint8Array | null;
+  opf: string;
+  opfDir: string;
+  manifest: Map<string, { href: string; type: string; properties: string }>;
+};
+
+/** Unzip, locate the OPF and parse its manifest — shared by text and cover extraction. */
+function openEpub(bytes: Uint8Array): EpubEnv {
   const files = unzipSync(bytes);
   const root = findEpubRoot(files);
   const read = (entry: string): string | null => {
     const data = files[root + entry];
     return data ? strFromU8(data) : null;
   };
+  const readBytes = (entry: string): Uint8Array | null => files[root + entry] ?? null;
 
   const container = read(CONTAINER_PATH);
   if (!container) throw new Error("Not a valid EPUB: META-INF/container.xml missing");
@@ -281,10 +294,6 @@ function extractEpub(bytes: Uint8Array): ExtractedBook {
   const opf = read(opfPath);
   if (!opf) throw new Error(`Not a valid EPUB: ${opfPath} missing`);
   const opfDir = path.posix.dirname(opfPath) === "." ? "" : path.posix.dirname(opfPath);
-
-  const title = opf.match(/<dc:title\b[^>]*>([\s\S]*?)<\/dc:title>/i)
-    ?? opf.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
-  const creator = opf.match(/<dc:creator\b[^>]*>([\s\S]*?)<\/dc:creator>/i);
 
   // manifest id -> { href, type, properties }
   const manifest = new Map<string, { href: string; type: string; properties: string }>();
@@ -298,6 +307,66 @@ function extractEpub(bytes: Uint8Array): ExtractedBook {
       properties: attr(tag, "properties") ?? "",
     });
   }
+
+  return { read, readBytes, opf, opfDir, manifest };
+}
+
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/svg+xml": "svg",
+};
+
+/**
+ * The cover image, per EPUB3 (`properties="cover-image"`), then the EPUB2
+ * convention (`<meta name="cover" content="…"/>`), then a manifest item that
+ * is simply named "cover".
+ */
+function findCover(env: EpubEnv): ExtractedCover | null {
+  const { opf, opfDir, manifest, readBytes } = env;
+
+  let item = [...manifest.values()].find(entry => entry.properties.split(/\s+/).includes("cover-image"));
+
+  if (!item) {
+    const metaTag = (opf.match(/<meta\b[^>]*>/gi) ?? []).find(tag => attr(tag, "name")?.toLowerCase() === "cover");
+    const coverId = metaTag ? attr(metaTag, "content") : null;
+    if (coverId) item = manifest.get(coverId);
+  }
+
+  if (!item) {
+    const byId = manifest.get("cover") ?? manifest.get("cover-image");
+    if (byId?.type.startsWith("image/")) item = byId;
+  }
+
+  if (!item) return null;
+
+  const ext =
+    IMAGE_EXTENSIONS[item.type.toLowerCase()]
+    ?? path.posix.extname(item.href).replace(".", "").toLowerCase();
+  if (!ext || !["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext)) return null;
+
+  const bytes = readBytes(resolveHref(opfDir, item.href));
+  return bytes && bytes.byteLength > 0 ? { bytes, ext } : null;
+}
+
+/** Pull just the cover out of an EPUB — used to backfill books imported before covers existed. */
+export function extractEpubCover(bytes: Uint8Array): ExtractedCover | null {
+  try {
+    return findCover(openEpub(bytes));
+  } catch {
+    return null;
+  }
+}
+
+function extractEpub(bytes: Uint8Array): ExtractedBook {
+  const env = openEpub(bytes);
+  const { read, opf, opfDir, manifest } = env;
+
+  const title = opf.match(/<dc:title\b[^>]*>([\s\S]*?)<\/dc:title>/i)
+    ?? opf.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+  const creator = opf.match(/<dc:creator\b[^>]*>([\s\S]*?)<\/dc:creator>/i);
 
   const bookTitle = title ? decodeEntities(title[1]!).replace(/\s+/g, " ").trim() : "Untitled";
 
@@ -382,6 +451,7 @@ function extractEpub(bytes: Uint8Array): ExtractedBook {
     author: creator ? decodeEntities(creator[1]!).replace(/\s+/g, " ").trim() || null : null,
     format: "epub",
     chapters,
+    cover: findCover(env),
   };
 }
 
@@ -464,6 +534,7 @@ export async function extractBook(filePath: string, originalName: string): Promi
     author: null,
     format: ext.replace(".", "") || "txt",
     chapters: splitPlainText(text),
+    cover: null,
   };
 }
 

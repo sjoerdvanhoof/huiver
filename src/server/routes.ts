@@ -13,7 +13,10 @@ import {
   type JobRow,
   type TrackRow,
 } from "./db";
+import { extractEpubCover, looksLikeZip } from "./extract";
 import { importBook } from "./library";
+import { EMPTY_PROGRESS, computeRollups, savePosition, type BookRollup } from "./progress";
+import { getSettings, updateSettings } from "./settings";
 import { getProvider, listProviders } from "./tts";
 import type { BookDTO, BookDetailDTO, JobDTO, TrackDTO } from "../shared";
 
@@ -29,19 +32,24 @@ export const IDLE_TIMEOUT_SECONDS = 255;
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 const fail = (message: string, status = 400) => Response.json({ error: message }, { status });
 
-function toBookDTO(row: BookRow): BookDTO {
-  const stats = db
-    .query("SELECT COUNT(*) AS chapters, COALESCE(SUM(char_count), 0) AS chars FROM chapters WHERE book_id = ?")
-    .get(row.id) as { chapters: number; chars: number };
+function coverUrlFor(row: BookRow): string | null {
+  if (row.cover_path) return `/api/books/${row.id}/cover`;
+  // NULL = never checked (pre-cover import); worth one lazy attempt for EPUBs.
+  if (row.cover_path === null && row.format === "epub") return `/api/books/${row.id}/cover`;
+  return null;
+}
 
+function toBookDTO(row: BookRow, rollup: BookRollup | undefined): BookDTO {
   return {
     id: row.id,
     title: row.title,
     author: row.author,
     format: row.format,
     createdAt: row.created_at,
-    chapterCount: stats.chapters,
-    charCount: stats.chars,
+    chapterCount: rollup?.chapterCount ?? 0,
+    charCount: rollup?.charCount ?? 0,
+    coverUrl: coverUrlFor(row),
+    progress: rollup?.progress ?? EMPTY_PROGRESS,
   };
 }
 
@@ -66,6 +74,7 @@ function toJobDTO(job: JobRow): JobDTO {
       id: t.id,
       idx: t.idx,
       title: t.title,
+      chapterId: t.chapter_id,
       status: t.status,
       duration: t.duration,
       error: t.error,
@@ -109,6 +118,53 @@ async function serveTrackAudio(req: Request, trackId: string): Promise<Response>
   });
 }
 
+const COVER_TYPES: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+};
+
+/**
+ * Serve a book's cover. Books imported before covers existed have
+ * cover_path NULL — try to pull one out of the stored EPUB once, then record
+ * the outcome ('' = checked, none) so the attempt never repeats.
+ */
+async function serveCover(bookId: string): Promise<Response> {
+  const row = db.query("SELECT * FROM books WHERE id = ?").get(bookId) as BookRow | null;
+  if (!row) return fail("Book not found", 404);
+
+  let coverPath = row.cover_path;
+  if (coverPath === null) {
+    coverPath = "";
+    try {
+      const bytes = new Uint8Array(await Bun.file(row.source_path).arrayBuffer());
+      const cover = looksLikeZip(bytes) ? extractEpubCover(bytes) : null;
+      if (cover) {
+        coverPath = path.join(UPLOAD_DIR, row.id, `cover.${cover.ext}`);
+        await Bun.write(coverPath, cover.bytes);
+      }
+    } catch {
+      // Source file gone or unreadable — record "no cover" below.
+    }
+    db.query("UPDATE books SET cover_path = ? WHERE id = ?").run(coverPath, row.id);
+  }
+
+  if (!coverPath) return fail("No cover", 404);
+  const file = Bun.file(coverPath);
+  if (!(await file.exists())) return fail("Cover file is missing on disk", 404);
+
+  return new Response(file, {
+    headers: {
+      "Content-Type": COVER_TYPES[path.extname(coverPath).toLowerCase()] ?? "application/octet-stream",
+      "Content-Length": String(file.size),
+      "Cache-Control": "public, max-age=86400",
+    },
+  });
+}
+
 export const apiRoutes = {
   "/api/providers": async () => json(await listProviders()),
 
@@ -118,10 +174,50 @@ export const apiRoutes = {
   "/api/chapters/:id/stream": (req: Bun.BunRequest<"/api/chapters/:id/stream">) =>
     streamChapter(req, req.params.id),
 
+  "/api/settings": {
+    GET: () => json(getSettings()),
+
+    PUT: async (req: Request) => {
+      const patch = (await req.json().catch(() => null)) as Record<string, unknown> | null;
+      if (!patch || typeof patch !== "object") return fail("Expected a JSON object");
+      try {
+        return json(updateSettings(patch));
+      } catch (error) {
+        return fail(error instanceof Error ? error.message : "Invalid settings");
+      }
+    },
+  },
+
+  "/api/chapters/:id/position": {
+    // POST (not PUT) so navigator.sendBeacon can deliver the final position on pagehide.
+    POST: async (req: Bun.BunRequest<"/api/chapters/:id/position">) => {
+      const body = (await req.json().catch(() => null)) as {
+        trackId?: string | null;
+        positionSeconds?: number;
+        durationSeconds?: number | null;
+        completed?: boolean;
+      } | null;
+      if (!body || typeof body.positionSeconds !== "number") return fail("Expected { positionSeconds }");
+
+      try {
+        const saved = savePosition(req.params.id, {
+          trackId: body.trackId ?? null,
+          positionSeconds: body.positionSeconds,
+          durationSeconds: body.durationSeconds ?? null,
+          completed: body.completed === true,
+        });
+        return saved ? json({ ok: true }) : fail("Chapter not found", 404);
+      } catch (error) {
+        return fail(error instanceof Error ? error.message : "Could not save position");
+      }
+    },
+  },
+
   "/api/books": {
     GET: () => {
       const rows = db.query("SELECT * FROM books ORDER BY created_at DESC").all() as BookRow[];
-      return json(rows.map(toBookDTO));
+      const rollups = computeRollups(db);
+      return json(rows.map(row => toBookDTO(row, rollups.get(row.id))));
     },
 
     POST: async (req: Request) => {
@@ -132,7 +228,9 @@ export const apiRoutes = {
       // browsers rename things on the way in (a dragged folder arrives as .zip).
 
       try {
-        return json(toBookDTO(await importBook(file, file.name)), 201);
+        const row = await importBook(file, file.name);
+        const rollups = computeRollups(db, row.id);
+        return json(toBookDTO(row, rollups.get(row.id)), 201);
       } catch (error) {
         return fail(error instanceof Error ? error.message : "Could not read that file", 422);
       }
@@ -147,16 +245,23 @@ export const apiRoutes = {
       const chapters = db
         .query("SELECT * FROM chapters WHERE book_id = ? ORDER BY idx")
         .all(row.id) as ChapterRow[];
+      const rollup = computeRollups(db, row.id).get(row.id);
 
       const detail: BookDetailDTO = {
-        ...toBookDTO(row),
-        chapters: chapters.map(c => ({
-          id: c.id,
-          idx: c.idx,
-          title: c.title,
-          charCount: c.char_count,
-          preview: c.text.slice(0, 240).replace(/\s+/g, " ").trim(),
-        })),
+        ...toBookDTO(row, rollup),
+        chapters: chapters.map(c => {
+          const augment = rollup?.chapters.get(c.id);
+          return {
+            id: c.id,
+            idx: c.idx,
+            title: c.title,
+            charCount: c.char_count,
+            preview: c.text.slice(0, 240).replace(/\s+/g, " ").trim(),
+            estimatedDurationSeconds: augment?.estimatedDurationSeconds ?? 0,
+            audio: augment?.audio ?? null,
+            position: augment?.position ?? null,
+          };
+        }),
       };
       return json(detail);
     },
@@ -175,6 +280,8 @@ export const apiRoutes = {
     },
   },
 
+  "/api/books/:id/cover": (req: Bun.BunRequest<"/api/books/:id/cover">) => serveCover(req.params.id),
+
   "/api/books/:id/convert": {
     POST: async (req: Bun.BunRequest<"/api/books/:id/convert">) => {
       const book = db.query("SELECT * FROM books WHERE id = ?").get(req.params.id) as BookRow | null;
@@ -187,7 +294,8 @@ export const apiRoutes = {
         chapterIds?: string[];
       };
 
-      const providerId = body.provider ?? "kokoro";
+      const settings = getSettings();
+      const providerId = body.provider ?? settings.defaultProvider;
       let info;
       try {
         info = await getProvider(providerId).info();
@@ -196,9 +304,9 @@ export const apiRoutes = {
       }
       if (!info.available) return fail(info.reason ?? `${info.label} is not available`, 409);
 
-      const voice = body.voice || info.defaultVoice;
+      const voice = body.voice || settings.defaultVoice || info.defaultVoice;
       if (!voice) return fail("No voice selected");
-      const speed = Math.min(2, Math.max(0.5, Number(body.speed) || 1));
+      const speed = Math.min(2, Math.max(0.5, Number(body.speed) || settings.defaultSpeed));
 
       const all = db.query("SELECT * FROM chapters WHERE book_id = ? ORDER BY idx").all(book.id) as ChapterRow[];
       const wanted = body.chapterIds?.length ? new Set(body.chapterIds) : null;

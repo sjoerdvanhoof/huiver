@@ -27,15 +27,22 @@ export async function importBook(
     throw error;
   }
 
+  // '' means "checked, this book has no cover" — the cover route won't retry.
+  let coverPath = "";
+  if (extracted.cover) {
+    coverPath = path.join(dir, `cover.${extracted.cover.ext}`);
+    await Bun.write(coverPath, extracted.cover.bytes);
+  }
+
   const insertBook = db.query(
-    "INSERT INTO books (id, title, author, format, source_path, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO books (id, title, author, format, source_path, created_at, cover_path) VALUES (?, ?, ?, ?, ?, ?, ?)",
   );
   const insertChapter = db.query(
     "INSERT INTO chapters (id, book_id, idx, title, text, char_count) VALUES (?, ?, ?, ?, ?, ?)",
   );
 
   db.transaction(() => {
-    insertBook.run(bookId, extracted.title, extracted.author, extracted.format, sourcePath, Date.now());
+    insertBook.run(bookId, extracted.title, extracted.author, extracted.format, sourcePath, Date.now(), coverPath);
     extracted.chapters.forEach((chapter, idx) => {
       insertChapter.run(newId("ch"), bookId, idx, chapter.title, chapter.text, chapter.text.length);
     });

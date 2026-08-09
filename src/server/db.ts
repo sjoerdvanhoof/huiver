@@ -10,11 +10,12 @@ export const AUDIO_DIR = path.join(DATA_DIR, "audio");
 mkdirSync(UPLOAD_DIR, { recursive: true });
 mkdirSync(AUDIO_DIR, { recursive: true });
 
-export const db = new Database(path.join(DATA_DIR, "huiver.db"), { create: true });
-db.exec("PRAGMA journal_mode = WAL;");
-db.exec("PRAGMA foreign_keys = ON;");
-
-db.exec(`
+/**
+ * Baseline schema. Kept `IF NOT EXISTS` so databases created before the
+ * migration counter existed (they sit at user_version 0 but already have
+ * these tables) replay it as a no-op.
+ */
+const BASELINE = `
   CREATE TABLE IF NOT EXISTS books (
     id          TEXT PRIMARY KEY,
     title       TEXT NOT NULL,
@@ -62,7 +63,54 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS chapters_book ON chapters(book_id, idx);
   CREATE INDEX IF NOT EXISTS jobs_book ON jobs(book_id, created_at DESC);
   CREATE INDEX IF NOT EXISTS tracks_job ON tracks(job_id, idx);
-`);
+`;
+
+/** v2: persisted settings, playback positions, cover art. */
+const V2 = `
+  CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS playback_positions (
+    chapter_id       TEXT PRIMARY KEY REFERENCES chapters(id) ON DELETE CASCADE,
+    book_id          TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    track_id         TEXT REFERENCES tracks(id) ON DELETE SET NULL,
+    position_seconds REAL NOT NULL DEFAULT 0,
+    duration_seconds REAL,
+    completed        INTEGER NOT NULL DEFAULT 0,
+    updated_at       INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS positions_book ON playback_positions(book_id, updated_at DESC);
+
+  ALTER TABLE books ADD COLUMN cover_path TEXT;
+
+  CREATE INDEX IF NOT EXISTS tracks_chapter ON tracks(chapter_id);
+`;
+
+/** Index = the user_version the database is migrated *from*. */
+const MIGRATIONS = [BASELINE, V2];
+
+export function runMigrations(database: Database): void {
+  const { user_version } = database.query("PRAGMA user_version").get() as { user_version: number };
+  if (user_version >= MIGRATIONS.length) return;
+
+  database.transaction(() => {
+    for (let v = user_version; v < MIGRATIONS.length; v++) database.exec(MIGRATIONS[v]!);
+    database.exec(`PRAGMA user_version = ${MIGRATIONS.length}`);
+  })();
+}
+
+/** Open (or create) a huiver database and bring its schema up to date. */
+export function openDatabase(dbPath: string): Database {
+  const database = new Database(dbPath, { create: true });
+  database.exec("PRAGMA journal_mode = WAL;");
+  database.exec("PRAGMA foreign_keys = ON;");
+  runMigrations(database);
+  return database;
+}
+
+export const db = openDatabase(path.join(DATA_DIR, "huiver.db"));
 
 export type BookRow = {
   id: string;
@@ -71,6 +119,7 @@ export type BookRow = {
   format: string;
   source_path: string;
   created_at: number;
+  cover_path: string | null;
 };
 
 export type ChapterRow = {
@@ -110,6 +159,16 @@ export type TrackRow = {
   path: string | null;
   duration: number | null;
   error: string | null;
+};
+
+export type PlaybackPositionRow = {
+  chapter_id: string;
+  book_id: string;
+  track_id: string | null;
+  position_seconds: number;
+  duration_seconds: number | null;
+  completed: number;
+  updated_at: number;
 };
 
 export const newId = (prefix: string) => `${prefix}_${crypto.randomUUID().slice(0, 12)}`;
