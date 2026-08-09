@@ -44,16 +44,31 @@ __pycache__
 # Runtime state: uploaded books, generated audio, SQLite database
 data
 
-# Example books are personal and usually copyrighted — keep the folder,
-# never commit its contents.
+# Books and audio. Default is that nothing ships: a personal library is
+# probably copyrighted and this is a public repo. Anything dropped into
+# examples/ stays ignored unless it is named in the allowlist below.
 examples/*
-!examples/README.md
-
-# Belt-and-braces: no ebook or audio artefacts anywhere in the repo
 *.epub
 *.mobi
 *.azw3
 *.m4b
 *.mp3
 *.wav
+
+# ...except the curated Project Gutenberg corpus. Public domain, ~3 MB, and
+# shipping it means the app is testable straight after a clone.
+# Adding a sample? Add its filename here too, or it will silently not ship.
+# Kept in sync with BOOKS in scripts/fetch-examples.ts by a unit test.
+!examples/README.md
+!examples/alice-in-wonderland.epub
+!examples/dracula.epub
+!examples/frankenstein.epub
+!examples/metamorphosis.epub
+!examples/moby-dick.epub
+!examples/pride-and-prejudice.epub
+!examples/sherlock-holmes.epub
+!examples/the-time-machine.epub
+!examples/the-yellow-wallpaper.epub
+!examples/tom-sawyer.epub
+
 .gstack/

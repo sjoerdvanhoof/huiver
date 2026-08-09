@@ -1,16 +1,25 @@
 # examples
 
-Test books. Everything in this folder except this file is gitignored — ebooks are
-either copyrighted or trivially re-downloadable, and neither belongs in git history.
+The 10 books listed below are committed to the repo, so the app is testable
+immediately after a clone. They are public domain, from
+[Project Gutenberg](https://www.gutenberg.org), and about 3 MB in total.
 
-## Get the sample corpus
+**Anything else you put in this folder stays out of git.** `.gitignore` blocks all
+ebook formats by default and re-includes only these ten by name, so dropping your own
+(likely copyrighted) books here is safe — they will not be committed to a public repo.
+
+Adding a new sample means adding a `!examples/<name>.epub` line to `.gitignore` as
+well; a unit test fails if that list drifts out of sync with `scripts/fetch-examples.ts`.
+
+## Re-downloading
+
+The books are already here. If you ever need to refetch them:
 
 ```bash
 bun run examples
 ```
 
-That pulls 10 public-domain EPUBs from [Project Gutenberg](https://www.gutenberg.org)
-and checks each one parses. They are chosen to cover different EPUB shapes:
+They cover different EPUB shapes:
 
 | Book | Why it's here |
 | --- | --- |
