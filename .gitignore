@@ -1,0 +1,59 @@
+# dependencies
+node_modules
+
+# build output
+out
+dist
+*.tgz
+
+# code coverage
+coverage
+*.lcov
+
+# logs
+logs
+*.log
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# environment / secrets — never commit API keys
+.env
+.env.*
+!.env.example
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
+
+# editors
+.idea
+.vscode
+
+# macOS
+.DS_Store
+
+# ---------------------------------------------------------------------------
+# huiver-specific
+# ---------------------------------------------------------------------------
+
+# Python venv for the local TTS engines (~1 GB)
+.venv
+__pycache__
+*.pyc
+
+# Runtime state: uploaded books, generated audio, SQLite database
+data
+
+# Example books are personal and usually copyrighted — keep the folder,
+# never commit its contents.
+examples/*
+!examples/README.md
+
+# Belt-and-braces: no ebook or audio artefacts anywhere in the repo
+*.epub
+*.mobi
+*.azw3
+*.m4b
+*.mp3
+*.wav
+.gstack/

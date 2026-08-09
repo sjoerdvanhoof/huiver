@@ -1,0 +1,3 @@
+numpy>=1.26,<3
+kokoro>=0.9.4
+soundfile>=0.12
