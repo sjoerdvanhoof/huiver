@@ -8,9 +8,8 @@ describe("parseHash", () => {
     expect(parseHash("#/")).toEqual({ name: "library" });
   });
 
-  test("settings", () => {
-    expect(parseHash("#/settings")).toEqual({ name: "settings" });
-    expect(parseHash("#/settings/")).toEqual({ name: "settings" });
+  test("settings is a sheet, so its old URL falls back to the library", () => {
+    expect(parseHash("#/settings")).toEqual({ name: "library" });
   });
 
   test("book pages carry their id", () => {
@@ -23,11 +22,7 @@ describe("parseHash", () => {
   });
 
   test("round-trips through href", () => {
-    for (const route of [
-      { name: "library" } as const,
-      { name: "settings" } as const,
-      { name: "book", id: "bk_1" } as const,
-    ]) {
+    for (const route of [{ name: "library" } as const, { name: "book", id: "bk_1" } as const]) {
       expect(parseHash(href(route))).toEqual(route);
     }
   });

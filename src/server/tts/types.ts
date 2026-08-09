@@ -20,6 +20,8 @@ export type TrackRequest = {
   /** Absolute path of the WAV file to write. */
   outWav: string;
   onChunk?: (done: number, total: number) => void;
+  /** Aborting stops the render at the next chunk boundary. */
+  signal?: AbortSignal;
 };
 
 export type StreamRequest = {

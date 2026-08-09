@@ -2,7 +2,7 @@ import { zipSync } from "fflate";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { serveVoicePreview, streamChapter } from "./audio-routes";
-import { enqueueJob } from "./convert";
+import { cancelJobTracks, cancelTrack, enqueueJob } from "./convert";
 import {
   AUDIO_DIR,
   UPLOAD_DIR,
@@ -79,6 +79,8 @@ function toJobDTO(job: JobRow): JobDTO {
       duration: t.duration,
       error: t.error,
       url: t.status === "done" ? `/api/tracks/${t.id}/audio` : null,
+      chunksDone: t.chunks_done,
+      chunksTotal: t.chunks_total,
     })),
   };
 }
@@ -345,7 +347,9 @@ export const apiRoutes = {
 
       const voice = body.voice || settings.defaultVoice || info.defaultVoice;
       if (!voice) return fail("No voice selected");
-      const speed = Math.min(2, Math.max(0.5, Number(body.speed) || settings.defaultSpeed));
+      // Always render at 1.0 unless a caller explicitly asks otherwise: the
+      // player changes playback speed without re-synthesizing anything.
+      const speed = Math.min(2, Math.max(0.5, Number(body.speed) || 1));
 
       const all = db.query("SELECT * FROM chapters WHERE book_id = ? ORDER BY idx").all(book.id) as ChapterRow[];
       const wanted = body.chapterIds?.length ? new Set(body.chapterIds) : null;
@@ -390,6 +394,7 @@ export const apiRoutes = {
       if (job.status === "done" || job.status === "error") return fail("Job already finished", 409);
 
       db.query("UPDATE jobs SET status = 'cancelled', finished_at = ? WHERE id = ?").run(Date.now(), job.id);
+      cancelJobTracks(job.id); // stop the render and clear the rest of the queue
       return json({ ok: true });
     },
   },
@@ -421,5 +426,14 @@ export const apiRoutes = {
   },
 
   "/api/tracks/:id/audio": (req: Bun.BunRequest<"/api/tracks/:id/audio">) => serveTrackAudio(req, req.params.id),
+
+  /** Remove one chapter from the conversion queue. */
+  "/api/tracks/:id/cancel": {
+    POST: (req: Bun.BunRequest<"/api/tracks/:id/cancel">) => {
+      const track = db.query("SELECT id FROM tracks WHERE id = ?").get(req.params.id) as { id: string } | null;
+      if (!track) return fail("Track not found", 404);
+      return cancelTrack(track.id) ? json({ ok: true }) : fail("That chapter is already finished", 409);
+    },
+  },
 
 } as const;

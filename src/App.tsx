@@ -1,11 +1,11 @@
 import { ChevronLeft, Headphones, Moon, Settings, Sun } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { ConversionIndicator } from "./components/ConversionIndicator";
+import { SettingsSheet } from "./components/SettingsSheet";
 import { href, navigate, useHashRoute } from "./hooks/useHashRoute";
 import { useTheme } from "./hooks/useTheme";
 import { BookPage } from "./pages/BookPage";
 import { LibraryPage } from "./pages/LibraryPage";
-import { SettingsPage } from "./pages/SettingsPage";
 import { FullPlayer } from "./player/FullPlayer";
 import { MiniPlayer } from "./player/MiniPlayer";
 import { restoreLastSession } from "./player/restore";
@@ -16,6 +16,7 @@ export function App() {
   const route = useHashRoute();
   const { resolved, setTheme } = useTheme();
   const playerVisible = usePlayer(s => s.index >= 0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Put the last listening session one tap away after a reload.
   useEffect(() => {
@@ -54,15 +55,17 @@ export function App() {
             >
               {resolved === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
             </button>
-            <a
-              href={href({ name: "settings" })}
+            <button
+              onClick={() => setSettingsOpen(true)}
               aria-label="Settings"
+              aria-haspopup="dialog"
+              aria-expanded={settingsOpen}
               className={`rounded-full p-2 transition-colors hover:bg-accent hover:text-foreground ${
-                route.name === "settings" ? "text-foreground" : "text-muted-foreground"
+                settingsOpen ? "text-foreground" : "text-muted-foreground"
               }`}
             >
               <Settings className="size-5" />
-            </a>
+            </button>
           </div>
         </div>
       </header>
@@ -70,11 +73,11 @@ export function App() {
       <main className="mx-auto w-full max-w-6xl px-4 pt-6 sm:px-6">
         {route.name === "library" && <LibraryPage />}
         {route.name === "book" && <BookPage key={route.id} bookId={route.id} />}
-        {route.name === "settings" && <SettingsPage />}
       </main>
 
       <MiniPlayer />
       <FullPlayer />
+      <SettingsSheet open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

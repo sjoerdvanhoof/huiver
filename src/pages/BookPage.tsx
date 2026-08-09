@@ -1,16 +1,17 @@
-import { AlertCircle, Check, Download, ListChecks, Loader2, Play, Sparkles, Trash2, X } from "lucide-react";
+import { AlertCircle, Check, Download, ListChecks, Loader2, Pause, Play, Sparkles, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { BookCover } from "@/components/BookCover";
-import { StatusIcon, type ConversionState } from "@/components/StatusIcon";
+import { ChapterAction } from "@/components/ChapterAction";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { deriveChapterStates, type ChapterUiState } from "@/lib/chapter-state";
 import { formatApproxDuration, formatDuration, formatEstimate } from "@/lib/format";
 import { useBookDetail } from "../hooks/useBookDetail";
-import { cancelJob, isActiveJob, useJobs } from "../hooks/useJobs";
+import { cancelJob, cancelTrack, isActiveJob, reloadJobs, useJobs } from "../hooks/useJobs";
 import { navigate } from "../hooks/useHashRoute";
 import { useProviders } from "../hooks/useProviders";
 import { useSettings } from "../hooks/useSettings";
-import { buildQueueFromBook, playQueue, usePlayer } from "../player/store";
+import { buildQueueFromBook, playQueue, toggle, usePlayer } from "../player/store";
 import type { BookDetailDTO, ChapterDTO, JobDTO } from "../shared";
 
 export function BookPage({ bookId }: { bookId: string }) {
@@ -34,8 +35,15 @@ export function BookPage({ bookId }: { bookId: string }) {
   const activeJobs = useMemo(() => bookJobs.filter(isActiveJob), [bookJobs]);
   const chapterStates = useMemo(() => deriveChapterStates(book, bookJobs), [book, bookJobs]);
 
+  // What the global player is doing, so the buttons here mirror it instead of
+  // offering a second, conflicting "play".
   const playingChapterId = usePlayer(s => s.queue[s.index]?.chapterId ?? null);
+  const playingBookId = usePlayer(s => s.queue[s.index]?.bookId ?? null);
+  const playingChapterIdx = usePlayer(s => s.queue[s.index]?.chapterIdx ?? null);
+  const playingChapterTitle = usePlayer(s => s.queue[s.index]?.chapterTitle ?? null);
+  const playerPosition = usePlayer(s => s.position);
   const playerStatus = usePlayer(s => s.status);
+  const isPlaying = playerStatus === "playing" || playerStatus === "loading";
 
   const error = actionError ?? bookError ?? jobsError;
 
@@ -45,8 +53,11 @@ export function BookPage({ bookId }: { bookId: string }) {
 
   const p = book.progress;
   const unconverted = book.chapters.filter(c => !c.audio);
+  // Chapters already waiting or rendering, so bulk convert never double-queues.
   const queued = new Set(
-    activeJobs.flatMap(j => j.tracks.filter(t => t.status !== "done").map(t => t.chapterId)),
+    activeJobs.flatMap(j =>
+      j.tracks.filter(t => t.status === "pending" || t.status === "running").map(t => t.chapterId),
+    ),
   );
   const toConvert = selectMode
     ? book.chapters.filter(c => selected.has(c.id))
@@ -73,18 +84,19 @@ export function BookPage({ bookId }: { bookId: string }) {
   };
 
   /** Queue chapters and get out of the way — progress shows up inline. */
-  const convert = async () => {
+  const convert = async (chapterIds: string[]) => {
+    if (chapterIds.length === 0) return;
     setActionError(null);
     try {
       // No provider/voice/speed: the server falls back to the saved settings.
       await api<JobDTO>(`/api/books/${book.id}/convert`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chapterIds: toConvert.map(c => c.id) }),
+        body: JSON.stringify({ chapterIds }),
       });
       setSelectMode(false);
       setSelected(new Set());
-      await reload();
+      await Promise.all([reload(), reloadJobs()]);
     } catch (e) {
       setActionError(e instanceof Error ? e.message : String(e));
     }
@@ -173,7 +185,15 @@ export function BookPage({ bookId }: { bookId: string }) {
           <SegmentedProgress book={book} className="mt-3" />
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            {p.resume ? (
+            {/* One transport button: it controls the player when this book is
+                loaded, and only starts a new session otherwise. */}
+            {playingBookId === book.id ? (
+              <Button onClick={toggle} size="lg" className="gap-2">
+                {isPlaying ? <Pause className="size-4" /> : <Play className="size-4" />}
+                {isPlaying ? "Pause" : "Resume"} · Ch. {(playingChapterIdx ?? 0) + 1}
+                {playerPosition > 3 && ` at ${formatDuration(playerPosition)}`}
+              </Button>
+            ) : p.resume ? (
               <Button onClick={resume} size="lg" className="gap-2">
                 <Play className="size-4" />
                 Resume · Ch. {p.resume.chapterIdx + 1}
@@ -192,25 +212,25 @@ export function BookPage({ bookId }: { bookId: string }) {
               )
             )}
 
-            {activeJobs.length > 0 ? (
+            {toConvert.length > 0 && (
+              <Button
+                variant="outline"
+                size="lg"
+                className="gap-2"
+                onClick={() => void convert(toConvert.map(c => c.id))}
+                disabled={!engine?.available}
+                title={engine?.available ? undefined : engine?.reason}
+              >
+                <Sparkles className="size-4" />
+                Convert {toConvert.length} chapter{toConvert.length === 1 ? "" : "s"}
+                <span className="text-xs font-normal text-muted-foreground">
+                  {formatEstimate(toConvertSeconds)}
+                </span>
+              </Button>
+            )}
+
+            {activeJobs.length > 0 && (
               <ConversionStatus jobs={activeJobs} onStop={() => void stopConverting()} />
-            ) : (
-              toConvert.length > 0 && (
-                <Button
-                  variant="outline"
-                  size="lg"
-                  className="gap-2"
-                  onClick={() => void convert()}
-                  disabled={!engine?.available}
-                  title={engine?.available ? undefined : engine?.reason}
-                >
-                  <Sparkles className="size-4" />
-                  Convert {toConvert.length} chapter{toConvert.length === 1 ? "" : "s"}
-                  <span className="text-xs font-normal text-muted-foreground">
-                    {formatEstimate(toConvertSeconds)}
-                  </span>
-                </Button>
-              )
             )}
           </div>
 
@@ -270,9 +290,17 @@ export function BookPage({ bookId }: { bookId: string }) {
                   return next;
                 })
               }
-              playing={playingChapterId === chapter.id && (playerStatus === "playing" || playerStatus === "loading")}
+              isCurrent={playingChapterId === chapter.id}
+              isPlaying={isPlaying}
               canStream={engine?.available ?? false}
+              canConvert={engine?.available ?? false}
               onPlay={() => playChapter(chapter)}
+              onTogglePlay={toggle}
+              onConvert={() => void convert([chapter.id])}
+              onCancel={(() => {
+                const trackId = chapterStates.get(chapter.id)?.cancelTrackId;
+                return trackId ? () => void cancelTrack(trackId) : undefined;
+              })()}
             />
           ))}
         </ul>
@@ -340,64 +368,48 @@ function SegmentedProgress({ book, className }: { book: BookDetailDTO; className
   );
 }
 
-type ChapterUiState = { state: ConversionState; detail?: string | null };
-
-/** Fold the chapter's tracks and any active jobs into one displayable state. */
-function deriveChapterStates(book: BookDetailDTO | null, jobs: JobDTO[]): Map<string, ChapterUiState> {
-  const map = new Map<string, ChapterUiState>();
-  if (!book) return map;
-
-  for (const chapter of book.chapters) {
-    map.set(chapter.id, { state: chapter.audio ? "done" : "none" });
-  }
-
-  // Newest jobs first so the freshest attempt wins the badge.
-  for (const job of [...jobs].sort((a, b) => b.createdAt - a.createdAt)) {
-    const active = isActiveJob(job);
-    for (const track of job.tracks) {
-      const current = map.get(track.chapterId);
-      if (!current) continue;
-      if (active && track.status === "running") map.set(track.chapterId, { state: "converting" });
-      else if (active && track.status === "pending" && current.state === "none") {
-        map.set(track.chapterId, { state: "queued" });
-      } else if (track.status === "error" && current.state === "none") {
-        map.set(track.chapterId, { state: "error", detail: track.error });
-      }
-    }
-  }
-  return map;
-}
-
 function ChapterRow({
   chapter,
   state,
   selectMode,
   selected,
   onToggleSelect,
-  playing,
+  isCurrent,
+  isPlaying,
   canStream,
+  canConvert,
   onPlay,
+  onTogglePlay,
+  onConvert,
+  onCancel,
 }: {
   chapter: ChapterDTO;
   state: ChapterUiState;
   selectMode: boolean;
   selected: boolean;
   onToggleSelect: () => void;
-  playing: boolean;
+  /** This chapter is the one loaded in the player. */
+  isCurrent: boolean;
+  isPlaying: boolean;
   canStream: boolean;
+  canConvert: boolean;
   onPlay: () => void;
+  onTogglePlay: () => void;
+  onConvert: () => void;
+  onCancel?: () => void;
 }) {
   const finished = chapter.position?.completed ?? false;
   const partial =
     !finished && chapter.position !== null && chapter.position.positionSeconds > 3
       ? Math.min(1, chapter.position.positionSeconds / Math.max(1, chapter.estimatedDurationSeconds))
       : null;
+  const showPause = isCurrent && isPlaying;
 
   return (
     <li
       onClick={selectMode ? onToggleSelect : undefined}
       className={`relative px-4 py-2.5 transition-colors ${selectMode ? "cursor-pointer" : ""} ${
-        playing ? "bg-primary/5" : "hover:bg-accent/50"
+        isCurrent ? "bg-primary/5" : "hover:bg-accent/50"
       }`}
     >
       <div className="flex items-center gap-3">
@@ -411,12 +423,26 @@ function ChapterRow({
           </span>
         )}
 
-        <StatusIcon state={state.state} detail={state.detail} />
+        <ChapterAction
+          state={state.state}
+          progress={state.progress}
+          detail={state.detail}
+          disabled={!canConvert}
+          onConvert={onConvert}
+          onCancel={onCancel}
+        />
 
         <div className="min-w-0 flex-1">
-          <p className={`truncate text-sm font-medium ${finished ? "text-muted-foreground" : ""}`}>
-            {chapter.idx + 1}. {chapter.title}
-            {finished && <Check className="ml-1.5 inline size-3.5 text-primary" aria-label="Finished" />}
+          <p className="flex items-center gap-1.5 text-sm font-medium">
+            <span className={`truncate ${finished ? "text-muted-foreground" : ""}`}>
+              {chapter.idx + 1}. {chapter.title}
+            </span>
+            {finished && (
+              <span className="inline-flex shrink-0 items-center gap-0.5 text-xs font-normal text-muted-foreground">
+                <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                Finished
+              </span>
+            )}
           </p>
           <p className="truncate text-xs text-muted-foreground">{chapter.preview}</p>
         </div>
@@ -429,20 +455,29 @@ function ChapterRow({
 
         {!selectMode && (
           <button
-            title={chapter.audio ? "Play" : "Listen now (streams while it renders)"}
-            aria-label={`Play ${chapter.title}`}
+            title={
+              showPause
+                ? "Pause"
+                : isCurrent
+                  ? "Resume"
+                  : chapter.audio
+                    ? "Play"
+                    : "Listen now (streams while it renders)"
+            }
+            aria-label={`${showPause ? "Pause" : "Play"} ${chapter.title}`}
             disabled={!chapter.audio && !canStream}
             onClick={e => {
               e.stopPropagation();
-              onPlay();
+              // Already loaded? Toggle it, never restart it.
+              isCurrent ? onTogglePlay() : onPlay();
             }}
             className={`shrink-0 rounded-full p-1.5 transition-colors disabled:opacity-30 ${
-              playing
+              isCurrent
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:bg-accent hover:text-foreground"
             }`}
           >
-            <Play className="size-4" />
+            {showPause ? <Pause className="size-4" /> : <Play className="size-4" />}
           </button>
         )}
       </div>

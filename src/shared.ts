@@ -11,11 +11,14 @@ export type ProviderDTO = {
   supportsSpeed: boolean;
 };
 
+/**
+ * Audio is always synthesized at speed 1.0 — playback speed belongs to the
+ * player, where it can change without re-rendering anything.
+ */
 export type SettingsDTO = {
   defaultProvider: string;
   /** null = use the provider's own default voice. */
   defaultVoice: string | null;
-  defaultSpeed: number;
   theme: "system" | "light" | "dark";
 };
 
@@ -81,10 +84,13 @@ export type TrackDTO = {
   idx: number;
   title: string;
   chapterId: string;
-  status: "pending" | "running" | "done" | "error";
+  status: "pending" | "running" | "done" | "error" | "cancelled";
   duration: number | null;
   error: string | null;
   url: string | null;
+  /** Synthesis progress for this chapter alone. */
+  chunksDone: number;
+  chunksTotal: number;
 };
 
 export type JobDTO = {

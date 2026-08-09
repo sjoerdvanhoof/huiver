@@ -77,7 +77,8 @@ describe("runMigrations", () => {
       expect(tables).toContain(table);
     }
     expect(columnNames(db, "books")).toContain("cover_path");
-    expect(userVersion(db)).toBe(2);
+    expect(columnNames(db, "tracks")).toContain("chunks_done");
+    expect(userVersion(db)).toBe(3);
   });
 
   test("existing pre-migration database keeps its data", () => {
@@ -98,17 +99,42 @@ describe("runMigrations", () => {
 
     runMigrations(db);
 
-    expect(userVersion(db)).toBe(2);
+    expect(userVersion(db)).toBe(3);
     expect(db.query("SELECT title FROM books WHERE id = 'bk_1'").get()).toEqual({ title: "Moby Dick" });
     expect(db.query("SELECT COUNT(*) AS n FROM tracks").get()).toEqual({ n: 1 });
     expect(tableNames(db)).toContain("playback_positions");
     expect(columnNames(db, "books")).toContain("cover_path");
   });
 
+  test("upgrades a v2 database in place", () => {
+    const db = new Database(":memory:");
+    runMigrations(db);
+
+    // Wind the schema back to what v2 shipped, keeping a row to check.
+    db.exec(`
+      INSERT INTO books (id, title, format, source_path, created_at) VALUES ('bk_1', 'Emma', 'epub', '/x', 1);
+      INSERT INTO settings (key, value) VALUES ('defaultVoice', '"af_heart"');
+      ALTER TABLE tracks DROP COLUMN chunks_done;
+      ALTER TABLE tracks DROP COLUMN chunks_total;
+      PRAGMA user_version = 2;
+    `);
+    expect(columnNames(db, "tracks")).not.toContain("chunks_done");
+
+    runMigrations(db);
+
+    expect(userVersion(db)).toBe(3);
+    expect(columnNames(db, "tracks")).toContain("chunks_done");
+    expect(columnNames(db, "tracks")).toContain("chunks_total");
+    expect(db.query("SELECT title FROM books WHERE id = 'bk_1'").get()).toEqual({ title: "Emma" });
+    expect(db.query("SELECT value FROM settings WHERE key = 'defaultVoice'").get()).toEqual({
+      value: '"af_heart"',
+    });
+  });
+
   test("running migrations twice is a no-op", () => {
     const db = new Database(":memory:");
     runMigrations(db);
     expect(() => runMigrations(db)).not.toThrow();
-    expect(userVersion(db)).toBe(2);
+    expect(userVersion(db)).toBe(3);
   });
 });

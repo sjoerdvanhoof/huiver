@@ -5,7 +5,6 @@ import { api } from "../lib/api";
 const DEFAULTS: SettingsDTO = {
   defaultProvider: "kokoro",
   defaultVoice: null,
-  defaultSpeed: 1,
   theme: "system",
 };
 

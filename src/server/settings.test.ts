@@ -22,9 +22,8 @@ describe("settings", () => {
 
   test("partial patch merges over defaults and persists", () => {
     const db = freshDb();
-    const updated = updateSettings({ defaultVoice: "af_heart", defaultSpeed: 1.25 }, db);
+    const updated = updateSettings({ defaultVoice: "af_heart" }, db);
     expect(updated.defaultVoice).toBe("af_heart");
-    expect(updated.defaultSpeed).toBe(1.25);
     expect(updated.defaultProvider).toBe("kokoro");
 
     // A second patch keeps earlier keys.
@@ -34,17 +33,23 @@ describe("settings", () => {
     expect(settings.theme).toBe("dark");
   });
 
-  test("clamps speed to 0.5–2", () => {
-    const db = freshDb();
-    expect(updateSettings({ defaultSpeed: 9 }, db).defaultSpeed).toBe(2);
-    expect(updateSettings({ defaultSpeed: 0.1 }, db).defaultSpeed).toBe(0.5);
-  });
-
   test("rejects unknown keys, providers and themes", () => {
     const db = freshDb();
     expect(() => updateSettings({ nonsense: 1 }, db)).toThrow(/Unknown setting/);
     expect(() => updateSettings({ defaultProvider: "does-not-exist" }, db)).toThrow(/Unknown provider/);
     expect(() => updateSettings({ theme: "sepia" }, db)).toThrow(/Unknown theme/);
+  });
+
+  test("synthesis speed is no longer a setting", () => {
+    const db = freshDb();
+    expect(() => updateSettings({ defaultSpeed: 1.25 }, db)).toThrow(/Unknown setting/);
+    expect(getSettings(db)).not.toHaveProperty("defaultSpeed");
+  });
+
+  test("ignores a defaultSpeed row left over from an older version", () => {
+    const db = freshDb();
+    db.query("INSERT INTO settings (key, value) VALUES ('defaultSpeed', '1.5')").run();
+    expect(getSettings(db)).toEqual(DEFAULT_SETTINGS);
   });
 
   test("empty-string voice is stored as null (provider default)", () => {

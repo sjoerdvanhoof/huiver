@@ -96,3 +96,43 @@ export async function cancelJob(id: string): Promise<void> {
   await api(`/api/jobs/${id}/cancel`, { method: "POST" });
   await poll();
 }
+
+/** Drop a single chapter from the queue. */
+export async function cancelTrack(id: string): Promise<void> {
+  await api(`/api/tracks/${id}/cancel`, { method: "POST" });
+  await poll();
+}
+
+export type QueueEntry = {
+  trackId: string;
+  jobId: string;
+  bookId: string;
+  bookTitle: string;
+  chapterTitle: string;
+  running: boolean;
+  /** 0–1 for the chapter being rendered; null while it waits. */
+  progress: number | null;
+};
+
+/** Everything still to be converted, oldest job first, in render order. */
+export function queueEntries(jobs: JobDTO[]): QueueEntry[] {
+  return [...jobs]
+    .filter(isActiveJob)
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .flatMap(job =>
+      job.tracks
+        .filter(track => track.status === "pending" || track.status === "running")
+        .map(track => ({
+          trackId: track.id,
+          jobId: job.id,
+          bookId: job.bookId,
+          bookTitle: job.bookTitle,
+          chapterTitle: track.title,
+          running: track.status === "running",
+          progress:
+            track.status === "running" && track.chunksTotal > 0
+              ? Math.min(1, track.chunksDone / track.chunksTotal)
+              : null,
+        })),
+    );
+}

@@ -88,8 +88,14 @@ const V2 = `
   CREATE INDEX IF NOT EXISTS tracks_chapter ON tracks(chapter_id);
 `;
 
+/** v3: per-track progress, so a single chapter can show its own percentage. */
+const V3 = `
+  ALTER TABLE tracks ADD COLUMN chunks_done INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE tracks ADD COLUMN chunks_total INTEGER NOT NULL DEFAULT 0;
+`;
+
 /** Index = the user_version the database is migrated *from*. */
-const MIGRATIONS = [BASELINE, V2];
+const MIGRATIONS = [BASELINE, V2, V3];
 
 export function runMigrations(database: Database): void {
   const { user_version } = database.query("PRAGMA user_version").get() as { user_version: number };
@@ -147,7 +153,7 @@ export type JobRow = {
   finished_at: number | null;
 };
 
-export type TrackStatus = "pending" | "running" | "done" | "error";
+export type TrackStatus = "pending" | "running" | "done" | "error" | "cancelled";
 
 export type TrackRow = {
   id: string;
@@ -159,6 +165,8 @@ export type TrackRow = {
   path: string | null;
   duration: number | null;
   error: string | null;
+  chunks_done: number;
+  chunks_total: number;
 };
 
 export type PlaybackPositionRow = {

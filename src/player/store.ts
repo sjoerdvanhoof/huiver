@@ -299,6 +299,11 @@ export function toggle(): void {
   void audio.play().catch(() => undefined);
 }
 
+/** Stop playback without changing what is loaded — used when a preview starts. */
+export function pause(): void {
+  if (store.state.status === "playing" || store.state.status === "loading") store.audio?.pause();
+}
+
 export function seekTo(seconds: number): void {
   const item = currentItem(store.state);
   if (!item || item.source.kind !== "track") return;
@@ -619,9 +624,10 @@ function installGlobals(): void {
 
 export function liveStreamUrl(
   chapterId: string,
-  settings: Pick<SettingsDTO, "defaultProvider" | "defaultVoice" | "defaultSpeed">,
+  settings: Pick<SettingsDTO, "defaultProvider" | "defaultVoice">,
 ): string {
-  const params = new URLSearchParams({ provider: settings.defaultProvider, speed: String(settings.defaultSpeed) });
+  // Rendered at 1.0; the audio element's playbackRate handles the rest.
+  const params = new URLSearchParams({ provider: settings.defaultProvider });
   if (settings.defaultVoice) params.set("voice", settings.defaultVoice);
   return `/api/chapters/${chapterId}/stream?${params}`;
 }

@@ -4,18 +4,85 @@ import { chunkText } from "./chunk";
 import { AUDIO_DIR, db } from "./db";
 import type { BookRow, ChapterRow, JobRow, TrackRow } from "./db";
 import { getProvider } from "./tts";
+import type { TTSSession } from "./tts";
 
-const queue: string[] = [];
-let draining = false;
+/**
+ * `bun --hot` re-evaluates this module on every save without restarting the
+ * process. Plain module-level state would give each reload its own queue and
+ * drain loop, so saves during a conversion stack up parallel loops — each with
+ * its own Python worker, all rendering the same book. Keeping the state on
+ * globalThis means a reload picks up exactly where the last one left off.
+ */
+type ConvertState = {
+  queue: string[];
+  draining: boolean;
+  /** Renders in flight, so a chapter can be pulled out of the queue mid-synthesis. */
+  rendering: Map<string, AbortController>;
+  /** Sessions owned by running jobs, so a reload can reap their workers. */
+  sessions: Set<TTSSession>;
+  resumed: boolean;
+};
+
+const state: ConvertState = ((globalThis as Record<string, unknown>).__huiverConvert ??= {
+  queue: [],
+  draining: false,
+  rendering: new Map(),
+  sessions: new Set(),
+  resumed: false,
+} satisfies ConvertState) as ConvertState;
+
+const { queue, rendering } = state;
 
 export function enqueueJob(jobId: string) {
   queue.push(jobId);
   void drain();
 }
 
+// A reload strands the worker a running job spawned (its stdin stays open, so
+// it never sees EOF). Reap them; the queue resumes on the new module instance.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    for (const session of state.sessions) void session.close().catch(() => {});
+    state.sessions.clear();
+    state.draining = false;
+  });
+}
+
+/**
+ * Drop one chapter from the queue. A chapter that is still waiting is simply
+ * skipped when the job reaches it; one that is already rendering is aborted at
+ * the next chunk boundary and its partial audio discarded.
+ */
+export function cancelTrack(trackId: string): boolean {
+  const row = db.query("SELECT status FROM tracks WHERE id = ?").get(trackId) as { status: string } | null;
+  if (!row || row.status === "done" || row.status === "cancelled") return false;
+
+  db.query("UPDATE tracks SET status = 'cancelled', error = NULL WHERE id = ?").run(trackId);
+  rendering.get(trackId)?.abort();
+  return true;
+}
+
+/**
+ * Stop a whole run: abort whatever is rendering and drop everything still
+ * queued. Stopping is a choice, not a failure, so nothing is marked as an error.
+ */
+export function cancelJobTracks(jobId: string): void {
+  const tracks = db
+    .query("SELECT id FROM tracks WHERE job_id = ? AND status IN ('pending', 'running')")
+    .all(jobId) as { id: string }[];
+
+  for (const { id } of tracks) {
+    db.query("UPDATE tracks SET status = 'cancelled', error = NULL WHERE id = ?").run(id);
+    rendering.get(id)?.abort();
+  }
+}
+
+const trackStatus = (trackId: string): string | null =>
+  (db.query("SELECT status FROM tracks WHERE id = ?").get(trackId) as { status: string } | null)?.status ?? null;
+
 async function drain() {
-  if (draining) return;
-  draining = true;
+  if (state.draining) return;
+  state.draining = true;
   try {
     while (queue.length > 0) {
       const jobId = queue.shift()!;
@@ -29,7 +96,7 @@ async function drain() {
       }
     }
   } finally {
-    draining = false;
+    state.draining = false;
   }
 }
 
@@ -98,21 +165,36 @@ async function runJob(jobId: string) {
 
   db.query("UPDATE jobs SET status = 'running', chunks_total = ?, chunks_done = 0, error = NULL WHERE id = ?")
     .run(chunksTotal, jobId);
+  // Per-track totals up front so a queued chapter can show its own size.
+  const setTrackTotal = db.query("UPDATE tracks SET chunks_total = ? WHERE id = ?");
+  for (const { track, chunks } of work) setTrackTotal.run(chunks.length, track.id);
 
   const outDir = path.join(AUDIO_DIR, jobId);
   await mkdir(outDir, { recursive: true });
 
   const session = await getProvider(job.provider).open();
+  state.sessions.add(session);
   let chunksDone = 0;
 
   try {
     for (const { track, chunks } of work) {
-      if (isCancelled(jobId)) return;
+      if (isCancelled(jobId)) {
+        cancelJobTracks(jobId); // don't leave the rest hanging as pending
+        return;
+      }
+
+      // Pulled out of the queue since the job started.
+      if (trackStatus(track.id) === "cancelled") {
+        chunksDone += chunks.length;
+        db.query("UPDATE jobs SET chunks_done = ? WHERE id = ?").run(chunksDone, jobId);
+        continue;
+      }
 
       // Already rendered on an earlier run (server restart) — don't redo the work.
       if (track.status === "done" && track.path && (await Bun.file(track.path).exists())) {
         chunksDone += chunks.length;
         db.query("UPDATE jobs SET chunks_done = ? WHERE id = ?").run(chunksDone, jobId);
+        db.query("UPDATE tracks SET chunks_done = chunks_total WHERE id = ?").run(track.id);
         continue;
       }
 
@@ -121,12 +203,15 @@ async function runJob(jobId: string) {
         continue;
       }
 
-      db.query("UPDATE tracks SET status = 'running', error = NULL WHERE id = ?").run(track.id);
+      db.query("UPDATE tracks SET status = 'running', error = NULL, chunks_done = 0 WHERE id = ?").run(track.id);
 
       const stem = `${String(track.idx + 1).padStart(3, "0")}-${slugify(track.title)}`;
       const wavPath = path.join(outDir, `${stem}.wav`);
       const mp3Path = path.join(outDir, `${stem}.mp3`);
       const base = chunksDone;
+
+      const abort = new AbortController();
+      rendering.set(track.id, abort);
 
       try {
         const { durationSec } = await session.synthesize({
@@ -134,51 +219,81 @@ async function runJob(jobId: string) {
           voice: job.voice,
           speed: job.speed,
           outWav: wavPath,
+          signal: abort.signal,
           onChunk: done => {
             db.query("UPDATE jobs SET chunks_done = ? WHERE id = ?").run(base + done, jobId);
+            db.query("UPDATE tracks SET chunks_done = ? WHERE id = ?").run(done, track.id);
           },
         });
 
-        const finalPath = await encodeMp3(wavPath, mp3Path, {
-          title: track.title,
-          album: book.title,
-          artist: book.author ?? "Unknown",
-          track: track.idx + 1,
-        });
+        // Removed from the queue while it rendered — throw the partial away.
+        if (abort.signal.aborted || trackStatus(track.id) === "cancelled") {
+          await rm(wavPath, { force: true });
+          db.query("UPDATE tracks SET status = 'cancelled', chunks_done = 0 WHERE id = ?").run(track.id);
+        } else {
+          const finalPath = await encodeMp3(wavPath, mp3Path, {
+            title: track.title,
+            album: book.title,
+            artist: book.author ?? "Unknown",
+            track: track.idx + 1,
+          });
 
-        db.query("UPDATE tracks SET status = 'done', path = ?, duration = ? WHERE id = ?")
-          .run(finalPath, durationSec, track.id);
+          db.query("UPDATE tracks SET status = 'done', path = ?, duration = ? WHERE id = ?")
+            .run(finalPath, durationSec, track.id);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        db.query("UPDATE tracks SET status = 'error', error = ? WHERE id = ?").run(message, track.id);
-        // A single bad chapter should not sink the whole book.
-        console.error(`[job ${jobId}] track ${track.idx + 1} failed:`, message);
+        await rm(wavPath, { force: true });
+        if (abort.signal.aborted || trackStatus(track.id) === "cancelled") {
+          db.query("UPDATE tracks SET status = 'cancelled', chunks_done = 0 WHERE id = ?").run(track.id);
+        } else {
+          db.query("UPDATE tracks SET status = 'error', error = ? WHERE id = ?").run(message, track.id);
+          // A single bad chapter should not sink the whole book.
+          console.error(`[job ${jobId}] track ${track.idx + 1} failed:`, message);
+        }
+      } finally {
+        rendering.delete(track.id);
       }
 
       chunksDone = base + chunks.length;
       db.query("UPDATE jobs SET chunks_done = ? WHERE id = ?").run(chunksDone, jobId);
     }
   } finally {
+    state.sessions.delete(session);
     await session.close();
   }
 
-  if (isCancelled(jobId)) return;
+  if (isCancelled(jobId)) {
+    cancelJobTracks(jobId);
+    return;
+  }
 
   const failed = db.query("SELECT COUNT(*) AS n FROM tracks WHERE job_id = ? AND status = 'error'")
     .get(jobId) as { n: number };
   const done = db.query("SELECT COUNT(*) AS n FROM tracks WHERE job_id = ? AND status = 'done'")
     .get(jobId) as { n: number };
 
+  // Nothing rendered because every chapter was removed from the queue is a
+  // cancellation, not a failure.
+  const status = done.n > 0 ? "done" : failed.n > 0 ? "error" : "cancelled";
+
   db.query("UPDATE jobs SET status = ?, error = ?, finished_at = ? WHERE id = ?").run(
-    done.n === 0 ? "error" : "done",
+    status,
     failed.n > 0 ? `${failed.n} chapter(s) failed` : null,
     Date.now(),
     jobId,
   );
 }
 
-/** Re-queue jobs that were mid-flight when the server was restarted. */
+/**
+ * Re-queue jobs that were mid-flight when the server was restarted. Runs once
+ * per process: `bun --hot` re-evaluates the entry point on every save, and
+ * resuming again there would re-enqueue jobs that are still converting.
+ */
 export function resumeInterruptedJobs() {
+  if (state.resumed) return;
+  state.resumed = true;
+
   const stale = db.query("SELECT id FROM jobs WHERE status IN ('queued','running')").all() as { id: string }[];
   for (const { id } of stale) {
     db.query("UPDATE jobs SET status = 'queued' WHERE id = ?").run(id);

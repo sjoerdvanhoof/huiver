@@ -168,6 +168,19 @@ class KokoroSession implements TTSSession {
       this.pending.set(id, { resolve, reject, onChunk: req.onChunk });
     });
 
+    // Removing a chapter from the queue must stop the CPU work without tearing
+    // down the worker — the same `cancel` the streaming path uses.
+    const onAbort = () => {
+      if (this.closed) return;
+      try {
+        this.proc.stdin.write(`${JSON.stringify({ cmd: "cancel", id })}\n`);
+        this.proc.stdin.flush();
+      } catch {
+        // Worker already gone; the pending promise settles via failAll.
+      }
+    };
+    req.signal?.addEventListener("abort", onAbort, { once: true });
+
     this.proc.stdin.write(
       `${JSON.stringify({
         cmd: "track",
@@ -180,7 +193,11 @@ class KokoroSession implements TTSSession {
     );
     this.proc.stdin.flush();
 
-    return promise;
+    try {
+      return await promise;
+    } finally {
+      req.signal?.removeEventListener("abort", onAbort);
+    }
   }
 
   async stream(req: StreamRequest): Promise<void> {
