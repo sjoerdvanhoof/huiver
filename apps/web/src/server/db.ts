@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { repairDataPaths, type PathStore } from "./data-paths";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 
@@ -139,12 +140,30 @@ export function runMigrations(database: Database): void {
   })();
 }
 
+/**
+ * A view of the path columns for ./data-paths, which re-roots them when the
+ * data directory has moved out from under the library.
+ */
+const pathStore = (database: Database): PathStore => ({
+  rows: (table, column, key) =>
+    database
+      .query(`SELECT ${key} AS key, ${column} AS value FROM ${table} WHERE ${column} IS NOT NULL`)
+      .all() as { key: string; value: string }[],
+  update: (table, column, key, keyValue, value) => {
+    database.query(`UPDATE ${table} SET ${column} = ? WHERE ${key} = ?`).run(value, keyValue);
+  },
+});
+
 /** Open (or create) a huiver database and bring its schema up to date. */
-export function openDatabase(dbPath: string): Database {
+export function openDatabase(dbPath: string, dataDir = DATA_DIR): Database {
   const database = new Database(dbPath, { create: true });
   database.exec("PRAGMA journal_mode = WAL;");
   database.exec("PRAGMA foreign_keys = ON;");
   runMigrations(database);
+
+  const repaired = repairDataPaths(pathStore(database), dataDir);
+  if (repaired > 0) console.log(`Re-rooted ${repaired} file path(s) onto ${dataDir}`);
+
   return database;
 }
 
