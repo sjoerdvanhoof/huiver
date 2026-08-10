@@ -1,0 +1,17 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
+
+  // Tests are exempt: this config models the React Native runtime, while the
+  // tests run under Bun and use bun:test. `bun test` is what checks them.
+  "exclude": ["node_modules", "ios", "android", "**/*.test.ts", "**/*.test.tsx"]
+}

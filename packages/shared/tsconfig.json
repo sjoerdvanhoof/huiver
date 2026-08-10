@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Deliberately no "DOM" and no "types": this package is consumed by a Bun
+    // server AND by React Native, so anything platform-specific must fail to
+    // compile here rather than fail at runtime on a phone.
+    "lib": ["ESNext"],
+    "types": []
+  },
+
+  // Tests are exempt: they run under Bun, so they may use bun:test and node
+  // builtins to set up fixtures. `bun test` typechecks nothing, but a platform
+  // API that leaked into src would fail here first.
+  "exclude": ["node_modules", "src/**/*.test.ts"]
+}

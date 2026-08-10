@@ -1,3 +1,5 @@
-[serve.static]
-plugins = ["bun-plugin-tailwind"]
-env = "BUN_PUBLIC_*"
+# Hoisted rather than Bun's default isolated store: Metro resolves react and
+# react-native by walking node_modules, and an isolated store can leave the
+# Expo app with two copies of them. The web app is indifferent either way.
+[install]
+linker = "hoisted"

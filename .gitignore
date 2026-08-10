@@ -58,17 +58,25 @@ examples/*
 # ...except the curated Project Gutenberg corpus. Public domain, ~3 MB, and
 # shipping it means the app is testable straight after a clone.
 # Adding a sample? Add its filename here too, or it will silently not ship.
-# Kept in sync with BOOKS in scripts/fetch-examples.ts by a unit test.
-!examples/README.md
-!examples/alice-in-wonderland.epub
-!examples/dracula.epub
-!examples/frankenstein.epub
-!examples/metamorphosis.epub
-!examples/moby-dick.epub
-!examples/pride-and-prejudice.epub
-!examples/sherlock-holmes.epub
-!examples/the-time-machine.epub
-!examples/the-yellow-wallpaper.epub
-!examples/tom-sawyer.epub
+# Kept in sync with BOOKS in apps/web/scripts/fetch-examples.ts by a unit test.
+!apps/web/examples/README.md
+!apps/web/examples/alice-in-wonderland.epub
+!apps/web/examples/dracula.epub
+!apps/web/examples/frankenstein.epub
+!apps/web/examples/metamorphosis.epub
+!apps/web/examples/moby-dick.epub
+!apps/web/examples/pride-and-prejudice.epub
+!apps/web/examples/sherlock-holmes.epub
+!apps/web/examples/the-time-machine.epub
+!apps/web/examples/the-yellow-wallpaper.epub
+!apps/web/examples/tom-sawyer.epub
 
 .gstack/
+
+# ---------------------------------------------------------------------------
+# mobile (Expo continuous native generation — ios/ and android/ are generated
+# by `expo prebuild` from app.config.ts and must not be hand-edited)
+# ---------------------------------------------------------------------------
+apps/mobile/ios/
+apps/mobile/android/
+apps/mobile/.expo/
