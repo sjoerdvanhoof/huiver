@@ -171,7 +171,7 @@ class KokoroSession implements TTSSession {
     return this.device === "mps";
   }
 
-  async synthesize(req: TrackRequest & { append?: boolean }): Promise<{ durationSec: number }> {
+  async synthesize(req: TrackRequest): Promise<{ durationSec: number }> {
     await this.ready;
     if (this.closed) throw new Error("Kokoro session is closed");
 
@@ -339,7 +339,9 @@ class RecyclingKokoroSession implements TTSSession {
       const result = await session.synthesize({
         ...req,
         chunks: batch,
-        append: offset > 0,
+        // The caller may itself be appending to a partial file from an earlier
+        // checkpoint, in which case every batch adds to it.
+        append: req.append || offset > 0,
         onChunk: req.onChunk ? done => req.onChunk!(base + done, req.chunks.length) : undefined,
       });
       durationSec += result.durationSec;

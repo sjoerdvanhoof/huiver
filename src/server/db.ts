@@ -94,8 +94,21 @@ const V3 = `
   ALTER TABLE tracks ADD COLUMN chunks_total INTEGER NOT NULL DEFAULT 0;
 `;
 
+/**
+ * v4: mid-chapter conversion checkpoints. `resume_chunks` chunks of this
+ * track are already in the partial WAV at `resume_path`, which holds
+ * `resume_bytes` of audio; `resume_key` pins the work they represent so a
+ * partial is never continued with different text, voice or speed.
+ */
+const V4 = `
+  ALTER TABLE tracks ADD COLUMN resume_chunks INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE tracks ADD COLUMN resume_bytes INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE tracks ADD COLUMN resume_key TEXT;
+  ALTER TABLE tracks ADD COLUMN resume_path TEXT;
+`;
+
 /** Index = the user_version the database is migrated *from*. */
-const MIGRATIONS = [BASELINE, V2, V3];
+const MIGRATIONS = [BASELINE, V2, V3, V4];
 
 export function runMigrations(database: Database): void {
   const { user_version } = database.query("PRAGMA user_version").get() as { user_version: number };
@@ -167,6 +180,11 @@ export type TrackRow = {
   error: string | null;
   chunks_done: number;
   chunks_total: number;
+  /** Chunks already rendered into the partial WAV — see ./checkpoint. */
+  resume_chunks: number;
+  resume_bytes: number;
+  resume_key: string | null;
+  resume_path: string | null;
 };
 
 export type PlaybackPositionRow = {

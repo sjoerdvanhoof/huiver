@@ -50,6 +50,36 @@ Generated audio lands in `data/audio/<jobId>/` as `001-chapter-title.mp3`, tagge
 title/album/artist/track so it imports cleanly into a podcast or audiobook player. You
 can also grab everything as a zip from the job panel.
 
+### Interrupted conversions
+
+A chapter is not all-or-nothing. Every few chunks the partial audio is flushed to
+`data/audio/<jobId>/001-chapter-title.part.wav` and the chapter's position in it is
+recorded, so a crash, a `ctrl-c`, an OOM kill or a hot reload costs you seconds of
+re-rendering rather than the chapter. On the next start the job is re-queued and the
+log says where it picks up:
+
+```
+Resumed 1 interrupted job(s)
+[job job_1a2b3c] chapter 4 resuming at chunk 37/112
+```
+
+Stopping is a pause, not a discard. A chapter you stop halfway keeps its audio, and
+converting it again continues from where you stopped — even though that is a new job
+with new tracks, since the partial is matched by content rather than by job. The same
+goes for a chapter that failed: the part that worked is not rendered twice.
+
+A partial is only continued when the work is identical — same text, voice, speed and
+chunking. Re-extract the book or convert at another voice and it is discarded and the
+chapter starts over. Audio the interrupted batch wrote past the last checkpoint is cut
+off too, since there is no record of which chunk it belonged to.
+
+A provider that dies mid-chapter (a crashed worker, a dropped connection) is retried
+on a fresh session from the same checkpoint, up to `HUIVER_TRACK_ATTEMPTS` tries
+(default 3). Checkpoint interval: `HUIVER_CHECKPOINT_CHUNKS`, default 8 chunks.
+
+Parked audio nobody comes back for is deleted after `HUIVER_PARTIAL_TTL_DAYS` (default
+14, `0` to keep it indefinitely), swept on startup before anything is queued.
+
 ### Voice previews
 
 Every voice in the dropdown has a play button that speaks a sample line. The first
@@ -158,7 +188,9 @@ upload → extract chapters → chunk to ~420 chars → TTS → concat → ffmpe
 - `src/server/tts/kokoro.ts` — talks JSON-lines over stdin/stdout to a persistent
   Python worker (`py/kokoro_worker.py`), so the model loads once per job, not per chapter
 - `src/server/convert.ts` — serial job queue; a failed chapter doesn't sink the book,
-  and interrupted jobs resume on restart
+  and interrupted jobs resume on restart — mid-chapter, from their last checkpoint
+- `src/server/checkpoint.ts` — decides whether a half-rendered chapter can be
+  continued, and from which chunk
 - `src/server/audio-routes.ts` — voice previews (disk-cached) and live chapter
   streaming, which pipes each rendered chunk through a single ffmpeg process to
   produce one continuous MP3 stream
@@ -176,4 +208,5 @@ copyrighted and this is a public repo. See `examples/README.md`.
 ```bash
 bun test src          # parsing + chunking unit tests, fast
 bun run e2e           # full stack: upload → synthesize → play, uses a temp data dir
+bun run e2e:resume    # kills the server mid-chapter and checks the resume is seamless
 ```

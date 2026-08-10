@@ -78,7 +78,8 @@ describe("runMigrations", () => {
     }
     expect(columnNames(db, "books")).toContain("cover_path");
     expect(columnNames(db, "tracks")).toContain("chunks_done");
-    expect(userVersion(db)).toBe(3);
+    expect(columnNames(db, "tracks")).toContain("resume_chunks");
+    expect(userVersion(db)).toBe(4);
   });
 
   test("existing pre-migration database keeps its data", () => {
@@ -99,7 +100,7 @@ describe("runMigrations", () => {
 
     runMigrations(db);
 
-    expect(userVersion(db)).toBe(3);
+    expect(userVersion(db)).toBe(4);
     expect(db.query("SELECT title FROM books WHERE id = 'bk_1'").get()).toEqual({ title: "Moby Dick" });
     expect(db.query("SELECT COUNT(*) AS n FROM tracks").get()).toEqual({ n: 1 });
     expect(tableNames(db)).toContain("playback_positions");
@@ -116,13 +117,17 @@ describe("runMigrations", () => {
       INSERT INTO settings (key, value) VALUES ('defaultVoice', '"af_heart"');
       ALTER TABLE tracks DROP COLUMN chunks_done;
       ALTER TABLE tracks DROP COLUMN chunks_total;
+      ALTER TABLE tracks DROP COLUMN resume_chunks;
+      ALTER TABLE tracks DROP COLUMN resume_bytes;
+      ALTER TABLE tracks DROP COLUMN resume_key;
+      ALTER TABLE tracks DROP COLUMN resume_path;
       PRAGMA user_version = 2;
     `);
     expect(columnNames(db, "tracks")).not.toContain("chunks_done");
 
     runMigrations(db);
 
-    expect(userVersion(db)).toBe(3);
+    expect(userVersion(db)).toBe(4);
     expect(columnNames(db, "tracks")).toContain("chunks_done");
     expect(columnNames(db, "tracks")).toContain("chunks_total");
     expect(db.query("SELECT title FROM books WHERE id = 'bk_1'").get()).toEqual({ title: "Emma" });
@@ -131,10 +136,37 @@ describe("runMigrations", () => {
     });
   });
 
+  test("adds conversion checkpoints to a v3 database", () => {
+    const db = new Database(":memory:");
+    runMigrations(db);
+
+    db.exec(`
+      INSERT INTO books (id, title, format, source_path, created_at) VALUES ('bk_1', 'Emma', 'epub', '/x', 1);
+      INSERT INTO chapters (id, book_id, idx, title, text, char_count)
+        VALUES ('ch_1', 'bk_1', 0, 'One', 'Text.', 5);
+      INSERT INTO jobs (id, book_id, provider, voice, speed, status, created_at)
+        VALUES ('job_1', 'bk_1', 'kokoro', 'af_heart', 1, 'running', 2);
+      INSERT INTO tracks (id, job_id, chapter_id, idx, title, status, chunks_done, chunks_total)
+        VALUES ('tr_1', 'job_1', 'ch_1', 0, 'One', 'running', 4, 9);
+      ALTER TABLE tracks DROP COLUMN resume_chunks;
+      ALTER TABLE tracks DROP COLUMN resume_bytes;
+      ALTER TABLE tracks DROP COLUMN resume_key;
+      ALTER TABLE tracks DROP COLUMN resume_path;
+      PRAGMA user_version = 3;
+    `);
+
+    runMigrations(db);
+
+    expect(userVersion(db)).toBe(4);
+    // An in-flight track survives with no checkpoint, so it restarts cleanly.
+    expect(db.query("SELECT chunks_done, resume_chunks, resume_bytes, resume_key, resume_path FROM tracks").get())
+      .toEqual({ chunks_done: 4, resume_chunks: 0, resume_bytes: 0, resume_key: null, resume_path: null });
+  });
+
   test("running migrations twice is a no-op", () => {
     const db = new Database(":memory:");
     runMigrations(db);
     expect(() => runMigrations(db)).not.toThrow();
-    expect(userVersion(db)).toBe(3);
+    expect(userVersion(db)).toBe(4);
   });
 });

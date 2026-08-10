@@ -19,6 +19,12 @@ export type TrackRequest = {
   speed: number;
   /** Absolute path of the WAV file to write. */
   outWav: string;
+  /**
+   * Add to the audio already in `outWav` instead of replacing it. This is how a
+   * track is rendered in checkpointed batches, and how a resumed render
+   * continues a partial file left behind by an earlier attempt.
+   */
+  append?: boolean;
   onChunk?: (done: number, total: number) => void;
   /** Aborting stops the render at the next chunk boundary. */
   signal?: AbortSignal;

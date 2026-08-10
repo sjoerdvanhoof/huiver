@@ -3,7 +3,7 @@ import { resumeInterruptedJobs } from "./server/convert";
 import { IDLE_TIMEOUT_SECONDS, MAX_UPLOAD_BYTES, apiRoutes } from "./server/routes";
 import index from "./index.html";
 
-resumeInterruptedJobs();
+void resumeInterruptedJobs();
 
 const server = serve({
   maxRequestBodySize: MAX_UPLOAD_BYTES,

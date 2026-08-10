@@ -1,4 +1,4 @@
-import { silencePcm16, writeWavFromPcm16 } from "../wav";
+import { appendPcm16ToWav, silencePcm16, writeWavFromPcm16 } from "../wav";
 import type { ProviderInfo, StreamRequest, TTSProvider, TTSSession, TrackRequest } from "./types";
 
 const SAMPLE_RATE = 24000; // What the OpenAI speech API emits for response_format: "pcm".
@@ -50,10 +50,13 @@ export const openaiProvider: TTSProvider = {
         const gap = silencePcm16(0.25, SAMPLE_RATE);
 
         for (const [index, text] of req.chunks.entries()) {
-          parts.push(await speak(text, req.voice, req.speed), gap);
+          if (req.signal?.aborted) break;
+          parts.push(await speak(text, req.voice, req.speed, req.signal), gap);
           req.onChunk?.(index + 1, req.chunks.length);
         }
-        return writeWavFromPcm16(req.outWav, parts, SAMPLE_RATE);
+        return req.append
+          ? appendPcm16ToWav(req.outWav, parts, SAMPLE_RATE)
+          : writeWavFromPcm16(req.outWav, parts, SAMPLE_RATE);
       },
 
       async stream(req: StreamRequest) {
