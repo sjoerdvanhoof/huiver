@@ -11,15 +11,17 @@
     "dev": "bun run --cwd apps/web dev",
     "start": "bun run --cwd apps/web start",
     "build": "bun run --cwd apps/web build",
-    "test": "bun test apps/web/src apps/mobile/src packages/shared/src",
+    "test": "bun run --cwd packages/shared test && bun run --cwd apps/web test && bun run --cwd apps/mobile test",
     "e2e": "bun run --cwd apps/web e2e",
     "e2e:resume": "bun run --cwd apps/web e2e:resume",
     "examples": "bun run --cwd apps/web examples",
     "examples:import": "bun run --cwd apps/web examples:import",
     "setup:python": "bun run --cwd apps/web setup:python",
+    "typecheck": "bunx tsc --noEmit -p apps/web && bunx tsc --noEmit -p packages/shared && bunx tsc --noEmit -p apps/mobile",
     "mobile": "bun run --cwd apps/mobile start",
+    "mobile:prebuild": "bun run --cwd apps/mobile prebuild",
     "mobile:ios": "bun run --cwd apps/mobile ios",
-    "mobile:android": "bun run --cwd apps/mobile android",
-    "typecheck": "bunx tsc --noEmit -p apps/web && bunx tsc --noEmit -p packages/shared && bunx tsc --noEmit -p apps/mobile"
+    "mobile:ios:device": "bun run --cwd apps/mobile ios:device",
+    "mobile:android": "bun run --cwd apps/mobile android"
   }
 }

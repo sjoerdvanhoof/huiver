@@ -129,8 +129,4 @@ export type PlaybackPositionRow = {
   updated_at: number;
 };
 
-/**
- * Ids carry their kind so a stray id in a log or a file path is readable.
- * `crypto.randomUUID` exists in Hermes via Expo's polyfill.
- */
-export const newId = (prefix: string) => `${prefix}_${crypto.randomUUID().slice(0, 12)}`;
+export { newId } from "./id";

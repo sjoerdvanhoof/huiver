@@ -239,25 +239,57 @@ downloaded.
 ### Building it
 
 On-device speech is a native module, so Expo Go will not do — you need a development
-build. Xcode is required (not just the command line tools).
+build. Install Xcode itself (the command line tools alone are not enough), with the
+iOS platform component; watchOS, tvOS and visionOS are not needed. Then point the
+tooling at it:
+
+```bash
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+sudo xcodebuild -license accept
+```
 
 ```bash
 bun install
-cd apps/mobile
-bunx expo prebuild --clean     # regenerates ios/ and android/; both are gitignored
+bun run mobile:prebuild        # regenerates ios/ and android/; both are gitignored
 ```
 
-`pod install` runs as part of prebuild and downloads the sherpa-onnx xcframework
-(~80 MB), which takes a few minutes the first time. Then open
+Use that script rather than `bunx expo prebuild` directly: CocoaPods crashes with
+`Unicode Normalization not appropriate for ASCII-8BIT` when `LANG` is unset, which it
+is by default on a fresh macOS shell, and the script sets it. If you would rather fix
+it once for every project, put this in your shell profile instead:
+
+```bash
+export LANG=en_US.UTF-8
+```
+
+Prebuild runs `pod install`, which downloads the sherpa-onnx xcframework (~185 MB) and
+compiles libarchive — a few minutes the first time. Then open
 `apps/mobile/ios/huiver.xcworkspace` in Xcode, pick your team under *Signing &
 Capabilities*, and run it on your iPhone. A free Apple ID works; the build expires
 after seven days and you re-run it.
 
-Android: `bun run mobile:android`. Day-to-day, `bun run mobile` starts the dev server
-against an installed build.
+Or skip Xcode's UI once the signing team is set. For the phone, name the device
+explicitly — a bare `--device` opens a picker that lists simulators alongside phones,
+and iOS reuses the same device name across your old and new handsets, so the UDID is
+the only unambiguous answer:
+
+```bash
+xcodebuild -workspace apps/mobile/ios/huiver.xcworkspace -scheme huiver \
+  -showdestinations | grep "platform:iOS," | grep -v Simulator
+
+bun run mobile:ios:device 00008150-000113481E33401C   # the id from that listing
+```
+
+Build **Release** for the phone, which that script does. A Debug build leaves the JS
+on the Mac's Metro server, so the phone has to stay on the same Wi-Fi — no use for
+testing background audio or the lock screen while walking around.
+
+Simulator: `bun run mobile:ios`. Android: `bun run mobile:android`. Day-to-day,
+`bun run mobile` starts the Metro dev server against an installed Debug build.
 
 `ios/` and `android/` are generated, not committed: everything native comes from
-`app.config.ts` and `plugins/`, so `expo prebuild --clean` always reproduces them.
+`app.config.ts` and `plugins/`, so a prebuild always reproduces them. If pods ever
+drift without a full regeneration, `bun run --cwd apps/mobile pods` reinstalls them.
 
 ### The voice model
 
@@ -313,9 +345,16 @@ copyrighted and this is a public repo. See `apps/web/examples/README.md`.
 ## Tests
 
 ```bash
-bun test              # unit tests across all three workspaces, fast
+bun run test          # unit tests across all three workspaces, fast
 bun run typecheck     # web, shared and mobile
 bun run e2e           # full stack: upload → synthesize → play, uses a temp data dir
 bun run e2e:resume    # kills the server mid-chapter and checks resuming is seamless,
                       # for conversion, for a stopped run, and for live playback
 ```
+
+`bun run test`, not a bare `bun test` from the repo root. Each workspace's tests run
+with that workspace as the working directory, which matters once `apps/mobile/ios`
+exists: with the generated native projects and their Pods in the tree, `bun test` from
+the root walks ~100k files, and the server tests that spawn ffmpeg then get a subprocess
+whose stdin is closed before it can write — they fail with `EPIPE: broken pipe` and no
+explanation. Running them from `apps/web` avoids the walk entirely.
