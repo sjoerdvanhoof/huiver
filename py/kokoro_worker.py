@@ -330,7 +330,11 @@ def read_stdin():
         else:
             _requests.put(req)
 
-    _requests.put(None)  # stdin closed: the server is gone
+    # stdin closed: the server is gone, or done with us. Leave at once instead of
+    # finishing the chunk we are on — a server that was killed mid-chapter is
+    # replaced by one that resumes the very file we would still be writing to,
+    # and we hold ~1 GB that nobody is waiting on.
+    os._exit(0)
 
 
 def main():

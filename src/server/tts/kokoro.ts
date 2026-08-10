@@ -49,8 +49,8 @@ type Pending = {
   resolve: (value: { durationSec: number }) => void;
   reject: (error: Error) => void;
   onChunk?: (done: number, total: number) => void;
-  /** Set for streaming requests; receives each rendered chunk's WAV path. */
-  onAudioPath?: (path: string) => void;
+  /** Set for streaming requests; receives each rendered chunk's WAV path and index. */
+  onAudioPath?: (path: string, index: number) => void;
 };
 
 class KokoroSession implements TTSSession {
@@ -133,7 +133,7 @@ class KokoroSession implements TTSSession {
         return;
       }
       case "audio": {
-        this.pending.get(message.id)?.onAudioPath?.(message.path);
+        this.pending.get(message.id)?.onAudioPath?.(message.path, message.index);
         return;
       }
       case "done":
@@ -224,12 +224,12 @@ class KokoroSession implements TTSSession {
     let queue = Promise.resolve();
     let failure: Error | null = null;
 
-    const forward = (wavPath: string) => {
+    const forward = (wavPath: string, index: number) => {
       queue = queue.then(async () => {
         if (failure || req.signal?.aborted) return;
         try {
           const bytes = new Uint8Array(await Bun.file(wavPath).arrayBuffer());
-          await req.onAudio(pcmFromWav(bytes).pcm);
+          await req.onAudio(pcmFromWav(bytes).pcm, index);
         } catch (error) {
           failure ??= error instanceof Error ? error : new Error(String(error));
         } finally {
@@ -365,8 +365,10 @@ class RecyclingKokoroSession implements TTSSession {
     while (offset < req.chunks.length) {
       if (req.signal?.aborted) break;
       const batch = req.chunks.slice(offset, offset + this.capacity());
+      const base = offset;
       session = this.currentSession();
-      await session.stream({ ...req, chunks: batch });
+      // Each batch indexes from zero; the caller wants the chapter's own numbering.
+      await session.stream({ ...req, chunks: batch, onAudio: (pcm, index) => req.onAudio(pcm, base + index) });
       offset += batch.length;
       this.usedChunks += batch.length;
 

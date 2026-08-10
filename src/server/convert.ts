@@ -2,11 +2,13 @@ import { mkdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { planResume, resumeKey, type CheckpointRow } from "./checkpoint";
 import { chunkText } from "./chunk";
-import { AUDIO_DIR, db } from "./db";
+import { AUDIO_DIR, db, newId } from "./db";
 import type { BookRow, ChapterRow, JobRow, TrackRow } from "./db";
+import { ffmpegBinary } from "./ffmpeg";
+import { sweepStoredStreams } from "./stream-store";
 import { getProvider } from "./tts";
 import type { TTSSession } from "./tts";
-import { readWavLayout, syncWav, truncateWavData, wavDurationSec } from "./wav";
+import { readWavLayout, rewriteWavPrefix, syncWav, truncateWavData, wavDurationSec } from "./wav";
 
 /**
  * `bun --hot` re-evaluates this module on every save without restarting the
@@ -54,9 +56,6 @@ const checkpointChunks = () => Math.max(1, Number(process.env.HUIVER_CHECKPOINT_
 
 /** Tries per chapter. A retry resumes from the last checkpoint, so it is cheap. */
 const trackAttempts = () => Math.max(1, Number(process.env.HUIVER_TRACK_ATTEMPTS) || 3);
-
-/** ffmpeg is optional: without it, tracks stay WAV. Override for a non-PATH build. */
-const ffmpegBinary = () => process.env.HUIVER_FFMPEG || "ffmpeg";
 
 /** How long a stopped chapter's audio waits to be resumed. 0 keeps it forever. */
 const partialTtlDays = () => Math.max(0, Number(process.env.HUIVER_PARTIAL_TTL_DAYS ?? 14) || 0);
@@ -250,7 +249,9 @@ async function rewindToCheckpoint(
     return 0;
   }
 
-  await truncateWavData(partPath, plan.dataBytes);
+  // Always replace the file, even when it needs no cutting: the speech worker
+  // the crashed run spawned can outlive it by a moment and still be writing.
+  await rewriteWavPrefix(partPath, plan.dataBytes);
   return plan.startChunk;
 }
 
@@ -594,6 +595,71 @@ async function runJob(jobId: string) {
 }
 
 /**
+ * Take ownership of a chapter that was rendered outside the job queue — one the
+ * user streamed all the way through — and store it as an ordinary finished
+ * track, so it counts as converted and can be seeked and downloaded like any
+ * other. Returns null when the chapter already has audio, leaving the caller's
+ * file alone.
+ */
+export async function registerRenderedChapter(args: {
+  chapterId: string;
+  provider: string;
+  voice: string;
+  speed: number;
+  /** WAV to take over; it is moved into the new job's folder. */
+  wavPath: string;
+  chunksTotal: number;
+}): Promise<string | null> {
+  const chapter = db.query("SELECT * FROM chapters WHERE id = ?").get(args.chapterId) as ChapterRow | null;
+  if (!chapter) return null;
+
+  const existing = db
+    .query("SELECT id FROM tracks WHERE chapter_id = ? AND status = 'done' AND path IS NOT NULL LIMIT 1")
+    .get(args.chapterId) as { id: string } | null;
+  if (existing) return null;
+
+  const book = db.query("SELECT * FROM books WHERE id = ?").get(chapter.book_id) as BookRow | null;
+  if (!book) return null;
+
+  const layout = await readWavLayout(args.wavPath);
+  if (!layout || layout.dataBytes === 0) return null;
+
+  const jobId = newId("job");
+  const trackId = newId("tr");
+  const outDir = path.join(AUDIO_DIR, jobId);
+  await mkdir(outDir, { recursive: true });
+
+  const stem = `001-${slugify(chapter.title)}`;
+  const wavDest = path.join(outDir, `${stem}.wav`);
+  await rename(args.wavPath, wavDest);
+
+  const finalPath = await encodeMp3(wavDest, path.join(outDir, `${stem}.mp3`), {
+    title: chapter.title,
+    album: book.title,
+    artist: book.author ?? "Unknown",
+    track: chapter.idx + 1,
+  });
+
+  const now = Date.now();
+  db.transaction(() => {
+    db.query(
+      `INSERT INTO jobs (id, book_id, provider, voice, speed, status, chunks_done, chunks_total, created_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, 'done', ?, ?, ?, ?)`,
+    ).run(jobId, book.id, args.provider, args.voice, args.speed, args.chunksTotal, args.chunksTotal, now, now);
+    db.query(
+      `INSERT INTO tracks (id, job_id, chapter_id, idx, title, status, path, duration, chunks_done, chunks_total)
+       VALUES (?, ?, ?, 0, ?, 'done', ?, ?, ?, ?)`,
+    ).run(
+      trackId, jobId, chapter.id, chapter.title, finalPath, wavDurationSec(layout),
+      args.chunksTotal, args.chunksTotal,
+    );
+  })();
+
+  console.log(`[stream ${chapter.id}] kept "${chapter.title}" as a finished track`);
+  return trackId;
+}
+
+/**
  * Delete parked partials nobody came back for. A stopped chapter keeps its
  * audio so the next conversion can continue it, and this is what keeps that
  * from turning into a slow disk leak.
@@ -620,6 +686,7 @@ export async function sweepStalePartials(): Promise<void> {
     }
   }
 
+  swept += await sweepStoredStreams(cutoff);
   if (swept > 0) console.log(`Cleaned up ${swept} stale partial render(s)`);
 }
 

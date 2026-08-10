@@ -34,8 +34,13 @@ export type StreamRequest = {
   chunks: string[];
   voice: string;
   speed: number;
-  /** Called with 16-bit mono PCM as soon as each chunk is rendered. */
-  onAudio: (pcm: Uint8Array) => Promise<void> | void;
+  /**
+   * Called with 16-bit mono PCM as soon as each chunk is rendered, in order.
+   * `chunkIndex` is the chunk's position in `chunks`, which is what lets the
+   * caller store the audio and know where to carry on from — a chunk that
+   * renders no audio is simply never announced.
+   */
+  onAudio: (pcm: Uint8Array, chunkIndex: number) => Promise<void> | void;
   signal?: AbortSignal;
 };
 

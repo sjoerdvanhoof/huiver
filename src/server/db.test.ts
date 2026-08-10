@@ -73,13 +73,15 @@ describe("runMigrations", () => {
     runMigrations(db);
 
     const tables = tableNames(db);
-    for (const table of ["books", "chapters", "jobs", "tracks", "settings", "playback_positions"]) {
+    for (const table of [
+      "books", "chapters", "jobs", "tracks", "settings", "playback_positions", "stream_partials",
+    ]) {
       expect(tables).toContain(table);
     }
     expect(columnNames(db, "books")).toContain("cover_path");
     expect(columnNames(db, "tracks")).toContain("chunks_done");
     expect(columnNames(db, "tracks")).toContain("resume_chunks");
-    expect(userVersion(db)).toBe(4);
+    expect(userVersion(db)).toBe(5);
   });
 
   test("existing pre-migration database keeps its data", () => {
@@ -100,7 +102,7 @@ describe("runMigrations", () => {
 
     runMigrations(db);
 
-    expect(userVersion(db)).toBe(4);
+    expect(userVersion(db)).toBe(5);
     expect(db.query("SELECT title FROM books WHERE id = 'bk_1'").get()).toEqual({ title: "Moby Dick" });
     expect(db.query("SELECT COUNT(*) AS n FROM tracks").get()).toEqual({ n: 1 });
     expect(tableNames(db)).toContain("playback_positions");
@@ -127,7 +129,7 @@ describe("runMigrations", () => {
 
     runMigrations(db);
 
-    expect(userVersion(db)).toBe(4);
+    expect(userVersion(db)).toBe(5);
     expect(columnNames(db, "tracks")).toContain("chunks_done");
     expect(columnNames(db, "tracks")).toContain("chunks_total");
     expect(db.query("SELECT title FROM books WHERE id = 'bk_1'").get()).toEqual({ title: "Emma" });
@@ -157,16 +159,43 @@ describe("runMigrations", () => {
 
     runMigrations(db);
 
-    expect(userVersion(db)).toBe(4);
+    expect(userVersion(db)).toBe(5);
     // An in-flight track survives with no checkpoint, so it restarts cleanly.
     expect(db.query("SELECT chunks_done, resume_chunks, resume_bytes, resume_key, resume_path FROM tracks").get())
       .toEqual({ chunks_done: 4, resume_chunks: 0, resume_bytes: 0, resume_key: null, resume_path: null });
+  });
+
+  test("adds kept stream audio to a v4 database", () => {
+    const db = new Database(":memory:");
+    runMigrations(db);
+
+    db.exec(`
+      INSERT INTO books (id, title, format, source_path, created_at) VALUES ('bk_1', 'Emma', 'epub', '/x', 1);
+      INSERT INTO chapters (id, book_id, idx, title, text, char_count)
+        VALUES ('ch_1', 'bk_1', 0, 'One', 'Text.', 5);
+      DROP TABLE stream_partials;
+      PRAGMA user_version = 4;
+    `);
+
+    runMigrations(db);
+
+    expect(userVersion(db)).toBe(5);
+    expect(tableNames(db)).toContain("stream_partials");
+
+    // Deleting the book takes its kept stream audio with it.
+    db.exec("PRAGMA foreign_keys = ON;");
+    db.exec(`
+      INSERT INTO stream_partials (key, chapter_id, path, chunks_done, chunks_total, bytes, updated_at)
+        VALUES ('k', 'ch_1', '/x/s.wav', 2, 9, 400, 1);
+      DELETE FROM books WHERE id = 'bk_1';
+    `);
+    expect(db.query("SELECT COUNT(*) AS n FROM stream_partials").get()).toEqual({ n: 0 });
   });
 
   test("running migrations twice is a no-op", () => {
     const db = new Database(":memory:");
     runMigrations(db);
     expect(() => runMigrations(db)).not.toThrow();
-    expect(userVersion(db)).toBe(4);
+    expect(userVersion(db)).toBe(5);
   });
 });

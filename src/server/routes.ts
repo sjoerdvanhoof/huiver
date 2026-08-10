@@ -16,6 +16,7 @@ import {
 import { extractEpubCover, looksLikeZip } from "./extract";
 import { importBook } from "./library";
 import { EMPTY_PROGRESS, computeRollups, savePosition, type BookRollup } from "./progress";
+import { storedStreamPathsForBook } from "./stream-store";
 import { getSettings, updateSettings } from "./settings";
 import { getProvider, listProviders } from "./tts";
 import type { BookDTO, BookDetailDTO, JobDTO, TrackDTO } from "../shared";
@@ -273,10 +274,13 @@ export const apiRoutes = {
       if (!row) return fail("Book not found", 404);
 
       const jobs = db.query("SELECT id FROM jobs WHERE book_id = ?").all(row.id) as { id: string }[];
+      // Collected before the rows go, since the paths live on them.
+      const streams = storedStreamPathsForBook(row.id);
       db.query("DELETE FROM books WHERE id = ?").run(row.id); // cascades to chapters/jobs/tracks
 
       await rm(path.join(UPLOAD_DIR, row.id), { recursive: true, force: true });
       for (const job of jobs) await rm(path.join(AUDIO_DIR, job.id), { recursive: true, force: true });
+      for (const stream of streams) await rm(stream, { force: true });
 
       return json({ ok: true });
     },

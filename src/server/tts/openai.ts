@@ -61,10 +61,15 @@ export const openaiProvider: TTSProvider = {
 
       async stream(req: StreamRequest) {
         const gap = silencePcm16(0.25, SAMPLE_RATE);
-        for (const text of req.chunks) {
+        for (const [index, text] of req.chunks.entries()) {
           if (req.signal?.aborted) return;
-          await req.onAudio(await speak(text, req.voice, req.speed, req.signal));
-          await req.onAudio(gap);
+          const pcm = await speak(text, req.voice, req.speed, req.signal);
+          const withGap = new Uint8Array(pcm.byteLength + gap.byteLength);
+          withGap.set(pcm);
+          withGap.set(gap, pcm.byteLength);
+          // One call per chunk, gap included, so a stored stream never ends up
+          // with a chunk recorded as done but its trailing pause missing.
+          await req.onAudio(withGap, index);
         }
       },
 

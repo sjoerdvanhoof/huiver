@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
-import { appendFile, stat, truncate } from "node:fs/promises";
+import { appendFile, open, stat, truncate } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -133,6 +133,24 @@ describe("truncateWavData", () => {
 
     expect(await samplesIn(file)).toEqual([1, 2]);
     expect((await stat(file)).size).toBe(44 + 4);
+  });
+
+  test("leaves a writer that still holds the old file writing into nothing", async () => {
+    const file = tempWav();
+    await writeWavFromPcm16(file, [pcm(1, 2, 3, 4)], SAMPLE_RATE);
+
+    // Stand in for the speech worker a crashed server left behind: it has the
+    // file open and is about to append another chunk.
+    const stale = await open(file, "r+");
+    try {
+      await truncateWavData(file, 4);
+      await stale.write(pcm(999, 999), 0, 4, 44 + 8);
+
+      expect(await samplesIn(file)).toEqual([1, 2]);
+      expect((await stat(file)).size).toBe(44 + 4);
+    } finally {
+      await stale.close();
+    }
   });
 
   test("is a no-op on a file that is not a WAV", async () => {

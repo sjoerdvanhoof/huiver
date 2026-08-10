@@ -56,13 +56,22 @@ function buildEpub(): Uint8Array {
          <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
            <dc:title>The Open Gate</dc:title><dc:creator>Test Author</dc:creator>
          </metadata>
-         <manifest><item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>
-         <spine><itemref idref="c1"/></spine>
+         <manifest>
+           <item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+           <item id="c2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+         </manifest>
+         <spine><itemref idref="c1"/><itemref idref="c2"/></spine>
        </package>`,
     ),
     "OEBPS/ch1.xhtml": strToU8(
       `<html><head><title>The Open Gate</title></head><body><h1>The Open Gate</h1>
        ${paragraphs.map(p => `<p>${p}</p>`).join("\n")}</body></html>`,
+    ),
+    // Kept short and never converted, so the streaming phase has a chapter of
+    // its own to render from scratch.
+    "OEBPS/ch2.xhtml": strToU8(
+      `<html><head><title>The Road Down</title></head><body><h1>The Road Down</h1>
+       ${paragraphs.slice(0, 3).map(p => `<p>${p}</p>`).join("\n")}</body></html>`,
     ),
   });
 }
@@ -258,6 +267,66 @@ try {
     `${(restarted.tracks[0]?.duration ?? 0).toFixed(3)}s vs ${referenceSeconds.toFixed(3)}s reference`);
   check("the parked partial was handed over, not left behind",
     !(await Bun.file(parked.resume_path!).exists()), parked.resume_path ?? "");
+
+  // --- live playback keeps what it renders ---
+  console.log("  …streaming a chapter, cutting it off, then playing it again");
+  const listenChapter = detail.chapters[1]!.id;
+  const streamUrl = `${base}/api/chapters/${listenChapter}/stream?provider=kokoro&voice=${kokoro.defaultVoice}&speed=1`;
+
+  const kept = () =>
+    db.query("SELECT chunks_done, chunks_total, bytes, path FROM stream_partials WHERE chapter_id = ?").get(
+      listenChapter,
+    ) as { chunks_done: number; chunks_total: number; bytes: number; path: string } | null;
+
+  // Listen for a moment, then walk away mid-chapter.
+  const listener = new AbortController();
+  const coldStart = Date.now();
+  const coldPlay = await fetch(streamUrl, { signal: listener.signal });
+  const firstReader = coldPlay.body!.getReader();
+  await firstReader.read();
+  const coldFirstByteMs = Date.now() - coldStart;
+
+  const keepDeadline = Date.now() + 300_000;
+  while ((kept()?.chunks_done ?? 0) < 1 && Date.now() < keepDeadline) await Bun.sleep(100);
+  listener.abort();
+  await Bun.sleep(500);
+
+  const heard = kept();
+  check("audio heard once is kept", (heard?.chunks_done ?? 0) >= 1,
+    `${heard?.chunks_done ?? 0}/${heard?.chunks_total ?? 0} chunks, ${heard?.bytes ?? 0} bytes`);
+  check("kept audio is on disk", Boolean(heard) && (await Bun.file(heard!.path).exists()), heard?.path ?? "");
+  check("it is not playable until the chapter is complete",
+    !(await api<{ chapters: { audio: unknown }[] }>(`/api/books/${book.id}`)).chapters[1]!.audio);
+
+  // Play it again: the part already rendered comes off the disk.
+  const warmStart = Date.now();
+  const again = await fetch(streamUrl);
+  const againReader = again.body!.getReader();
+  await againReader.read();
+  const warmFirstByteMs = Date.now() - warmStart;
+
+  const storedSeconds = Number(again.headers.get("X-Stored-Seconds"));
+  check("playing again replays what was stored", storedSeconds > 0, `${storedSeconds.toFixed(2)}s from disk`);
+  check("and starts sooner than rendering it did",
+    warmFirstByteMs < coldFirstByteMs && warmFirstByteMs < 1000,
+    `${warmFirstByteMs}ms vs ${coldFirstByteMs}ms cold`);
+
+  let listenedBytes = 0;
+  while (true) {
+    const { done, value } = await againReader.read();
+    if (done) break;
+    listenedBytes += value.byteLength;
+  }
+  check("the rest streams on to the end", listenedBytes > 10_000, `${listenedBytes} bytes`);
+
+  await Bun.sleep(500);
+  const listened = (await api<{ chapters: { audio: { duration: number | null } | null }[] }>(
+    `/api/books/${book.id}`,
+  )).chapters[1]!;
+  check("a chapter listened all the way through is kept as a track",
+    Boolean(listened.audio) && (listened.audio?.duration ?? 0) > 1,
+    `${listened.audio?.duration?.toFixed(1) ?? "no"}s`);
+  check("its kept-stream copy was handed over, not left behind", kept() === null);
 
   db.close();
 } catch (error) {

@@ -107,8 +107,27 @@ const V4 = `
   ALTER TABLE tracks ADD COLUMN resume_path TEXT;
 `;
 
+/**
+ * v5: audio kept from live playback. A chapter the user streams is written to
+ * disk as it plays, so playing it again starts from what is already rendered
+ * instead of synthesizing it a second time. Keyed by the work it represents,
+ * exactly like a conversion checkpoint.
+ */
+const V5 = `
+  CREATE TABLE IF NOT EXISTS stream_partials (
+    key          TEXT PRIMARY KEY,
+    chapter_id   TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    path         TEXT NOT NULL,
+    chunks_done  INTEGER NOT NULL DEFAULT 0,
+    chunks_total INTEGER NOT NULL,
+    bytes        INTEGER NOT NULL DEFAULT 0,
+    updated_at   INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS stream_partials_chapter ON stream_partials(chapter_id);
+`;
+
 /** Index = the user_version the database is migrated *from*. */
-const MIGRATIONS = [BASELINE, V2, V3, V4];
+const MIGRATIONS = [BASELINE, V2, V3, V4, V5];
 
 export function runMigrations(database: Database): void {
   const { user_version } = database.query("PRAGMA user_version").get() as { user_version: number };
@@ -185,6 +204,17 @@ export type TrackRow = {
   resume_bytes: number;
   resume_key: string | null;
   resume_path: string | null;
+};
+
+/** Audio kept from live playback — see ./stream-store. */
+export type StreamPartialRow = {
+  key: string;
+  chapter_id: string;
+  path: string;
+  chunks_done: number;
+  chunks_total: number;
+  bytes: number;
+  updated_at: number;
 };
 
 export type PlaybackPositionRow = {

@@ -91,6 +91,19 @@ preview of a voice takes a few seconds to render; after that it is cached on dis
 The play button on a chapter row streams it as it is being generated, so audio starts
 after the first short chunk (a second or two) instead of after the whole chapter.
 
+Audio you listen to is kept. Every chunk is written to `data/streams/` as it plays, so
+pausing, seeking, closing the tab or losing the server does not throw it away: playing
+the chapter again replays what was already rendered straight from disk — no model load,
+no synthesis, audio in tens of milliseconds — and only renders what is missing. Because
+the stored audio is plain PCM, resuming mid-chapter starts at the exact second you ask
+for rather than the nearest guess.
+
+A chapter you listen to all the way through is then kept as an ordinary finished track,
+the same as if you had converted it: it counts as converted, seeks properly, and shows
+up in downloads. Seeking past what is stored still renders from an estimated position,
+and that audio is played without being kept — it cannot extend a prefix it does not
+continue. Kept audio nobody plays again is swept after `HUIVER_PARTIAL_TTL_DAYS`.
+
 Kokoro renders around 5x faster than realtime on Apple silicon, so playback stays
 comfortably ahead. If your machine is short on RAM the model will swap and throughput
 can drop below realtime, which makes long chapters stutter — convert them instead.
@@ -191,6 +204,8 @@ upload → extract chapters → chunk to ~420 chars → TTS → concat → ffmpe
   and interrupted jobs resume on restart — mid-chapter, from their last checkpoint
 - `src/server/checkpoint.ts` — decides whether a half-rendered chapter can be
   continued, and from which chunk
+- `src/server/stream-store.ts` — audio kept from live playback, on the same
+  checkpoint rules, so a chapter is never rendered twice
 - `src/server/audio-routes.ts` — voice previews (disk-cached) and live chapter
   streaming, which pipes each rendered chunk through a single ffmpeg process to
   produce one continuous MP3 stream
@@ -208,5 +223,6 @@ copyrighted and this is a public repo. See `examples/README.md`.
 ```bash
 bun test src          # parsing + chunking unit tests, fast
 bun run e2e           # full stack: upload → synthesize → play, uses a temp data dir
-bun run e2e:resume    # kills the server mid-chapter and checks the resume is seamless
+bun run e2e:resume    # kills the server mid-chapter and checks resuming is seamless,
+                      # for conversion, for a stopped run, and for live playback
 ```
