@@ -277,7 +277,7 @@ the only unambiguous answer:
 xcodebuild -workspace apps/mobile/ios/huiver.xcworkspace -scheme huiver \
   -showdestinations | grep "platform:iOS," | grep -v Simulator
 
-bun run mobile:ios:device 00008150-000113481E33401C   # the id from that listing
+bun run mobile:ios:device <id-from-that-listing>
 ```
 
 Build **Release** for the phone, which that script does. A Debug build leaves the JS
