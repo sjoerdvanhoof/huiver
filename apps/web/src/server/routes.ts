@@ -18,6 +18,7 @@ import { EMPTY_PROGRESS, computeRollups, savePosition, type BookRollup } from ".
 import { storedStreamPathsForBook } from "./stream-store";
 import { getSettings, updateSettings } from "./settings";
 import { getProvider, listProviders } from "./tts";
+import { voiceRoutes } from "./voice-routes";
 import {
   extractEpubCover,
   looksLikeZip,
@@ -175,6 +176,9 @@ async function serveCover(bookId: string): Promise<Response> {
 }
 
 export const apiRoutes = {
+  // Recording and managing the reference clips Chatterbox clones from.
+  ...voiceRoutes,
+
   "/api/providers": async () => json(await listProviders()),
 
   "/api/providers/:id/preview": (req: Bun.BunRequest<"/api/providers/:id/preview">) =>

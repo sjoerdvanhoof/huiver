@@ -1,0 +1,19 @@
+# Chatterbox Nano, installed into .venv-chatterbox rather than .venv.
+#
+# chatterbox-tts pins torch, torchaudio, transformers and numpy to exact
+# versions several majors below the ones Kokoro runs against, so the two engines
+# cannot share a virtual environment — installing this alongside Kokoro
+# downgrades torch and breaks Kokoro.
+#
+# From git rather than PyPI, and pinned to a commit: Nano landed after the last
+# release, so 0.1.7 on PyPI has no `nano=True` and would quietly fetch the 350M
+# Turbo weights instead. Bump the pin deliberately, not by accident.
+#
+# The git build still calls itself 0.1.7, so pip cannot tell one commit from
+# another and will skip an install it thinks it already has. That is why
+# setup:chatterbox ends with a --force-reinstall --no-deps pass over this file;
+# without it, changing the pin above would silently do nothing.
+#
+#   bun run setup:chatterbox
+chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@5de7a54aa4e5e2baadb0182dde554908b48b85c2
+soundfile>=0.12

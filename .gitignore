@@ -36,8 +36,10 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # huiver-specific
 # ---------------------------------------------------------------------------
 
-# Python venv for the local TTS engines (~1 GB)
+# Python venvs for the local TTS engines (~1 GB each). Chatterbox gets its own
+# because it pins torch and transformers well below the versions Kokoro needs.
 .venv
+.venv-chatterbox
 __pycache__
 *.pyc
 
@@ -80,3 +82,20 @@ examples/*
 apps/mobile/ios/
 apps/mobile/android/
 apps/mobile/.expo/
+
+# ---------------------------------------------------------------------------
+# ios (native Swift app — Chatterbox Nano on Core ML)
+#
+# Nothing model-shaped is committed. The .mlpackages come out of
+# apps/ios/export, the compiled .mlmodelc and the voice pack are derived from
+# them, and together they are the better part of a gigabyte.
+# ---------------------------------------------------------------------------
+apps/ios/Models/
+apps/ios/Voices/
+apps/ios/build/
+apps/ios/build-voices/
+apps/ios/.build/
+apps/ios/.swiftpm/
+apps/ios/DerivedData/
+apps/ios/Huiver.xcodeproj/xcuserdata/
+apps/ios/Huiver.xcodeproj/project.xcworkspace/xcuserdata/

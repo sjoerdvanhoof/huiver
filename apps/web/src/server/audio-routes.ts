@@ -82,6 +82,12 @@ async function buildPreview(providerId: string, voice: string, outPath: string):
   }
 }
 
+/** Drop a cached preview, for a voice that has been deleted or replaced. */
+export async function forgetVoicePreview(providerId: string, voice: string): Promise<void> {
+  if (!/^[\w.-]{1,64}$/.test(voice)) return;
+  await rm(path.join(PREVIEW_DIR, `${providerId}-${voice}.mp3`), { force: true });
+}
+
 export async function serveVoicePreview(providerId: string, voice: string): Promise<Response> {
   if (!/^[\w.-]{1,64}$/.test(voice)) return Response.json({ error: "Invalid voice" }, { status: 400 });
 

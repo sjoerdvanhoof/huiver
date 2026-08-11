@@ -16,12 +16,22 @@
     "e2e:resume": "bun run --cwd apps/web e2e:resume",
     "examples": "bun run --cwd apps/web examples",
     "examples:import": "bun run --cwd apps/web examples:import",
+    "voices": "bun run --cwd apps/web voices",
     "setup:python": "bun run --cwd apps/web setup:python",
+    "setup:chatterbox": "bun run --cwd apps/web setup:chatterbox",
     "typecheck": "bunx tsc --noEmit -p apps/web && bunx tsc --noEmit -p packages/shared && bunx tsc --noEmit -p apps/mobile",
     "mobile": "bun run --cwd apps/mobile start",
     "mobile:prebuild": "bun run --cwd apps/mobile prebuild",
     "mobile:ios": "bun run --cwd apps/mobile ios",
     "mobile:ios:device": "bun run --cwd apps/mobile ios:device",
-    "mobile:android": "bun run --cwd apps/mobile android"
+    "mobile:android": "bun run --cwd apps/mobile android",
+    "ios:setup": "apps/web/.venv-chatterbox/bin/pip install -q coremltools",
+    "ios:export": "cd apps/ios/export && ../../../apps/web/.venv-chatterbox/bin/python export_models.py --out ../build",
+    "ios:voices": "cd apps/ios/export && ../../../apps/web/.venv-chatterbox/bin/python export_voices.py --out ../build-voices",
+    "ios:verify": "cd apps/ios/export && ../../../apps/web/.venv-chatterbox/bin/python verify_parity.py --models ../build",
+    "ios:install": "apps/ios/scripts/install-models.sh",
+    "ios:test": "cd apps/ios && swift test",
+    "ios:build": "xcodebuild -project apps/ios/Huiver.xcodeproj -scheme Huiver -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -configuration Debug build CODE_SIGNING_ALLOWED=NO",
+    "ios:device": "apps/ios/scripts/run-device.sh"
   }
 }

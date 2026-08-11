@@ -1,6 +1,7 @@
 import { AlertCircle, Monitor, Moon, Sun, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { VoicePicker } from "@/components/VoicePicker";
+import { VoiceStudio } from "@/components/VoiceStudio";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useProviders } from "../hooks/useProviders";
@@ -14,7 +15,7 @@ import { STREAM_ADVANCE_KEY, pause } from "../player/store";
  * from.
  */
 export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { providers, error: providersError } = useProviders();
+  const { providers, error: providersError, refresh: refreshProviders } = useProviders();
   const { settings, update, error: settingsError, clearError } = useSettings();
   const { theme } = useTheme();
   const [error, setError] = useState<string | null>(null);
@@ -22,6 +23,20 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
   const provider = useMemo(
     () => providers.find(p => p.id === settings.defaultProvider),
     [providers, settings.defaultProvider],
+  );
+
+  // Chatterbox is the one engine whose voice list the user can change from
+  // here, and every change moves the list the picker is reading from.
+  const chatterbox = providers.find(p => p.id === "chatterbox");
+
+  const onVoicesChanged = useCallback(
+    async ({ created, deleted }: { created?: string; deleted?: string }) => {
+      await refreshProviders();
+      if (created) update({ defaultProvider: "chatterbox", defaultVoice: created });
+      // Leaving a deleted voice selected would fail at the next conversion.
+      else if (deleted && settings.defaultVoice === deleted) update({ defaultVoice: null });
+    },
+    [refreshProviders, update, settings.defaultVoice],
   );
 
   const [streamAdvance, setStreamAdvance] = useState(() => {
@@ -140,6 +155,12 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
               />
             </div>
           </section>
+
+          {chatterbox && (
+            <section className="border-t pt-5">
+              <VoiceStudio onChanged={onVoicesChanged} onError={setError} />
+            </section>
+          )}
 
           <section className="space-y-3 border-t pt-5">
             <h3 className="text-sm font-semibold">Playback</h3>

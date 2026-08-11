@@ -14,5 +14,6 @@ export * from "./dto";
 export * from "./extract";
 export * from "./format";
 export * from "./pcm";
+export * from "./voice-prompt";
 export * from "./wav";
 export * as posixPath from "./posix-path";

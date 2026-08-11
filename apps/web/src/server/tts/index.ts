@@ -1,3 +1,4 @@
+import { chatterboxProvider } from "./chatterbox";
 import { elevenlabsProvider } from "./elevenlabs";
 import { kokoroProvider } from "./kokoro";
 import { openaiProvider } from "./openai";
@@ -5,6 +6,7 @@ import type { TTSProvider } from "./types";
 
 export const PROVIDERS: Record<string, TTSProvider> = {
   kokoro: kokoroProvider,
+  chatterbox: chatterboxProvider,
   openai: openaiProvider,
   elevenlabs: elevenlabsProvider,
 };

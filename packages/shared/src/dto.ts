@@ -12,6 +12,21 @@ export type ProviderDTO = {
 };
 
 /**
+ * A voice that is defined by a reference recording rather than by the model —
+ * how every Chatterbox voice works, since it clones whatever it is given.
+ */
+export type VoiceProfileDTO = {
+  id: string;
+  label: string;
+  /** Built-in voices come from the downloaded pack; recorded ones are yours. */
+  kind: "builtin" | "recorded";
+  /** Length of the reference clip, in seconds. */
+  seconds: number;
+  /** When you recorded it. Null for the built-in pack. */
+  createdAt: number | null;
+};
+
+/**
  * Audio is always synthesized at speed 1.0 — playback speed belongs to the
  * player, where it can change without re-rendering anything.
  */

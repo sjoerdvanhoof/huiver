@@ -12,7 +12,9 @@
     "e2e:resume": "bun run scripts/e2e-resume.ts",
     "examples": "bun run scripts/fetch-examples.ts && bun run scripts/import-examples.ts",
     "examples:import": "bun run scripts/import-examples.ts",
-    "setup:python": "python3.11 -m venv .venv && .venv/bin/pip install -q --upgrade pip && .venv/bin/pip install -r py/requirements.txt"
+    "voices": "bun run scripts/fetch-voices.ts",
+    "setup:python": "python3.11 -m venv .venv && .venv/bin/pip install -q --upgrade pip && .venv/bin/pip install -r py/requirements.txt",
+    "setup:chatterbox": "python3.11 -m venv .venv-chatterbox && .venv-chatterbox/bin/pip install -q --upgrade pip && .venv-chatterbox/bin/pip install -q -r py/requirements-chatterbox.txt && .venv-chatterbox/bin/pip install -q --force-reinstall --no-deps -r py/requirements-chatterbox.txt"
   },
   "dependencies": {
     "@huiver/shared": "workspace:*",
