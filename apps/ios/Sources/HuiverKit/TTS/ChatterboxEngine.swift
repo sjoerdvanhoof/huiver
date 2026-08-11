@@ -57,11 +57,14 @@ public actor ChatterboxEngine {
     /// it does not belong behind the actor.
     public nonisolated let sampleRate = 24000
 
-    private let prefill: MLModel
-    private let decode: MLModel
-    private let flow: MLModel
-    private let vocoder: MLModel
+    /// Vars rather than lets because they are replaceable: see `reload`.
+    private var prefill: MLModel
+    private var decode: MLModel
+    private var flow: MLModel
+    private var vocoder: MLModel
     private let tokenizer: BPETokenizer
+    /// Where the models came from, kept so they can be loaded again.
+    private let source: Models
 
     // Read out of the models rather than hardcoded, so re-exporting at a
     // different size needs no change here.
@@ -139,6 +142,43 @@ public actor ChatterboxEngine {
         models: Models,
         progress: @escaping @Sendable (LoadProgress) -> Void = { _ in }
     ) async throws -> ChatterboxEngine {
+        let (loaded, placement) = try await loadModels(models, progress: progress)
+        return try ChatterboxEngine(
+            source: models,
+            prefill: loaded[0],
+            decode: loaded[1],
+            flow: loaded[2],
+            vocoder: loaded[3],
+            tokenizer: try BPETokenizer(directory: models.tokenizer),
+            placement: placement
+        )
+    }
+
+    /// Replace the four models with freshly loaded ones.
+    ///
+    /// Needed because a Core ML prediction that fails does not fail only once. Once
+    /// the app has been off screen and a prediction has failed there, *every* later
+    /// prediction on that `MLModel` fails too — in the foreground as much as in the
+    /// background, and with a different error the second time round ("neural network
+    /// model … error code -1"). The instance is finished; only a new one recovers.
+    ///
+    /// Quick, despite appearances: the expensive part of a first run is Core ML
+    /// compiling each model for the device, and that result is cached. This reads
+    /// the cache. Everything derived from the models — the metadata, the tokenizer,
+    /// the language list — is the same for the same files, so only the models
+    /// themselves are swapped.
+    public func reload() async throws {
+        let (loaded, _) = try await Self.loadModels(source)
+        prefill = loaded[0]
+        decode = loaded[1]
+        flow = loaded[2]
+        vocoder = loaded[3]
+    }
+
+    private static func loadModels(
+        _ models: Models,
+        progress: @escaping @Sendable (LoadProgress) -> Void = { _ in }
+    ) async throws -> ([MLModel], [String: String]) {
         let stages = [
             ("T3Prefill", models.prefill),
             ("T3Decode", models.decode),
@@ -211,14 +251,7 @@ public actor ChatterboxEngine {
             )
         }
 
-        return try ChatterboxEngine(
-            prefill: loaded[0],
-            decode: loaded[1],
-            flow: loaded[2],
-            vocoder: loaded[3],
-            tokenizer: try BPETokenizer(directory: models.tokenizer),
-            placement: placement
-        )
+        return (loaded, placement)
     }
 
     /// Bytes under a `.mlmodelc`, which is a directory rather than a file.
@@ -235,6 +268,7 @@ public actor ChatterboxEngine {
     }
 
     private init(
+        source: Models,
         prefill: MLModel,
         decode: MLModel,
         flow: MLModel,
@@ -242,6 +276,7 @@ public actor ChatterboxEngine {
         tokenizer: BPETokenizer,
         placement: [String: String]
     ) throws {
+        self.source = source
         self.placement = placement
         let declared = (prefill.modelDescription.metadata[.creatorDefinedKey] as? [String: String])?["languages"]
         self.languages = (declared?.split(separator: ",").map {

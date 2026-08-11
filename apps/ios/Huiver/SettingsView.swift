@@ -1,7 +1,12 @@
+import AVFoundation
 import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.theme) private var theme
+    /// Plays the bundled samples. `AVAudioPlayer` rather than the engine: these
+    /// are finished files, and auditioning a voice should not wake the model.
+    @State private var preview = PreviewPlayer()
 
     var body: some View {
         @Bindable var model = model
@@ -9,25 +14,46 @@ struct SettingsView: View {
         Form {
             Section {
                 ForEach(model.voices) { voice in
-                    Button {
-                        model.selectedVoiceId = voice.id
-                    } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(voice.name).foregroundStyle(.primary)
-                                Text(voice.detail).font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: Palette.Space.md) {
+                        if let url = voice.previewURL {
+                            Button {
+                                preview.toggle(url, id: voice.id)
+                            } label: {
+                                Image(systemName: preview.playing == voice.id
+                                    ? "stop.circle.fill" : "play.circle")
+                                    .font(.title2)
+                                    .foregroundStyle(theme.colors.primary)
                             }
-                            Spacer()
-                            if model.selectedVoiceId == voice.id {
-                                Image(systemName: "checkmark").foregroundStyle(.tint)
-                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            // No sample shipped for this voice yet.
+                            Image(systemName: "play.circle")
+                                .font(.title2)
+                                .foregroundStyle(theme.colors.border)
                         }
+
+                        Button {
+                            model.selectedVoiceId = voice.id
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(voice.name).foregroundStyle(.primary)
+                                    Text(voice.detail).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if model.selectedVoiceId == voice.id {
+                                    Image(systemName: "checkmark").foregroundStyle(.tint)
+                                }
+                            }
+                            .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             } header: {
                 Text("Voice")
             } footer: {
-                Text("Chatterbox has no voice roster — it clones a reference recording. These were cloned on your Mac and shipped with the app; changing voice re-renders a chapter rather than mixing two narrators.")
+                Text("Chatterbox has no voice roster — it clones a reference recording. These were cloned on your Mac and shipped with the app; changing voice re-renders a chapter rather than mixing two narrators. Samples are pre-rendered, so they play instantly instead of waking the model.")
             }
 
             Section {
@@ -80,6 +106,7 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.refresh() }
+        .onDisappear { preview.stop() }
     }
 
     private var queueSummary: String {
@@ -91,5 +118,55 @@ struct SettingsView: View {
 
     private func size(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
+
+
+/// Plays the bundled voice samples, one at a time.
+@MainActor
+@Observable
+final class PreviewPlayer {
+    /// Which voice is sounding, so its button can show as stop.
+    private(set) var playing: String?
+
+    private var player: AVAudioPlayer?
+    private var observer: NSObjectProtocol?
+
+    func toggle(_ url: URL, id: String) {
+        if playing == id {
+            stop()
+            return
+        }
+        stop()
+        do {
+            #if os(iOS)
+            // `.playback` so a sample is audible with the ringer switch set to
+            // silent, which is where a phone usually is.
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+            try AVAudioSession.sharedInstance().setActive(true)
+            #endif
+            let player = try AVAudioPlayer(contentsOf: url)
+            player.prepareToPlay()
+            player.play()
+            self.player = player
+            playing = id
+
+            // No delegate: a timer that outlives the sample by a moment is
+            // enough to put the button back, and avoids an @objc shim.
+            let seconds = player.duration + 0.1
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(seconds))
+                guard let self, playing == id else { return }
+                stop()
+            }
+        } catch {
+            playing = nil
+        }
+    }
+
+    func stop() {
+        player?.stop()
+        player = nil
+        playing = nil
     }
 }

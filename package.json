@@ -32,6 +32,7 @@
     "ios:install": "apps/ios/scripts/install-models.sh",
     "ios:test": "cd apps/ios && swift test",
     "ios:build": "xcodebuild -project apps/ios/Huiver.xcodeproj -scheme Huiver -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -configuration Debug build CODE_SIGNING_ALLOWED=NO",
-    "ios:device": "apps/ios/scripts/run-device.sh"
+    "ios:device": "apps/ios/scripts/run-device.sh",
+    "ios:previews": "cd apps/ios/export && ../../../apps/web/.venv-chatterbox/bin/python export_previews.py --out ../build-voices"
   }
 }

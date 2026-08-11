@@ -63,6 +63,9 @@ public final class Converter {
     public static let backgroundTaskIdentifier = "online.mo4.huiver.nano.convert"
 
     private let engine: ChatterboxEngine
+    /// Set when a render threw, because the likeliest reason is a model that has
+    /// stopped working rather than a chapter that cannot be read.
+    private var modelsNeedReloading = false
     private let library: Library
     private let renderer: ChapterRenderer
     private var voice: Voice?
@@ -158,6 +161,15 @@ public final class Converter {
 
         work = Task { [weak self] in
             guard let self else { return }
+            if modelsNeedReloading {
+                // A Core ML model that has failed once fails for good, and the
+                // most common way to fail is for the app to lose the GPU by
+                // leaving the screen mid-conversion. Without this, every attempt
+                // for the rest of the session fails exactly as the first did.
+                // See `ChatterboxEngine.reload`.
+                modelsNeedReloading = false
+                try? await engine.reload()
+            }
             while let job = queue.first, !stopping.isSet {
                 guard let book = await library.book(job.bookId),
                       let chapter = book.chapters.first(where: { $0.id == job.chapterId })
@@ -187,6 +199,7 @@ public final class Converter {
                     // Stopping is ordinary, and leaves a usable prefix.
                 } catch {
                     failure = error.localizedDescription
+                    modelsNeedReloading = true
                 }
                 // The job stays at the head of the queue until the chapter is
                 // actually finished. Removing it when work *started* — which is

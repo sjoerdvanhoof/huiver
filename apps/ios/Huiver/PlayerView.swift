@@ -110,15 +110,28 @@ struct PlayerView: View {
             .foregroundStyle(theme.colors.mutedForeground)
 
             if !narrator.isFullyRendered {
-                Text(narrator.state == .preparing
-                    ? "Reading ahead…"
-                    : "Rendered up to \(Format.duration(narrator.renderedSeconds)) — synthesis pauses if you leave the app with nothing playing.")
+                Text(footnote(narrator))
                     .font(.huiverCaption)
                     .foregroundStyle(theme.colors.mutedForeground)
                     .multilineTextAlignment(.center)
                     .padding(.top, Palette.Space.xs)
             }
         }
+    }
+
+    /// What the scrubber says about the part of the chapter that does not exist
+    /// yet. Three different situations, and the middle one is the common one that
+    /// used to look like a bug: locking the phone stops Core ML dead, so
+    /// synthesis dies within seconds and only what was already rendered plays.
+    private func footnote(_ narrator: Narrator) -> String {
+        if narrator.isReloadingModels {
+            return "Loading the model again — it stops working once the screen has been locked, and has to be replaced rather than restarted."
+        }
+        if narrator.renderFailure != nil {
+            return "Reading stopped at \(Format.duration(narrator.renderedSeconds)) — the model cannot run with the screen locked. It carries on from here now that you are back."
+        }
+        if narrator.state == .preparing { return "Reading ahead…" }
+        return "Rendered up to \(Format.duration(narrator.renderedSeconds)) — synthesis pauses if you leave the app with nothing playing."
     }
 
     // MARK: - Transport

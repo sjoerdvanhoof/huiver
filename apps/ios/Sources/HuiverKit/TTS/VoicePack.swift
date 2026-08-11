@@ -24,6 +24,11 @@ public struct Voice: Sendable, Identifiable, Hashable {
     public let promptTokens: [Int32]
     public let promptFeatures: [Float]
     public let xvector: [Float]
+
+    /// A pre-rendered sample of this voice, if one shipped. Rendered on the Mac
+    /// by `export_previews.py`: synthesising it on demand would mean a
+    /// fifteen-second wait and a warm engine just to audition a voice.
+    public var previewURL: URL?
 }
 
 public enum VoicePack {
@@ -36,6 +41,8 @@ public enum VoicePack {
             let name: String
             let detail: String
             let file: String
+            /// Absent until `export_previews.py` has been run for this voice.
+            let preview: String?
         }
         let voices: [Entry]
     }
@@ -66,7 +73,15 @@ public enum VoicePack {
         let manifest = try JSONDecoder().decode(Manifest.self, from: data)
         return try manifest.voices.map { entry in
             let blob = try Data(contentsOf: directory.appendingPathComponent(entry.file))
-            return try decode(blob, entry: entry)
+            var voice = try decode(blob, entry: entry)
+            if let preview = entry.preview {
+                let url = directory.appendingPathComponent(preview)
+                // Only offered if the file is really there, so a manifest that
+                // mentions a preview the build forgot to copy does not leave a
+                // play button that does nothing.
+                if FileManager.default.fileExists(atPath: url.path) { voice.previewURL = url }
+            }
+            return voice
         }
     }
 

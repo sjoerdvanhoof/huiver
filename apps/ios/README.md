@@ -259,8 +259,9 @@ There is no ffmpeg on the phone, so chapters stay as 24 kHz 16-bit WAV: about
 ### What is not there yet
 
 - Recording your own voice on the phone (see above).
-- Seeking within a chapter. Playback is sequential; stop and start again.
-- Lock-screen controls and a `Now Playing` entry.
+- Seeking past what has been rendered. The scrubber stops at the rendered edge,
+  on the lock screen as well as in the app.
+- A sleep timer, which the Expo app has.
 - Android, which Core ML rules out by construction.
 
 ## Speed
@@ -314,3 +315,92 @@ So stopping is cheap and resuming is automatic instead:
 Listening *does* continue off screen, because then the app is genuinely playing
 audio. That is what the background-audio capability is for, and it is why the
 live path renders as it plays.
+
+## Core ML stops at the lock screen
+
+Synthesis dies a few seconds after the phone leaves the screen. Core ML fails the
+prediction outright — *"Unable to compute the prediction using ML Program"* — because
+a backgrounded app cannot reach the GPU, and the models are not on the CPU. The
+background-audio capability keeps *playback* going; it does not buy compute.
+
+So the renderer stopping is the ordinary case for anyone who listens with the phone
+in a pocket, not an exception. It is kept apart from `Narrator.State` for that
+reason: `renderFailure` says synthesis stopped, and playback carries on with what is
+on disk. Conflating the two is what made a locked phone lose its lock screen
+controls mid-chapter — the state went `.failed`, `publish` cleared the now-playing
+entry, and `pause()`'s `state == .speaking` guard then rejected every press while
+audio was still coming out. Two lessons, both encoded in the code now:
+
+- Pausing keys off `player.isPlaying`, not off `state`. If sound is coming out, the
+  pause button stops it, whatever the app believes about itself.
+- Synthesis restarts on `scenePhase == .active`. A resumed render walks the chapter
+  from the beginning and re-reports what is already on disk, so `scheduledChunks`
+  drops those rather than playing the opening over the top of the middle.
+- **Restarting is not enough: the models have to be replaced.** A Core ML model that
+  has failed once fails for good. Every later prediction on that `MLModel` throws
+  too, in the foreground as much as off screen, and with a different error the
+  second time round (`neural network model … error code -1`). So `resumeRendering`
+  calls `ChatterboxEngine.reload`, which loads the four models again — quick,
+  because the expensive part of a first run is Core ML compiling them for the
+  device and that result is cached. The converter does the same after a failure,
+  or a conversion interrupted by backgrounding would fail identically on every
+  retry for the rest of the session.
+
+Nothing can be done about the underlying limit from here. Rendering the chapter
+first, with the app open, remains the comfortable way to use this.
+
+Two smaller consequences of running out of audio, both fixed alongside:
+
+- The player used to keep claiming to speak after playback ran past the last
+  scheduled chunk. It now goes back to `.preparing` — "Reading ahead…" — which is
+  exactly what it is doing, and `schedule` returns it to `.speaking` when a chunk
+  lands. The check needs a second of margin: while synthesis is only just keeping
+  up the playhead crosses the end of the queue constantly, and acting on that
+  immediately would have the state flapping several times a chapter.
+- Seeking forward stops at the rendered edge, and is refused when it would gain
+  less than two seconds (`Narrator.seekTarget`). `+30 s` with three seconds
+  rendered used to schedule the fraction of a sentence that existed and leave a
+  silent player with the scrubber pinned.
+
+## Off screen
+
+Background audio keeps the sound going; it does not put anything on the lock
+screen. Those controls belong to whichever app has claimed both halves of
+`MediaPlayer` — metadata pushed to `MPNowPlayingInfoCenter` and commands taken
+from `MPRemoteCommandCenter` — so `NowPlaying` does both, and the narrator pushes
+it a snapshot whenever the state, position or rate changes.
+
+What appears there is the chapter title, the book and author, the cover, and the
+same transport as the player: play/pause, ±15/30 s, previous and next chapter, a
+draggable bar, and the speed. All of it is registered, but which of the two pairs
+of side buttons gets drawn — the skips or the chapters — is the system's choice
+and varies between the lock screen, Control Centre and CarPlay. Two details are
+particular to this app:
+
+- The duration is the *estimate* while a chapter is still rendering, and the bar
+  is drawn against it, so it settles rather than jumps as the real length becomes
+  known. Dragging past what has been rendered lands at the rendered edge, because
+  audio that does not exist has nowhere to seek to.
+- The elapsed time is pushed at whole seconds and the rate is pushed as zero
+  while paused. iOS counts forward from the last push using that rate, so a
+  paused book that reported 1.5× would sit there ticking up.
+- Pausing pauses the *engine*, not only the player node. A node-only pause leaves
+  the engine running and the audio hardware live on silence, and the system reads
+  its own idea of whether we are playing from the hardware rather than from
+  anything published — so the lock screen sat one state behind, sending `play`
+  while the book was already playing.
+
+One trap, paid for once: MediaPlayer calls the artwork request handler on its own
+queue, and a closure written inside a `@MainActor` method is *inferred* to be
+isolated to the main actor. The runtime checks that on entry, so the app died with
+`EXC_BREAKPOINT` inside `-[MPMediaItemArtwork jpegDataWithSize:]` the first time it
+encoded a cover — every book with artwork, the moment playback started. Both the
+artwork handler and the remote-command handlers are `@Sendable` for that reason,
+which is what makes them nonisolated; the annotation is load-bearing, not decoration.
+
+The end of a chapter is noticed by polling rather than by a completion handler.
+Chunks are scheduled with no handler on purpose — one per chunk would fire on the
+audio thread, mid-chapter, for every sentence — so the ticker that already reads
+the playhead compares it against the end of the last scheduled segment. Rendering
+finishing is not the same event: a part-rendered chapter streams out of the
+renderer far faster than it can be listened to.

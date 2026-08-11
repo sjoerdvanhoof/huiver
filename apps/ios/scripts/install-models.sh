@@ -62,6 +62,8 @@ if [ -d "$voice_src" ] && [ "$(cd "$voice_src" && pwd -P)" = "$(cd "$voices" && 
   echo "voices already in place"
 elif compgen -G "$voice_src/*.voice" >/dev/null 2>&1; then
   cp "$voice_src"/*.voice "$voice_src/voices.json" "$voices/"
+  # Previews are optional: a voice without one just has no play button.
+  cp "$voice_src"/*.preview.wav "$voices/" 2>/dev/null || true
   echo "copied $(ls "$voices"/*.voice | wc -l | tr -d ' ') voices"
 elif compgen -G "$voices/*.voice" >/dev/null 2>&1; then
   echo "no voices in $voice_src; keeping the $(ls "$voices"/*.voice | wc -l | tr -d ' ') already installed"

@@ -72,3 +72,52 @@ struct PlaybackTests {
         #expect(start > 1000)
     }
 }
+
+/// Where a seek is allowed to land.
+///
+/// The rule exists because of a real dead end: skipping forward 30 seconds with
+/// three seconds rendered used to schedule the last fraction of a sentence, play
+/// it, and leave a silent player with the scrubber pinned at the edge.
+struct SeekTests {
+    @Test("seeking backwards is unrestricted")
+    func backwards() {
+        #expect(Narrator.seekTarget(to: 10, from: 400, rendered: 500) == 10)
+        #expect(Narrator.seekTarget(to: 0, from: 3, rendered: 500) == 0)
+    }
+
+    @Test("a seek before the start lands at the start")
+    func negative() {
+        #expect(Narrator.seekTarget(to: -30, from: 10, rendered: 500) == 0)
+    }
+
+    @Test("forwards is clamped to what has been rendered")
+    func clamped() {
+        // 100 rendered, less the quarter second of padding between chunks.
+        #expect(Narrator.seekTarget(to: 500, from: 10, rendered: 100) == 99.75)
+    }
+
+    @Test("a forward seek that would gain almost nothing is refused")
+    func refused() {
+        // Three seconds rendered, playing at 2.5: +30 has nowhere to go.
+        #expect(Narrator.seekTarget(to: 32.5, from: 2.5, rendered: 3) == nil)
+        // Right at the edge already.
+        #expect(Narrator.seekTarget(to: 100, from: 99, rendered: 100) == nil)
+    }
+
+    @Test("a forward seek with room to move is allowed")
+    func allowed() {
+        #expect(Narrator.seekTarget(to: 40, from: 10, rendered: 500) == 40)
+        // Only just worth it, but the audio is really there.
+        #expect(Narrator.seekTarget(to: 12.5, from: 10, rendered: 500) == 12.5)
+    }
+
+    @Test("nothing rendered yet means nowhere to go, not even the beginning")
+    func empty() {
+        // Seeking tears down the player's queue and rebuilds it. With nothing to
+        // put back, that leaves a player sounding nothing while claiming to
+        // play — so with no audio on disk, every seek is refused.
+        #expect(Narrator.seekTarget(to: 30, from: 0, rendered: 0) == nil)
+        #expect(Narrator.seekTarget(to: 0, from: 0, rendered: 0) == nil)
+        #expect(Narrator.seekTarget(to: 0, from: 0, rendered: 0.2) == nil)
+    }
+}
