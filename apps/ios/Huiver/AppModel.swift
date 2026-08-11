@@ -19,6 +19,8 @@ final class AppModel {
     /// What the engine is doing while it loads, for the preparing screen.
     /// Which processor Core ML gave each model, shown in Settings.
     private(set) var placement: [String: String] = [:]
+    /// Languages the loaded models can actually read.
+    private(set) var engineLanguages: [Language] = [.english]
     private(set) var preparing: ChatterboxEngine.LoadProgress?
     private(set) var preparingSince: Date?
     /// True on the run that actually compiles the models, which is the slow one
@@ -80,6 +82,7 @@ final class AppModel {
             }
             narrator = Narrator(engine: engine, library: library!)
             placement = engine.placement
+            engineLanguages = engine.languages
             UserDefaults.standard.set(true, forKey: "preparedOnce")
         } catch {
             loadFailure = error.localizedDescription
@@ -103,6 +106,17 @@ final class AppModel {
         } catch {
             loadFailure = error.localizedDescription
         }
+    }
+
+    func setLanguage(_ language: Language, for book: Book) async {
+        guard let library else { return }
+        try? await library.setLanguage(language, for: book.id)
+        books = await library.all()
+    }
+
+    /// Can the engine read this book, or will it mispronounce it?
+    func canSpeak(_ book: Book) -> Bool {
+        engineLanguages.contains { $0.code == book.languageCode }
     }
 
     func delete(_ book: Book) async {

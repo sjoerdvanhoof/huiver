@@ -182,6 +182,43 @@ of three.
 **Recording a voice on the phone is not in this version.** Anything you record
 in the web app is picked up by `ios:voices` and shipped like the rest.
 
+## Languages
+
+Set per book, not globally: a library is not monolingual, and one Dutch book
+among twenty English ones should not need a setting changed before and after
+reading it. The language is guessed from the book's own text on import — using
+`NLLanguageRecognizer`, which is on-device and better at telling Dutch from
+German than any word list worth writing — and can be corrected in the book's
+own screen.
+
+**Nano only reads English, and that is a property of the checkpoint rather than
+of this app.** Chatterbox does have 23 languages, Dutch among them, but they
+live in a different model:
+
+| | Nano (shipped here) | Multilingual |
+| --- | --- | --- |
+| Text vocabulary | 50276 — GPT-2's English byte pairs | 2454 — `MTLTokenizer`, `[nl]`-prefixed |
+| Backbone | GPT-2 small, 12 layers, 768 wide | LLaMA, 30 layers, 1024 wide, 503M params |
+| Mel decoder | meanflow, 2 CFM steps | plain CFM, 10 steps |
+| `language_id` | not a parameter | 23 languages |
+
+So Dutch is not a flag that was left unset; it needs a second model roughly four
+times larger, whose mel decoder does five times the work. On a phone where Nano
+already runs at about the speed of speech, that is likely hours of compute per
+hour of audio, and it would add around a gigabyte to the app even at int8 —
+twice that at float16, because the prefill/decode split holds the backbone twice.
+
+That trade was considered and declined. A book in an unsupported language is
+therefore *still read*, with English pronunciation, and the book's screen says so
+plainly rather than hiding it behind a disabled button — Nano's byte-level
+tokenizer has no unknown token, so foreign text produces confidently wrong
+pronunciation rather than an error.
+
+The plumbing is in place if that changes: the language travels per book, and the
+engine reports what it can read from a `languages` key in the exported model's
+metadata. A multilingual export would need that key and a Swift port of
+`MTLTokenizer`, and nothing else on this side.
+
 ## The app
 
 ```

@@ -4,11 +4,45 @@ struct BookView: View {
     let book: Book
     @Environment(AppModel.self) private var model
 
+    /// The book as the library currently has it, so a language change shows up
+    /// without leaving the screen.
+    private var current: Book {
+        model.books.first { $0.id == book.id } ?? book
+    }
+
+    private var language: Language { .named(current.languageCode) }
+
     var body: some View {
         List {
             Section {
-                ForEach(book.chapters) { chapter in
-                    ChapterRow(book: book, chapter: chapter)
+                Picker("Language", selection: Binding(
+                    get: { language.code },
+                    set: { code in
+                        Task { await model.setLanguage(.named(code), for: current) }
+                    }
+                )) {
+                    ForEach(Language.all) { option in
+                        Text(option.name).tag(option.code)
+                    }
+                }
+            } header: {
+                Text("Language")
+            } footer: {
+                if model.canSpeak(current) {
+                    Text("Guessed from the book's own text when it was added. Change it if the guess is wrong.")
+                } else {
+                    // Said plainly rather than hidden behind a disabled button:
+                    // Nano will happily read Dutch, just with English
+                    // pronunciation, and that is worth knowing before waiting
+                    // an hour for a chapter.
+                    Text("\(language.name) is one of Chatterbox's 23 languages, but not one Nano can read — Nano is English-only. It will still speak this book, pronouncing the words as though they were English. Reading it properly needs the multilingual model, which is a separate and much larger export.")
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            Section {
+                ForEach(current.chapters) { chapter in
+                    ChapterRow(book: current, chapter: chapter)
                 }
             } header: {
                 if let voice = model.selectedVoice {

@@ -99,6 +99,16 @@ public actor ChatterboxEngine {
         public let fraction: Double
     }
 
+    /// Languages the loaded models can read.
+    ///
+    /// Read from the export's metadata, defaulting to English. Chatterbox Nano
+    /// is English-only by construction: its text vocabulary is GPT-2's English
+    /// byte-pair set and `inference_turbo` takes no language argument. Reading
+    /// another language with it produces English pronunciation of foreign words
+    /// rather than an error, which is worse than an error, so callers are given
+    /// this list to check against.
+    public nonisolated let languages: [Language]
+
     /// Where each model ended up running, for the settings screen.
     ///
     /// Worth surfacing rather than hiding: which processor a model gets is the
@@ -233,6 +243,10 @@ public actor ChatterboxEngine {
         placement: [String: String]
     ) throws {
         self.placement = placement
+        let declared = (prefill.modelDescription.metadata[.creatorDefinedKey] as? [String: String])?["languages"]
+        self.languages = (declared?.split(separator: ",").map {
+            Language.named(String($0).trimmingCharacters(in: .whitespaces))
+        }).flatMap { $0.isEmpty ? nil : $0 } ?? [.english]
         self.prefill = prefill
         self.decode = decode
         self.flow = flow

@@ -19,7 +19,12 @@ public struct Book: Codable, Sendable, Identifiable, Hashable {
     public var title: String
     public var author: String?
     public var added: Date
+    /// Optional so that a library written before languages existed still
+    /// decodes; absent means English, which is what those books were read as.
+    public var language: String?
     public var chapters: [Chapter]
+
+    public var languageCode: String { language ?? Language.english.code }
 
     public var characters: Int { chapters.reduce(0) { $0 + $1.characters } }
 }
@@ -52,13 +57,18 @@ public actor Library {
 
     public func book(_ id: String) -> Book? { books.first { $0.id == id } }
 
-    public func add(_ extracted: ExtractedBook) throws -> Book {
+    public func add(_ extracted: ExtractedBook, language: Language? = nil) throws -> Book {
         let bookId = UUID().uuidString
+        // Guessed from the book's own text at import, and overridable per book.
+        let detected = language ?? Language.detect(
+            in: extracted.chapters.prefix(3).map(\.text).joined(separator: " ")
+        )
         let book = Book(
             id: bookId,
             title: extracted.title,
             author: extracted.author,
             added: Date(),
+            language: detected.code,
             chapters: extracted.chapters.enumerated().map { index, chapter in
                 Chapter(
                     id: "\(bookId)-\(index)",
@@ -71,6 +81,15 @@ public actor Library {
         books.append(book)
         try save()
         return book
+    }
+
+    /// Change a book's language. Does not touch its audio: what language the
+    /// text is in does not change what has already been spoken, and re-reading
+    /// it is the user's call.
+    public func setLanguage(_ language: Language, for bookId: String) throws {
+        guard let index = books.firstIndex(where: { $0.id == bookId }) else { return }
+        books[index].language = language.code
+        try save()
     }
 
     public func remove(_ id: String) throws {

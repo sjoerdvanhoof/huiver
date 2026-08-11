@@ -146,7 +146,14 @@ def export_t3(model, out: Path, quant: str, verify: bool):
         quantize(mlprefill, quant),
         out,
         "T3Prefill",
-        dict(condPrefixLen=COND_PREFIX_LEN, maxTextTokens=MAX_TEXT_TOKENS),
+        dict(
+            condPrefixLen=COND_PREFIX_LEN,
+            maxTextTokens=MAX_TEXT_TOKENS,
+            # Nano is English-only: GPT-2's English vocabulary, and a generator
+            # with no language argument. The multilingual checkpoint is a
+            # different and much larger model.
+            languages="en",
+        ),
     )
 
     print("T3: tracing decode")
