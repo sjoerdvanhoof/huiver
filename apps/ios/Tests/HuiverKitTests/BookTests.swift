@@ -187,3 +187,62 @@ struct WavTests {
         #expect(back[1] < -0.99)
     }
 }
+
+struct CoverTests {
+    /// The hash must agree with `coverIndex` in packages/shared/src/cover.ts, or
+    /// a book would be one colour in the browser and another on the phone.
+    /// Expected values were produced by running that function on these ids.
+    @Test("hashes book ids the same way as the TypeScript")
+    func matchesTypeScript() {
+        let cases: [(String, Int)] = [
+            ("", 0),
+            ("a", 1),
+            ("book", 1),
+            ("9f8b1c2d-4e5f-6071-8293-a4b5c6d7e8f9", 5),
+            ("huiver", 1),
+        ]
+        for (id, expected) in cases {
+            #expect(Cover.index(for: id) == expected, "index for \(id.debugDescription)")
+        }
+    }
+
+    @Test("every id lands on a real gradient")
+    func inRange() {
+        for index in 0..<500 {
+            let slot = Cover.index(for: "book-\(index)")
+            #expect(slot >= 0 && slot < Cover.gradients.count)
+        }
+    }
+
+    @Test("drops a leading article from the initial")
+    func initials() {
+        #expect(Cover.initial(for: "The Yellow Wallpaper") == "Y")
+        #expect(Cover.initial(for: "a tale of two cities") == "T")
+        #expect(Cover.initial(for: "An Ideal Husband") == "I")
+        #expect(Cover.initial(for: "Dracula") == "D")
+        #expect(Cover.initial(for: "") == "?")
+        // "Theatre" starts with "the" but is not an article.
+        #expect(Cover.initial(for: "Theatre") == "T")
+    }
+}
+
+struct FormatTests {
+    @Test("clock durations match the TypeScript")
+    func clock() {
+        #expect(Format.duration(0) == "0:00")
+        #expect(Format.duration(65) == "1:05")
+        #expect(Format.duration(245) == "4:05")
+        #expect(Format.duration(3845) == "1:04:05")
+        #expect(Format.duration(nil) == "—")
+        #expect(Format.duration(.infinity) == "—")
+    }
+
+    @Test("approximate durations match the TypeScript")
+    func approximate() {
+        #expect(Format.approximate(20) == "<1 min")
+        #expect(Format.approximate(60 * 42) == "42 min")
+        #expect(Format.approximate(3600 * 7 + 60 * 40) == "7 h 40 min")
+        #expect(Format.approximate(3600 * 2) == "2 h")
+        #expect(Format.estimate(60 * 42) == "~42 min")
+    }
+}

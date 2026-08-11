@@ -33,6 +33,20 @@ public final class Narrator {
     public private(set) var chunkCount = 0
     /// Seconds of audio that exist, which is as far as the scrubber can go.
     public private(set) var renderedSeconds: Double = 0
+    /// Where playback has got to, in chapter seconds.
+    public private(set) var position: Double = 0
+    /// What the whole chapter will come to. An estimate until it is all
+    /// rendered, which is why the player marks it with a tilde.
+    public private(set) var estimatedDuration: Double = 0
+    /// Playback speed. Pitch-corrected, so a book at 1.5x still sounds human.
+    public var rate: Float = 1 {
+        didSet { speed.rate = max(0.5, min(3, rate)) }
+    }
+
+    /// The book and chapter being read, kept so the player can move between
+    /// chapters without the view having to hand them back.
+    public private(set) var book: Book?
+    public private(set) var chapter: Chapter?
 
     private let engine: ChatterboxEngine
     private let library: Library
@@ -40,12 +54,32 @@ public final class Narrator {
 
     private let audio = AVAudioEngine()
     private let player = AVAudioPlayerNode()
+    /// Time-stretch rather than varispeed: changing rate must not change
+    /// pitch, or a book at 1.5x sounds like a cartoon.
+    private let speed = AVAudioUnitTimePitch()
     private var started = false
 
     private var work: Task<Void, Never>?
     /// Where the next chunk goes on the player node's own timeline, which
     /// pausing does not advance — so these stay valid across a pause.
     private var nextFrame: AVAudioFramePosition = 0
+
+    /// One scheduled chunk: where it sits on the node's timeline, and where it
+    /// sits in the chapter. The two differ because a chunk that arrives late is
+    /// pushed forward on the node's timeline, leaving a gap that is silence
+    /// rather than missing audio.
+    private struct Segment {
+        let nodeStart: AVAudioFramePosition
+        let frames: AVAudioFramePosition
+        let chapterStart: Double
+        var seconds: Double { Double(frames) / Double(WavFile.sampleRate) }
+    }
+    private var timeline: [Segment] = []
+    private var ticker: Task<Void, Never>?
+
+    /// Kept so the player can change chapter without the view re-supplying them.
+    private var currentVoice: Voice?
+    private var currentOptions = SamplingOptions()
 
     /// The stop flag is read from inside the engine's token loop, which runs
     /// off the main actor, so it cannot be main-actor state.
@@ -67,6 +101,10 @@ public final class Narrator {
 
     public var isBusy: Bool { state == .preparing || state == .speaking }
 
+    /// Is the whole chapter on disk? Until it is, the duration shown is an
+    /// estimate and the scrubber has an edge before the end.
+    public var isFullyRendered: Bool { chunkCount > 0 && renderedChunks >= chunkCount }
+
     /// Render and play a chapter from the beginning, reusing whatever is
     /// already on disk.
     public func play(book: Book, chapter: Chapter, voice: Voice, options: SamplingOptions) {
@@ -80,6 +118,17 @@ public final class Narrator {
         nextFrame = 0
         chunkCount = chapter.chunkCount
         state = .preparing
+
+        self.book = book
+        self.chapter = chapter
+        currentVoice = voice
+        currentOptions = options
+        position = 0
+        timeline.removeAll()
+        // Nothing is rendered yet, so the only guide to length is the character
+        // count. The player marks it as an estimate until the chapter is done.
+        estimatedDuration = Double(chapter.characters) / Format.assumedCharactersPerSecond
+        startTicker()
 
         // Audio rendered in a different voice is not this chapter's audio.
         let stale = chapter.renderedVoice != nil && chapter.renderedVoice != voice.id
@@ -123,6 +172,12 @@ public final class Narrator {
         renderedChunks = 0
         renderedSeconds = 0
         nextFrame = 0
+        self.book = book
+        self.chapter = chapter
+        position = 0
+        timeline.removeAll()
+        estimatedDuration = Double(chapter.characters) / Format.assumedCharactersPerSecond
+        startTicker()
         state = .preparing
 
         work = Task { [weak self] in
@@ -165,6 +220,9 @@ public final class Narrator {
         stopping.isSet = true
         work?.cancel()
         work = nil
+        ticker?.cancel()
+        ticker = nil
+        timeline.removeAll()
         if started {
             player.stop()
             audio.stop()
@@ -193,7 +251,10 @@ public final class Narrator {
             standardFormatWithSampleRate: Double(WavFile.sampleRate), channels: 1
         )!
         audio.attach(player)
-        audio.connect(player, to: audio.mainMixerNode, format: format)
+        audio.attach(speed)
+        audio.connect(player, to: speed, format: format)
+        audio.connect(speed, to: audio.mainMixerNode, format: format)
+        speed.rate = max(0.5, min(3, rate))
         try audio.start()
         player.play()
         started = true
@@ -217,6 +278,9 @@ public final class Narrator {
     private func schedule(_ progress: ChapterRenderer.Progress) {
         renderedChunks = progress.chunkIndex + 1
         chunkCount = progress.chunkCount
+        // Where this chunk begins in the chapter is everything rendered before
+        // it, so the running total has to be read before it is added to.
+        let chapterStart = renderedSeconds
         renderedSeconds += progress.seconds
 
         guard let file = try? AVAudioFile(forReading: progress.url) else { return }
@@ -232,8 +296,137 @@ public final class Narrator {
             at: AVAudioTime(sampleTime: nextFrame, atRate: rate),
             completionHandler: nil
         )
+        timeline.append(
+            Segment(nodeStart: nextFrame, frames: file.length, chapterStart: chapterStart)
+        )
         nextFrame += file.length
+
+        // Once everything is rendered the total is known rather than guessed.
+        estimatedDuration = renderedChunks >= chunkCount && chunkCount > 0
+            ? renderedSeconds
+            : max(estimatedDuration, renderedSeconds)
         if state == .preparing { state = .speaking }
+    }
+
+    // MARK: - Position, seeking and chapter changes
+
+    /// Poll the node for where it has got to.
+    ///
+    /// There is no callback for this — an `AVAudioPlayerNode` reports its
+    /// position and nothing more — so it is read four times a second, which is
+    /// often enough for a scrubber and cheap enough to ignore.
+    private func startTicker() {
+        ticker?.cancel()
+        ticker = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard let self, !Task.isCancelled else { return }
+                if state == .speaking { position = observedPosition() }
+            }
+        }
+    }
+
+    /// Turn the node's frame counter into a position in the chapter.
+    private func observedPosition() -> Double {
+        guard let playhead = player.lastRenderTime
+            .flatMap({ player.playerTime(forNodeTime: $0) })?.sampleTime,
+            let segment = timeline.last(where: { $0.nodeStart <= playhead })
+        else { return position }
+
+        // Clamped to the segment: between segments the playhead is in a gap the
+        // renderer left, and reporting past the end of the audio that exists
+        // would make the scrubber run ahead of what can be heard.
+        let into = min(
+            Double(playhead - segment.nodeStart) / Double(WavFile.sampleRate),
+            segment.seconds
+        )
+        return segment.chapterStart + into
+    }
+
+    /// Jump to a point in what has been rendered.
+    ///
+    /// Seeking backwards is exact, because each chunk is its own file and
+    /// `scheduleSegment` can start part-way into one. Seeking past what exists
+    /// is not possible: unrendered audio has nowhere to seek to.
+    public func seek(to seconds: Double) {
+        guard let book, let chapter, started else { return }
+        let target = max(0, min(seconds, max(0, renderedSeconds - 0.25)))
+
+        player.stop()
+        timeline.removeAll()
+        nextFrame = 0
+
+        var elapsed = 0.0
+        var found = false
+        var queue: [(url: URL, chapterStart: Double, skip: Double)] = []
+        for url in renderer.rendered(book: book.id, chapter: chapter.id, of: chapter.chunkCount) {
+            let length = WavFile.duration(ofFileAt: url) ?? 0
+            if !found, elapsed + length > target {
+                found = true
+                queue.append((url, elapsed, target - elapsed))
+            } else if found {
+                queue.append((url, elapsed, 0))
+            }
+            elapsed += length
+        }
+
+        player.play()
+        for item in queue { scheduleSegment(item.url, chapterStart: item.chapterStart, skipping: item.skip) }
+        position = target
+        if state == .paused { player.pause() } else { state = .speaking }
+    }
+
+    public func skip(by seconds: Double) {
+        seek(to: position + seconds)
+    }
+
+    /// Move to the chapter before or after this one, in the same voice.
+    public func changeChapter(by delta: Int) {
+        guard let book, let chapter, let voice = currentVoice,
+              let index = book.chapters.firstIndex(where: { $0.id == chapter.id })
+        else { return }
+        let target = index + delta
+        guard book.chapters.indices.contains(target) else { return }
+        play(book: book, chapter: book.chapters[target], voice: voice, options: currentOptions)
+    }
+
+    public var hasNextChapter: Bool { offsetChapterExists(1) }
+    public var hasPreviousChapter: Bool { offsetChapterExists(-1) }
+
+    private func offsetChapterExists(_ delta: Int) -> Bool {
+        guard let book, let chapter,
+              let index = book.chapters.firstIndex(where: { $0.id == chapter.id })
+        else { return false }
+        return book.chapters.indices.contains(index + delta)
+    }
+
+    /// Schedule part of a chunk, used when seeking lands inside one.
+    private func scheduleSegment(_ url: URL, chapterStart: Double, skipping: Double) {
+        guard let file = try? AVAudioFile(forReading: url) else { return }
+        let rate = Double(WavFile.sampleRate)
+        let offset = AVAudioFramePosition(skipping * rate)
+        let frames = AVAudioFrameCount(max(0, file.length - offset))
+        guard frames > 0 else { return }
+
+        let playhead = player.lastRenderTime
+            .flatMap { player.playerTime(forNodeTime: $0) }?.sampleTime ?? 0
+        nextFrame = Self.startFrame(cursor: nextFrame, playhead: playhead, rate: rate)
+
+        player.scheduleSegment(
+            file,
+            startingFrame: offset,
+            frameCount: frames,
+            at: AVAudioTime(sampleTime: nextFrame, atRate: rate),
+            completionHandler: nil
+        )
+        timeline.append(
+            Segment(
+                nodeStart: nextFrame,
+                frames: AVAudioFramePosition(frames),
+                chapterStart: chapterStart + skipping
+            )
+        )
+        nextFrame += AVAudioFramePosition(frames)
     }
 
     /// Where a chunk should start: straight after the last one, unless the
