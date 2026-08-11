@@ -28,6 +28,7 @@ struct MiniPlayer: View {
                             BookCover(
                                 bookId: book.id,
                                 title: book.title,
+                                url: model.coverURL(for: book),
                                 width: 34,
                                 radius: Palette.Radius.sm
                             )

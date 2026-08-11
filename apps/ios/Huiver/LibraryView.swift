@@ -23,6 +23,10 @@ struct LibraryView: View {
             }
             .navigationTitle("huiver")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { importing = true } label: { Image(systemName: "plus") }
+                        .accessibilityLabel("Add a book")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
                         SettingsView()
@@ -92,6 +96,15 @@ struct LibraryView: View {
                 .foregroundStyle(theme.colors.mutedForeground)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, Palette.Space.xl)
+
+            Button("Add a book") { importing = true }
+                .font(.huiverHeading)
+                .foregroundStyle(theme.colors.primaryForeground)
+                .padding(.horizontal, Palette.Space.xl)
+                .padding(.vertical, Palette.Space.md)
+                .background(theme.colors.primary, in: .capsule)
+                .buttonStyle(.plain)
+                .padding(.top, Palette.Space.sm)
         }
     }
 
@@ -127,32 +140,21 @@ struct LibraryView: View {
             }
             if model.narrator?.chapterId != nil {
                 MiniPlayer { showingPlayer = true }
+                    .background(.bar)
+                    .overlay(alignment: .top) { Divider().overlay(theme.colors.border) }
             }
-            Button {
-                importing = true
-            } label: {
-                Text("Add a book")
-                    .font(.huiverHeading)
-                    .foregroundStyle(theme.colors.primaryForeground)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, Palette.Space.md)
-                    .background(theme.colors.primary, in: .rect(cornerRadius: Palette.Radius.xl))
-            }
-            .buttonStyle(.plain)
-            .padding(Palette.Space.lg)
         }
-        .background(.bar)
-        .overlay(alignment: .top) { Divider().overlay(theme.colors.border) }
     }
 }
 
 private struct BookRow: View {
     let book: Book
+    @Environment(AppModel.self) private var model
     @Environment(\.theme) private var theme
 
     var body: some View {
         HStack(spacing: Palette.Space.lg) {
-            BookCover(bookId: book.id, title: book.title)
+            BookCover(bookId: book.id, title: book.title, url: model.coverURL(for: book))
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(book.title)

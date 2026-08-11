@@ -86,7 +86,13 @@ struct BookView: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: Palette.Space.lg) {
-            BookCover(bookId: current.id, title: current.title, width: 104, radius: Palette.Radius.lg)
+            BookCover(
+                bookId: current.id,
+                title: current.title,
+                url: model.coverURL(for: current),
+                width: 104,
+                radius: Palette.Radius.lg
+            )
 
             VStack(alignment: .leading, spacing: Palette.Space.xs) {
                 Text(current.title)
@@ -171,10 +177,7 @@ private struct ChapterRow: View {
 
     private var narrator: Narrator? { model.narrator }
     private var isCurrent: Bool { narrator?.chapterId == chapter.id }
-    private var isRendering: Bool {
-        guard isCurrent, let state = narrator?.state else { return false }
-        return state == .speaking || state == .preparing || state == .paused
-    }
+    private var isConverting: Bool { model.converter?.isQueued(chapter.id) ?? false }
 
     var body: some View {
         HStack(spacing: Palette.Space.md) {
@@ -196,23 +199,24 @@ private struct ChapterRow: View {
             .disabled(narrator == nil)
 
             ChapterActionButton(state: actionState, action: toggleRender)
-                .disabled(narrator == nil)
+                .disabled(model.converter == nil)
         }
         .padding(.horizontal, Palette.Space.lg)
         .padding(.vertical, Palette.Space.md)
     }
 
     private var actionState: ChapterActionButton.State {
-        if isRendering, !chapter.isComplete {
-            let total = narrator?.chunkCount ?? 0
-            let done = narrator?.renderedChunks ?? 0
-            return .rendering(total > 0 ? Double(done) / Double(total) : nil)
-        }
-        return chapter.isComplete ? .done : .none
+        if chapter.isComplete { return .done }
+        if isConverting { return .rendering(model.converter?.progress(for: chapter.id)) }
+        return .none
     }
 
     private var detail: String {
         let estimate = Double(chapter.characters) / Format.assumedCharactersPerSecond
+        if isConverting, let converter = model.converter, converter.active?.chapterId == chapter.id {
+            return "converting \(converter.renderedChunks)/\(max(converter.chunkCount, 1)) · \(Format.estimate(estimate))"
+        }
+        if isConverting { return "queued · \(Format.estimate(estimate))" }
         if isCurrent, let seconds = narrator?.renderedSeconds, seconds > 0 {
             // What exists, which is what the scrubber can reach.
             return chapter.isComplete
@@ -240,12 +244,15 @@ private struct ChapterRow: View {
         opened()
     }
 
+    /// Convert, which means render to disk and nothing else. Pressing it again
+    /// stops — a pause, not a discard: the chunks written so far are kept and
+    /// picked up next time.
     private func toggleRender() {
-        guard let narrator, let voice = model.selectedVoice else { return }
-        if isRendering {
-            narrator.stop()
+        guard let converter = model.converter, let voice = model.selectedVoice else { return }
+        if isConverting {
+            converter.cancel(chapter.id)
         } else if !chapter.isComplete {
-            narrator.play(book: book, chapter: chapter, voice: voice, options: model.options)
+            converter.convert(book: book, chapter: chapter, voice: voice, options: model.options)
         }
     }
 }

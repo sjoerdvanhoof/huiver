@@ -12,6 +12,7 @@ final class AppModel {
     private(set) var books: [Book] = []
     private(set) var voices: [Voice] = []
     private(set) var narrator: Narrator?
+    private(set) var converter: Converter?
     private(set) var loadFailure: String?
     private(set) var isLoading = true
     private(set) var bytesOnDisk: Int64 = 0
@@ -30,6 +31,7 @@ final class AppModel {
     }
 
     var options = SamplingOptions()
+
     var selectedVoiceId: String {
         didSet { UserDefaults.standard.set(selectedVoiceId, forKey: "voice") }
     }
@@ -81,6 +83,16 @@ final class AppModel {
                 Task { @MainActor in self?.preparing = progress }
             }
             narrator = Narrator(engine: engine, library: library!)
+            let converter = Converter(engine: engine, library: library!)
+            converter.didChange = { [weak self] in
+                Task { await self?.refresh() }
+            }
+            self.converter = converter
+            // Anything left queued by a previous run carries on now, without
+            // the button having to be pressed again.
+            if let voice = selectedVoice {
+                converter.restore(voice: voice, options: options)
+            }
             placement = engine.placement
             engineLanguages = engine.languages
             UserDefaults.standard.set(true, forKey: "preparedOnce")
@@ -106,6 +118,11 @@ final class AppModel {
         } catch {
             loadFailure = error.localizedDescription
         }
+    }
+
+    /// Where a book's cover image is, if the EPUB had one.
+    func coverURL(for book: Book) -> URL? {
+        library?.coverURL(book)
     }
 
     func setLanguage(_ language: Language, for book: Book) async {

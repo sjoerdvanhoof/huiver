@@ -285,6 +285,32 @@ Two things are worth knowing before reading too much into any of it:
 - Nothing has been profiled per stage, so where the time actually goes — prefill,
   the token loop, the mel decoder, the vocoder — is still unknown.
 
-iOS suspends an app a few seconds after it leaves the screen unless audio is
-playing, so synthesis continues in the background while you are listening and
-stops when you background the app with nothing playing.
+## Leaving the app mid-conversion
+
+Conversion runs while huiver is open. iOS suspends an app a few seconds after it
+leaves the screen, and there is no way around that for on-device computation: the
+background modes on offer are for specific jobs — playing audio, transferring
+files, receiving location — not for arbitrary work. A podcast app downloading
+episodes in the background is doing a `URLSession` background transfer, which a
+system daemon performs on its behalf; nothing equivalent exists that will run a
+neural network for you.
+
+An earlier version held the audio session open and played silence to dodge the
+suspension. It is the usual trick, it works, and it has been taken out: it costs
+battery for no audible benefit, and it is the pattern App Review rejects apps
+for.
+
+So stopping is cheap and resuming is automatic instead:
+
+- Leaving mid-chapter takes a short background assertion, long enough to finish
+  the chunk in flight, so what is on disk is a clean checkpoint rather than a
+  truncated file.
+- The queue is persisted, and the chapter being worked on stays at the head of it
+  until it is genuinely complete. Re-opening the app carries on without pressing
+  convert again — including after a force quit.
+- A `BGProcessingTask` is registered, which iOS may grant later while charging
+  and idle. A bonus rather than a plan.
+
+Listening *does* continue off screen, because then the app is genuinely playing
+audio. That is what the background-audio capability is for, and it is why the
+live path renders as it plays.

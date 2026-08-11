@@ -46,6 +46,14 @@ struct SettingsView: View {
                 Text("Lower the temperature for a long book and it reads more evenly, at the cost of some life. There is no speed control: the model has none, so change playback speed in the player instead.")
             }
 
+            Section {
+                LabeledContent("Queued", value: queueSummary)
+            } header: {
+                Text("Conversion")
+            } footer: {
+                Text("Conversion runs while huiver is open. iOS suspends apps that leave the screen, and it offers no way to keep computing in the background — so leaving mid-chapter finishes the sentence being worked on and stops there. Coming back picks up exactly where it left off, without pressing convert again, even after a force quit. Listening does keep going off screen, because then the app really is playing audio.")
+            }
+
             Section("Storage") {
                 LabeledContent("Books", value: "\(model.books.count)")
                 LabeledContent("Audio on disk", value: size(model.bytesOnDisk))
@@ -72,6 +80,13 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.refresh() }
+    }
+
+    private var queueSummary: String {
+        guard let converter = model.converter else { return "—" }
+        let waiting = converter.queue.count
+        if waiting == 0 { return "nothing" }
+        return converter.isBusy ? "\(waiting) chapter\(waiting == 1 ? "" : "s")" : "\(waiting) paused"
     }
 
     private func size(_ bytes: Int64) -> String {

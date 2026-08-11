@@ -11,6 +11,33 @@ public struct ExtractedBook: Sendable, Hashable {
     public let title: String
     public let author: String?
     public let chapters: [ExtractedChapter]
+    /// The cover image as it was stored in the EPUB, if it had one, together
+    /// with its file extension. Kept as bytes rather than decoded here so that
+    /// HuiverKit stays free of UIKit.
+    public var cover: (data: Data, extension: String)?
+
+    public init(
+        title: String,
+        author: String?,
+        chapters: [ExtractedChapter],
+        cover: (data: Data, extension: String)? = nil
+    ) {
+        self.title = title
+        self.author = author
+        self.chapters = chapters
+        self.cover = cover
+    }
+
+    public static func == (a: ExtractedBook, b: ExtractedBook) -> Bool {
+        a.title == b.title && a.author == b.author && a.chapters == b.chapters
+            && a.cover?.data == b.cover?.data
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(title)
+        hasher.combine(author)
+        hasher.combine(chapters)
+    }
 }
 
 /// Turn a file into chapters.
@@ -107,7 +134,8 @@ public enum Extract {
         return ExtractedBook(
             title: title?.isEmpty == false ? title! : fallbackTitle,
             author: author?.isEmpty == false ? author : nil,
-            chapters: chapters
+            chapters: chapters,
+            cover: coverImage(in: zip, opf: opf, manifest: manifest, base: base)
         )
     }
 
@@ -161,6 +189,49 @@ public enum Extract {
         }
 
         return titles
+    }
+
+    /// Find the cover image, by the three routes EPUBs actually use.
+    ///
+    /// There is no single correct answer. EPUB3 marks the manifest item with
+    /// `properties="cover-image"`; EPUB2 has no such field and instead puts
+    /// `<meta name="cover" content="itemId"/>` in the metadata; and plenty of
+    /// files do neither, so the last resort is an image whose name says what it
+    /// is. Tried in that order, most authoritative first.
+    static func coverImage(
+        in zip: Zip,
+        opf: XMLTree,
+        manifest: [String: (href: String, properties: String)],
+        base: String
+    ) -> (Data, String)? {
+        var candidates: [String] = []
+
+        if let id = manifest.first(where: { $0.value.properties.contains("cover-image") })?.key {
+            candidates.append(manifest[id]!.href)
+        }
+        if let id = opf.all("meta").first(where: { $0["name"]?.lowercased() == "cover" })?["content"],
+           let item = manifest[id] {
+            candidates.append(item.href)
+        }
+        candidates += manifest.values
+            .map(\.href)
+            .filter { href in
+                let name = href.lowercased()
+                return name.contains("cover") && isImage(name)
+            }
+            .sorted()
+
+        for href in candidates where isImage(href.lowercased()) {
+            guard let data = try? zip.read(resolve(href, relativeTo: base)), !data.isEmpty else {
+                continue
+            }
+            return (data, (href as NSString).pathExtension.lowercased())
+        }
+        return nil
+    }
+
+    static func isImage(_ name: String) -> Bool {
+        [".jpg", ".jpeg", ".png", ".gif", ".webp"].contains { name.hasSuffix($0) }
     }
 
     /// Join a relative href to the directory holding the document it came from,

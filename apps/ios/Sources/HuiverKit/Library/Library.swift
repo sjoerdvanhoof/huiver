@@ -22,6 +22,9 @@ public struct Book: Codable, Sendable, Identifiable, Hashable {
     /// Optional so that a library written before languages existed still
     /// decodes; absent means English, which is what those books were read as.
     public var language: String?
+    /// File name of the cover inside `covers/`, if the book had one. A name
+    /// rather than a path, so moving the library does not break it.
+    public var coverFile: String?
     public var chapters: [Chapter]
 
     public var languageCode: String { language ?? Language.english.code }
@@ -63,12 +66,25 @@ public actor Library {
         let detected = language ?? Language.detect(
             in: extracted.chapters.prefix(3).map(\.text).joined(separator: " ")
         )
+
+        var cover: String?
+        if let image = extracted.cover {
+            let name = "\(bookId).\(image.extension)"
+            let directory = root.appendingPathComponent("covers")
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            // A missing cover is a cosmetic problem, not a reason to refuse the
+            // book, so a failed write leaves it on the gradient placeholder.
+            if (try? image.data.write(to: directory.appendingPathComponent(name))) != nil {
+                cover = name
+            }
+        }
         let book = Book(
             id: bookId,
             title: extracted.title,
             author: extracted.author,
             added: Date(),
             language: detected.code,
+            coverFile: cover,
             chapters: extracted.chapters.enumerated().map { index, chapter in
                 Chapter(
                     id: "\(bookId)-\(index)",
@@ -93,6 +109,9 @@ public actor Library {
     }
 
     public func remove(_ id: String) throws {
+        if let book = books.first(where: { $0.id == id }), let cover = coverURL(book) {
+            try? FileManager.default.removeItem(at: cover)
+        }
         books.removeAll { $0.id == id }
         try? FileManager.default.removeItem(at: audioDirectory(book: id))
         try save()
@@ -113,6 +132,12 @@ public actor Library {
         chapter.renderedChunks = 0
         chapter.renderedVoice = nil
         try update(chapter: chapter, in: bookId)
+    }
+
+    /// Where a book's cover image is, if it has one.
+    public nonisolated func coverURL(_ book: Book) -> URL? {
+        guard let file = book.coverFile else { return nil }
+        return root.appendingPathComponent("covers").appendingPathComponent(file)
     }
 
     public nonisolated func audioDirectory(book: String, chapter: String? = nil) -> URL {

@@ -90,9 +90,11 @@ struct ExtractTests {
                 """
                 <?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0">\
                 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\
-                <dc:title>A Harbour Book</dc:title><dc:creator>A Narrator</dc:creator></metadata>\
+                <dc:title>A Harbour Book</dc:title><dc:creator>A Narrator</dc:creator>\
+                <meta name="cover" content="cov"/></metadata>\
                 <manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>\
                 <item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/>\
+                <item id="cov" href="images/cover.jpg" media-type="image/jpeg"/>\
                 <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest>\
                 <spine toc="ncx"><itemref idref="c1"/><itemref idref="c2"/></spine></package>
                 """
@@ -106,12 +108,16 @@ struct ExtractTests {
                 </navMap></ncx>
                 """
             ),
+            ("OEBPS/images/cover.jpg", "not-really-a-jpeg"),
             ("OEBPS/c1.xhtml", "<html><body><p>\(body)</p></body></html>"),
             ("OEBPS/c2.xhtml", "<html><body><p>\(body)</p></body></html>"),
         ]
 
         let book = try Extract.book(from: ZipWriter.archive(files), filename: "x.epub")
         #expect(book.title == "A Harbour Book")
+        // EPUB2 marks its cover with a <meta>, not a manifest property.
+        #expect(book.cover?.data == Data("not-really-a-jpeg".utf8))
+        #expect(book.cover?.extension == "jpg")
         #expect(book.author == "A Narrator")
         #expect(book.chapters.map(\.title) == ["The Jetty", "The Crossing"])
         #expect(book.chapters[0].text.hasPrefix("The quiet harbour town"))

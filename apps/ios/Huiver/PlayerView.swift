@@ -34,7 +34,13 @@ struct PlayerView: View {
             Spacer(minLength: 0)
 
             if let book = narrator.book {
-                BookCover(bookId: book.id, title: book.title, width: 190, radius: Palette.Radius.xl)
+                BookCover(
+                    bookId: book.id,
+                    title: book.title,
+                    url: model.coverURL(for: book),
+                    width: 190,
+                    radius: Palette.Radius.xl
+                )
             }
 
             VStack(spacing: Palette.Space.xs) {
