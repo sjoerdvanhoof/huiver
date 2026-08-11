@@ -14,6 +14,10 @@ struct LibraryView: View {
     /// The prepare screen can be put aside: adding a book works while the models
     /// are still compiling, even though playing one does not.
     @State private var preparingDismissed = false
+    /// The book a swipe has offered to delete, held until it is confirmed.
+    @State private var pendingDeletion: Book?
+    /// The book being pushed, driving navigation in place of a link.
+    @State private var opened: Book?
 
     var body: some View {
         NavigationStack {
@@ -36,6 +40,9 @@ struct LibraryView: View {
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { bottom }
+            .navigationDestination(item: $opened) { book in
+                BookView(book: book)
+            }
         }
         .huiverTheme(scheme)
         .fileImporter(
@@ -49,6 +56,28 @@ struct LibraryView: View {
             Task { await model.importBook(from: url) }
         }
         .sheet(isPresented: $showingPlayer) { PlayerView() }
+        .confirmationDialog(
+            pendingDeletion.map { "Delete \($0.title)?" } ?? "Delete this book?",
+            isPresented: .init(
+                get: { pendingDeletion != nil },
+                set: { if !$0 { pendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                guard let book = pendingDeletion else { return }
+                pendingDeletion = nil
+                Task { await model.delete(book) }
+            }
+            Button("Cancel", role: .cancel) { pendingDeletion = nil }
+        } message: {
+            if let book = pendingDeletion {
+                let rendered = book.chapters.filter(\.isComplete).count
+                Text(rendered > 0
+                    ? "Its text and the audio for \(rendered) rendered chapter\(rendered == 1 ? "" : "s") will be removed."
+                    : "Its text will be removed. Nothing has been rendered yet.")
+            }
+        }
         .alert(
             "Something went wrong",
             isPresented: .init(
@@ -108,26 +137,37 @@ struct LibraryView: View {
         }
     }
 
+    /// A `List` rather than a `ScrollView`, for the swipe actions — they are not
+    /// available on an ordinary stack, and re-implementing the gesture by hand
+    /// would get the rubber-banding and the accessibility affordance wrong.
+    /// The row styling is stripped back so it still looks like the stack did.
     private var shelf: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(model.books) { book in
-                    NavigationLink {
-                        BookView(book: book)
+        List {
+            ForEach(model.books) { book in
+                // A Button with an explicit destination rather than a
+                // NavigationLink: a link inside a List insists on drawing a
+                // disclosure chevron, and there is no API to turn it off.
+                Button { opened = book } label: { BookRow(book: book) }
+                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(theme.colors.background)
+                .listRowSeparatorTint(theme.colors.border)
+                .alignmentGuide(.listRowSeparatorLeading) { _ in
+                    56 + Palette.Space.lg * 2
+                }
+                // Leading edge, so it is a swipe to the right. Full swipe is off:
+                // deleting a book throws away every chapter rendered for it, and
+                // that is too much to lose to a flick.
+                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                    Button(role: .destructive) {
+                        pendingDeletion = book
                     } label: {
-                        BookRow(book: book)
-                    }
-                    .buttonStyle(.plain)
-
-                    if book.id != model.books.last?.id {
-                        Divider()
-                            .overlay(theme.colors.border)
-                            .padding(.leading, 56 + Palette.Space.lg * 2)
+                        Label("Delete", systemImage: "trash")
                     }
                 }
             }
-            .padding(.vertical, Palette.Space.sm)
         }
+        .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .refreshable { await model.refresh() }
     }
@@ -172,10 +212,9 @@ private struct BookRow: View {
                     .foregroundStyle(theme.colors.mutedForeground)
             }
 
+            // No chevron here: the row is a NavigationLink inside a List, which
+            // draws its own disclosure indicator. Adding one drew two.
             Spacer(minLength: 0)
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(theme.colors.border)
         }
         .padding(.horizontal, Palette.Space.lg)
         .padding(.vertical, Palette.Space.md)
