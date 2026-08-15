@@ -104,6 +104,11 @@ public final class Narrator {
     /// over the top of the middle.
     private var scheduledChunks = 0
 
+    /// Which render pass is the current one, and how to stop the one before it.
+    private var generation = 0
+    private var renderPass: Flag?
+
+
     /// The lock screen, Control Centre and headphone buttons.
     private let nowPlaying = NowPlaying()
 
@@ -195,6 +200,18 @@ public final class Narrator {
         discardingStale stale: Bool = false,
         reloadingModels reload: Bool = false
     ) {
+        // Each pass gets a number and its own stop switch. A pass that has been
+        // superseded — by a switch between processors, most often — must neither
+        // touch the state nor go on quietly synthesising against the engine the
+        // new pass is trying to use. Cancelling the task alone does neither: the
+        // renderer's producer runs in a task of its own and only stops when asked
+        // through `cancelled`.
+        generation += 1
+        let generation = generation
+        let stopPass = Flag()
+        renderPass?.isSet = true
+        renderPass = stopPass
+
         work = Task { [weak self] in
             guard let self else { return }
             do {
@@ -206,26 +223,49 @@ public final class Narrator {
                     // A model that has failed once fails for good, so resuming
                     // means replacing it. Takes seconds, off the main actor,
                     // while whatever is already scheduled keeps playing.
-                    PlaybackLog.note("reloading the models")
+                    PlaybackLog.note("loading the models again")
                     isReloadingModels = true
                     // Scoped to the reload, and covers the throwing path: the
                     // flag is only about the wait, which is over either way.
                     defer { isReloadingModels = false }
+                    let began = ContinuousClock.now
                     try await engine.reload()
-                    PlaybackLog.note("models reloaded")
+                    PlaybackLog.note(
+                        "models ready after \(String(format: "%.1f", began.duration(to: .now).asSeconds))s"
+                    )
                 }
+                guard generation == self.generation else { return }
 
                 let stream = await renderer.render(
                     book: book,
                     chapter: chapter,
                     voice: voice,
                     options: options,
-                    cancelled: { [flag = stopping] in flag.isSet }
+                    cancelled: { [flag = stopping, pass = stopPass] in flag.isSet || pass.isSet }
                 )
+                var previous = ContinuousClock.now
                 for try await progress in stream {
-                    if stopping.isSet { break }
+                    if stopping.isSet || stopPass.isSet { break }
+                    // Seconds spent against seconds of audio produced: whether
+                    // synthesis is keeping up with playback, which is the number
+                    // that explains most complaints about this app. Chunks read
+                    // straight off disk return instantly and are not synthesis,
+                    // so they are not worth a line.
+                    let spent = previous.duration(to: .now).asSeconds
+                    previous = .now
+                    if spent > 0.2, progress.seconds > 0 {
+                        PlaybackLog.note(
+                            """
+                            chunk \(progress.chunkIndex + 1)/\(progress.chunkCount) took \
+                            \(String(format: "%.1f", spent))s for \
+                            \(String(format: "%.1f", progress.seconds))s of audio \
+                            (\(String(format: "%.2f", spent / progress.seconds))× realtime)
+                            """
+                        )
+                    }
                     schedule(progress)
                 }
+                guard generation == self.generation else { return }
                 // Rendering finishing is not playback finishing: a chapter that
                 // was part-rendered already streams out of the renderer far
                 // faster than it can be listened to. Going idle here would stop
@@ -234,10 +274,11 @@ public final class Narrator {
                 // it from here.
                 if !stopping.isSet, state != .paused, hasRunDry { state = .idle }
             } catch is CancellationError {
-                // `stop` has already said what the state is; anything else here
-                // would be overwriting it.
-                if !stopping.isSet { state = .idle }
+                // `stop` has already said what the state is, and a superseded pass
+                // has no business saying anything; either way, not ours to set.
+                if !stopping.isSet, generation == self.generation { state = .idle }
             } catch {
+                guard generation == self.generation else { return }
                 interrupted(by: error)
             }
         }
@@ -264,6 +305,18 @@ public final class Narrator {
         if renderedChunks == 0 { state = .failed(message) }
     }
 
+    /// Move synthesis between the best processor available and the CPU alone.
+    ///
+    /// The Neural Engine and the GPU are both unreachable to an app that is not on
+    /// screen, which is why synthesis dies a few seconds after the phone is
+    /// locked. The CPU has no such restriction, so pinning the models to it is
+    /// what allows a chapter to carry on rendering in a pocket. It is much slower,
+    /// which is the whole reason this follows the screen rather than being the
+    /// setting all the time.
+    ///
+    /// Compute units are fixed when a model is loaded, so this is a reload of all
+    /// four, and it restarts the render pass. Playback is untouched: what is
+    /// already queued on the player keeps going throughout.
     /// Pick synthesis back up after it was interrupted, keeping the audio that is
     /// already queued playing. Safe to call whenever the app comes forward: it
     /// does nothing unless there is an interrupted chapter to continue.
@@ -277,7 +330,6 @@ public final class Narrator {
         // so it goes back to preparing. One that is mid-playback keeps whatever
         // state it is in — including paused, which must not start itself.
         if case .failed = state { state = .preparing }
-        work?.cancel()
         render(
             book: book,
             chapter: chapter,
@@ -379,6 +431,7 @@ public final class Narrator {
 
     public func stop() {
         stopping.isSet = true
+        renderPass?.isSet = true
         work?.cancel()
         work = nil
         ticker?.cancel()
@@ -779,5 +832,14 @@ public final class Narrator {
         // A tenth of a second of headroom, so the segment is not already stale
         // by the time the audio thread sees it.
         return playhead + AVAudioFramePosition(rate / 10)
+    }
+}
+
+private extension Duration {
+    /// Seconds as a `Double`, which `Duration` itself does not offer — it exposes
+    /// whole seconds and attoseconds separately, and dropping the fraction would
+    /// make anything under a second read as zero.
+    var asSeconds: Double {
+        Double(components.seconds) + Double(components.attoseconds) / 1e18
     }
 }

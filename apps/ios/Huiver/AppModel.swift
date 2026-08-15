@@ -36,6 +36,7 @@ final class AppModel {
         didSet { UserDefaults.standard.set(selectedVoiceId, forKey: "voice") }
     }
 
+
     var selectedVoice: Voice? {
         voices.first { $0.id == selectedVoiceId } ?? voices.first
     }

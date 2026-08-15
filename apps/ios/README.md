@@ -346,8 +346,54 @@ audio was still coming out. Two lessons, both encoded in the code now:
   or a conversion interrupted by backgrounding would fail identically on every
   retry for the rest of the session.
 
-Nothing can be done about the underlying limit from here. Rendering the chapter
-first, with the app open, remains the comfortable way to use this.
+### Reading on the CPU: tried, and taken out again
+
+The restriction is on the *processor*, not on computing at all — the CPU has no such
+limit — so the obvious idea is to move synthesis to the CPU while off screen and
+back on return. It was built, and then removed. What it cost:
+
+- **Core ML compiles per compute-unit configuration.** A first `.cpuOnly` load is not
+  a cache read, it is a full compile, the same minutes-long job as the first run
+  after installing.
+- **A reload briefly needs two sets of models.** 736 MB of weights, twice over. iOS
+  answers that by killing the app, with no crash report, so it reads as a mysterious
+  restart rather than a memory kill — and it takes the audio with it, which is worse
+  than the problem being solved.
+
+Both together meant the switch killed the app before the CPU ever ran a single
+prediction, so **the speed of CPU synthesis on device was never actually measured.**
+The decision to drop it was made on the strength of the crashes, not on a number. If
+this is ever revisited, get that number first, from the foreground: it is the only
+thing that decides whether the idea is worth any of the above.
+
+One piece of it was worth keeping. `reload` frees each model before loading its
+replacement, one at a time, which keeps the high-water mark near one set instead of
+two — the recovery reload after a failed prediction runs the same risk. Reloading is
+not cheap even so: 20-90 seconds on device.
+
+Two further fixes came out of building it, both for real bugs that predate it. A
+render pass carries a generation number, so a superseded pass cannot set the state on
+its way out — cancelling the task made it throw `CancellationError`, whose handler set
+`.idle`, which is the "lock screen goes blank" bug all over again. And each pass has
+its own stop flag: cancelling the consuming task does not stop the renderer, whose
+producer lives in a task of its own and only stops when asked through `cancelled`.
+
+What is left is the honest version: off screen, synthesis stops and playback carries
+on with what is on disk; coming back reloads the models and picks synthesis up again.
+Rendering the chapter first, with the app open, remains the comfortable way to use
+this.
+
+Speed, for reference — every synthesised chunk logs what it cost against what it
+produced:
+
+```
+chunk 2/282 took 4.2s for 12.0s of audio (0.35× realtime)
+```
+
+Under 1.0 keeps up with playback. On an iPhone 17 the Neural Engine measures about
+0.33× once past the first chunk, so it keeps up three times over. The first chunk of
+a chapter is short and comes in around 1.0×, which is why playback runs dry for a
+second or two at the very start.
 
 Two smaller consequences of running out of audio, both fixed alongside:
 

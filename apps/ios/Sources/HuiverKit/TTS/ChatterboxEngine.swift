@@ -57,11 +57,13 @@ public actor ChatterboxEngine {
     /// it does not belong behind the actor.
     public nonisolated let sampleRate = 24000
 
-    /// Vars rather than lets because they are replaceable: see `reload`.
-    private var prefill: MLModel
-    private var decode: MLModel
-    private var flow: MLModel
-    private var vocoder: MLModel
+    /// Replaceable, and briefly absent: see `reload`. Implicitly unwrapped because
+    /// they are nil only between being freed and being loaded again, inside a
+    /// single actor-isolated call, so nothing can observe them empty.
+    private var prefill: MLModel!
+    private var decode: MLModel!
+    private var flow: MLModel!
+    private var vocoder: MLModel!
     private let tokenizer: BPETokenizer
     /// Where the models came from, kept so they can be loaded again.
     private let source: Models
@@ -132,6 +134,7 @@ public actor ChatterboxEngine {
         ("CPU", .cpuOnly),
     ]
 
+
     /// Load the models, reporting progress as each one is prepared.
     ///
     /// The first run after installing is the slow one: Core ML compiles each
@@ -142,7 +145,7 @@ public actor ChatterboxEngine {
         models: Models,
         progress: @escaping @Sendable (LoadProgress) -> Void = { _ in }
     ) async throws -> ChatterboxEngine {
-        let (loaded, placement) = try await loadModels(models, progress: progress)
+        let (loaded, placement) = try await loadModels(models, using: ladder, progress: progress)
         return try ChatterboxEngine(
             source: models,
             prefill: loaded[0],
@@ -167,16 +170,25 @@ public actor ChatterboxEngine {
     /// the cache. Everything derived from the models — the metadata, the tokenizer,
     /// the language list — is the same for the same files, so only the models
     /// themselves are swapped.
+    /// Each model is freed before its replacement is loaded, one at a time. Loading
+    /// a second set beside the first needs twice 736 MB of weights, and iOS answers
+    /// that by killing the app — silently, with no crash report, which is a
+    /// miserable thing to debug. Doing them in sequence keeps the high-water mark
+    /// near one set instead of two.
     public func reload() async throws {
-        let (loaded, _) = try await Self.loadModels(source)
-        prefill = loaded[0]
-        decode = loaded[1]
-        flow = loaded[2]
-        vocoder = loaded[3]
+        prefill = nil
+        (prefill, _) = try await Self.load("T3Prefill", source.prefill, using: Self.ladder)
+        decode = nil
+        (decode, _) = try await Self.load("T3Decode", source.decode, using: Self.ladder)
+        flow = nil
+        (flow, _) = try await Self.load("S3Flow", source.flow, using: Self.ladder)
+        vocoder = nil
+        (vocoder, _) = try await Self.load("S3Vocoder", source.vocoder, using: Self.ladder)
     }
 
     private static func loadModels(
         _ models: Models,
+        using ladder: [(String, MLComputeUnits)],
         progress: @escaping @Sendable (LoadProgress) -> Void = { _ in }
     ) async throws -> ([MLModel], [String: String]) {
         let stages = [
@@ -225,23 +237,14 @@ public actor ChatterboxEngine {
                 }
             }
 
-            var model: MLModel?
-            var failure: Error?
-            for (label, units) in ladder {
-                let configuration = MLModelConfiguration()
-                configuration.computeUnits = units
-                do {
-                    model = try await MLModel.load(contentsOf: stage.1, configuration: configuration)
-                    placement[stage.0] = label
-                    break
-                } catch {
-                    failure = error
-                }
+            let model: MLModel
+            do {
+                (model, placement[stage.0]) = try await load(stage.0, stage.1, using: ladder)
+            } catch {
+                ticker.cancel()
+                throw error
             }
             ticker.cancel()
-            guard let model else {
-                throw EngineError.unloadable(stage.0, failure?.localizedDescription ?? "unknown")
-            }
             loaded.append(model)
             base = start + share
             progress(
@@ -252,6 +255,32 @@ public actor ChatterboxEngine {
         }
 
         return (loaded, placement)
+    }
+
+    /// Load one model, taking the best processor it will load onto.
+    ///
+    /// The ladder is here rather than at the call site because `.all` is not always
+    /// loadable and Core ML will not fall back on its own — see `ladder`.
+    private static func load(
+        _ name: String,
+        _ url: URL,
+        using ladder: [(String, MLComputeUnits)]
+    ) async throws -> (MLModel, String) {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw EngineError.missingModel(url)
+        }
+        var failure: Error?
+        for (label, units) in ladder {
+            let configuration = MLModelConfiguration()
+            configuration.computeUnits = units
+            do {
+                let model = try await MLModel.load(contentsOf: url, configuration: configuration)
+                return (model, label)
+            } catch {
+                failure = error
+            }
+        }
+        throw EngineError.unloadable(name, failure?.localizedDescription ?? "unknown")
     }
 
     /// Bytes under a `.mlmodelc`, which is a directory rather than a file.
