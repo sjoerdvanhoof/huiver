@@ -482,10 +482,57 @@ public actor ChatterboxEngine {
         var audio: [Float] = []
         for start in stride(from: 0, to: tokens.count, by: genTokens) {
             let window = Array(tokens[start..<min(start + genTokens, tokens.count)])
-            audio += try decodeWindow(window, voice: voice)
+            var next = try decodeWindow(window, voice: voice)
+            // Each window is decoded independently, with its own noise, so the
+            // waveform on one side of a join has no relationship to the other:
+            // butt-joining them steps the signal and that step is an audible
+            // click in the middle of a word. Ramping both sides to zero costs a
+            // few milliseconds nobody can hear and removes the step.
+            //
+            // Chunks are sized to fit in one window, so this is for the rare
+            // sentence that cannot be broken and still overruns.
+            if !audio.isEmpty {
+                rampOut(&audio)
+                rampIn(&next)
+            }
+            audio += next
         }
         fadeIn(&audio)
+        // Every chunk ends at zero, whatever happened. The renderer appends a
+        // quarter-second of silence to each one, and a chunk whose last sample
+        // is not near zero clicks as it meets that silence — which is also what
+        // a chunk cut short by the token budget would do.
+        fadeOut(&audio)
         return audio
+    }
+
+    /// Length of the ramp used to hide a join: five milliseconds, short enough
+    /// to be inaudible as a dip and long enough to remove a step.
+    private var seamRamp: Int { sampleRate / 200 }
+
+    private func rampOut(_ audio: inout [Float]) {
+        let ramp = min(seamRamp, audio.count)
+        guard ramp > 1 else { return }
+        for i in 0..<ramp {
+            audio[audio.count - ramp + i] *= Float(ramp - 1 - i) / Float(ramp - 1)
+        }
+    }
+
+    private func rampIn(_ audio: inout [Float]) {
+        let ramp = min(seamRamp, audio.count)
+        guard ramp > 1 else { return }
+        for i in 0..<ramp {
+            audio[i] *= Float(i) / Float(ramp - 1)
+        }
+    }
+
+    /// Ramp the last few milliseconds to silence, so the file ends at zero.
+    private func fadeOut(_ audio: inout [Float]) {
+        let ramp = sampleRate / 100
+        guard audio.count > ramp * 2 else { return }
+        for i in 0..<ramp {
+            audio[audio.count - ramp + i] *= Float(ramp - 1 - i) / Float(ramp - 1)
+        }
     }
 
     private func decodeWindow(_ window: [Int32], voice: Voice) throws -> [Float] {

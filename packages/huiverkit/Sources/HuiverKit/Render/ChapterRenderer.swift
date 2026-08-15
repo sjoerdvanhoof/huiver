@@ -51,6 +51,17 @@ public actor ChapterRenderer {
                 do {
                     let chunks = Chunker.chunkWithSentenceLead(chapter.text)
                     let directory = library.audioDirectory(book: book.id, chapter: chapter.id)
+
+                    // Audio left over from a different chunker cannot be
+                    // continued: `00007.wav` says something else under the new
+                    // boundaries, so carrying on from it would repeat one
+                    // stretch of the chapter and skip another. Same reasoning
+                    // as a change of voice, and the same remedy.
+                    if let existing = ChunkManifest.read(from: directory),
+                       existing.chunkerVersion != Chunker.version {
+                        try await library.discardAudio(chapterId: chapter.id, bookId: book.id)
+                    }
+
                     try FileManager.default.createDirectory(
                         at: directory, withIntermediateDirectories: true
                     )

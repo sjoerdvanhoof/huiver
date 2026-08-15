@@ -206,6 +206,32 @@ final class AppModel {
         await refreshProgress()
     }
 
+    /// Throw away a chapter's audio and render it again.
+    ///
+    /// The way to pick up an improvement to the chunker or the sampler on a
+    /// book that is already converted — the audio on disk is only ever reused,
+    /// never revisited, so without this a chapter keeps whatever it was first
+    /// rendered with for good.
+    func rerender(chapter: Chapter, in book: Book) async {
+        guard let library, let converter, let voice = selectedVoice else { return }
+        if narrator?.chapterId == chapter.id { narrator?.stop() }
+        converter.cancel(chapter.id)
+        try? await library.discardAudio(chapterId: chapter.id, bookId: book.id)
+
+        // Re-chunk against the current chunker now the audio that pinned the
+        // old boundaries is gone.
+        if var updated = await library.book(book.id)?.chapters.first(where: { $0.id == chapter.id }) {
+            updated.chunkCount = Chunker.chunkWithSentenceLead(updated.text).count
+            updated.chunkerVersion = Chunker.version
+            try? await library.update(chapter: updated, in: book.id)
+            books = await library.all()
+            if let fresh = await library.book(book.id) {
+                converter.convert(book: fresh, chapter: updated, voice: voice, options: options)
+            }
+        }
+        await refresh()
+    }
+
     /// Turn a chapter's finished flag on or off by hand.
     ///
     /// Un-finishing is how you go back to a chapter you want to hear again;

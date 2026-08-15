@@ -105,7 +105,18 @@ public actor Library {
                         ContentIdentity.chapterHash(text)
                     changed = true
                 }
-                if books[bookIndex].chapters[chapterIndex].chunkerVersion == nil {
+                // Re-chunk a chapter the chunker has moved on from — but only
+                // when there is no audio to contradict. A chapter already
+                // rendered keeps the boundaries its files were made with, and
+                // its `chunks.json` says what they were; re-chunking it here
+                // would leave `chunkCount` describing audio that does not
+                // exist. `ChapterRenderer` discards the old audio if it is ever
+                // asked to extend it.
+                if books[bookIndex].chapters[chapterIndex].chunkerVersion != Chunker.version,
+                   books[bookIndex].chapters[chapterIndex].renderedChunks == 0 {
+                    let text = books[bookIndex].chapters[chapterIndex].text
+                    books[bookIndex].chapters[chapterIndex].chunkCount =
+                        Chunker.chunkWithSentenceLead(text).count
                     books[bookIndex].chapters[chapterIndex].chunkerVersion = Chunker.version
                     changed = true
                 }

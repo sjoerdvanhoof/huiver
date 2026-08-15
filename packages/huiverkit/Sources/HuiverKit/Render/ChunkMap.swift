@@ -16,11 +16,24 @@ public struct ChunkManifest: Codable, Sendable, Equatable {
     /// The voice these chunks were rendered in. A manifest whose voice does not
     /// match the audio's belongs to a previous render.
     public var voice: String
+    /// Which `Chunker` decided these boundaries. Absent in manifests written
+    /// before the chunker was versioned, which by definition means v1.
+    public var chunker: Int?
     public var texts: [String]
 
-    public init(version: Int = ChunkManifest.currentVersion, voice: String, texts: [String]) {
+    /// The chunker that produced this, treating a manifest too old to say as
+    /// the only version that existed when it was written.
+    public var chunkerVersion: Int { chunker ?? 1 }
+
+    public init(
+        version: Int = ChunkManifest.currentVersion,
+        voice: String,
+        chunker: Int? = Chunker.version,
+        texts: [String]
+    ) {
         self.version = version
         self.voice = voice
+        self.chunker = chunker
         self.texts = texts
     }
 

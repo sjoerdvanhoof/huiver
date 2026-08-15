@@ -239,6 +239,11 @@ private struct ChapterRow: View {
             ) {
                 Task { await model.setFinished(!isFinished, chapter: chapter, in: book) }
             }
+            if chapter.renderedChunks > 0 {
+                Button("Render again", systemImage: "arrow.clockwise") {
+                    Task { await model.rerender(chapter: chapter, in: book) }
+                }
+            }
         }
     }
 

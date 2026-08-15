@@ -11,11 +11,20 @@ import Testing
 /// copy into Core ML state, the sampling loop, the mel decoder and the vocoder —
 /// and it runs on the Mac, so it catches a broken export without a device.
 struct EngineTests {
+    /// Where the compiled models and voices are installed.
+    ///
+    /// The iOS app's folder rather than this package's: `install-models.sh`
+    /// puts them where the Xcode project references them from, and they are far
+    /// too large to keep a second copy of. HuiverKit lives in `packages/` and
+    /// the models do not move with it.
     static var root: URL {
         URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
+            .deletingLastPathComponent()  // HuiverKitTests
+            .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // huiverkit
+            .deletingLastPathComponent()  // packages
+            .deletingLastPathComponent()  // repo root
+            .appendingPathComponent("apps/ios")
     }
 
     static var installed: Bool {
