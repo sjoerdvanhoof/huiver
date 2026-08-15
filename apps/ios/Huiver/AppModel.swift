@@ -24,6 +24,10 @@ final class AppModel {
     private(set) var engineLanguages: [Language] = [.english]
     private(set) var preparing: ChatterboxEngine.LoadProgress?
     private(set) var preparingSince: Date?
+    /// Every chapter's listening state, for the lists that draw it. Refreshed
+    /// from the store rather than read through it, so a view body never has to
+    /// await an actor.
+    private(set) var progress: [String: ChapterProgress] = [:]
     /// True on the run that actually compiles the models, which is the slow one
     /// worth explaining. Set once the first load finishes.
     var hasPreparedBefore: Bool {
@@ -31,6 +35,21 @@ final class AppModel {
     }
 
     var options = SamplingOptions()
+
+    /// Stop reading after a while. Owned here so it outlives the player sheet.
+    let sleepTimer = SleepTimer()
+
+    /// Delete a finished chapter's audio after a week. On by default — the
+    /// alternative is a phone that fills up with books already listened to.
+    var autoCleanup: Bool {
+        get {
+            UserDefaults.standard.object(forKey: "autoCleanup") as? Bool ?? true
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "autoCleanup")
+            if newValue { Task { await sweepFinishedAudio() } }
+        }
+    }
 
     var selectedVoiceId: String {
         didSet { UserDefaults.standard.set(selectedVoiceId, forKey: "voice") }
@@ -41,7 +60,9 @@ final class AppModel {
         voices.first { $0.id == selectedVoiceId } ?? voices.first
     }
 
-    private var library: Library?
+    /// Also read directly by the player, to build the read-along map.
+    private(set) var library: Library?
+    private(set) var progressStore: ProgressStore?
 
     init() {
         selectedVoiceId = UserDefaults.standard.string(forKey: "voice") ?? "nano_default"
@@ -64,6 +85,13 @@ final class AppModel {
             return
         }
 
+        let progressStore = ProgressStore(root: documents)
+        self.progressStore = progressStore
+        progress = await progressStore.chapters()
+        await progressStore.onChange { [weak self] in
+            Task { @MainActor in await self?.refreshProgress() }
+        }
+
         guard let resources = Bundle.main.resourceURL else {
             loadFailure = "No resources in the app bundle"
             return
@@ -83,8 +111,17 @@ final class AppModel {
             ) { [weak self] progress in
                 Task { @MainActor in self?.preparing = progress }
             }
-            narrator = Narrator(engine: engine, library: library!)
+            let narrator = Narrator(engine: engine, library: library!, progress: progressStore)
+            self.narrator = narrator
+            sleepTimer.attach(
+                fade: { [weak narrator] seconds in narrator?.fadeOutAndPause(over: seconds) },
+                stopAtChapterEnd: { [weak narrator] stop in
+                    narrator?.stopAtChapterEnd = stop
+                    if !stop { narrator?.cancelFade() }
+                }
+            )
             let converter = Converter(engine: engine, library: library!)
+            converter.voices = voices
             converter.didChange = { [weak self] in
                 Task { await self?.refresh() }
             }
@@ -102,6 +139,25 @@ final class AppModel {
         }
         preparing = nil
         preparingSince = nil
+        if autoCleanup { await sweepFinishedAudio() }
+    }
+
+    /// Delete the audio of chapters finished long enough ago to be done with.
+    ///
+    /// Never touches what is playing or what is queued to render — see
+    /// `AudioCleaner`, which is where the rule lives and is tested.
+    func sweepFinishedAudio() async {
+        guard autoCleanup, let library else { return }
+        let removed = await AudioCleaner.sweep(
+            library: library,
+            books: books,
+            progress: progress,
+            playing: narrator?.chapterId,
+            queued: Set((converter?.queue.map(\.chapterId) ?? []) + [converter?.active?.chapterId].compactMap { $0 })
+        )
+        guard !removed.isEmpty else { return }
+        books = await library.all()
+        bytesOnDisk = await library.bytesOnDisk()
     }
 
     func importBook(from url: URL) async {
@@ -113,8 +169,9 @@ final class AppModel {
 
         do {
             let data = try Data(contentsOf: url)
-            let extracted = try Extract.book(from: data, filename: url.lastPathComponent)
-            _ = try await library.add(extracted)
+            let filename = url.lastPathComponent
+            let extracted = try Extract.book(from: data, filename: filename)
+            _ = try await library.add(extracted, source: (data: data, filename: filename))
             books = await library.all()
         } catch {
             loadFailure = error.localizedDescription
@@ -143,14 +200,67 @@ final class AppModel {
             narrator?.stop()
         }
         try? await library.remove(book.id)
+        await progressStore?.removeBook(book.id, chapterIds: book.chapters.map(\.id))
         books = await library.all()
         bytesOnDisk = await library.bytesOnDisk()
+        await refreshProgress()
+    }
+
+    /// Turn a chapter's finished flag on or off by hand.
+    ///
+    /// Un-finishing is how you go back to a chapter you want to hear again;
+    /// finishing by hand is how you skip one without listening to it.
+    func setFinished(_ finished: Bool, chapter: Chapter, in book: Book) async {
+        await progressStore?.setFinished(finished, chapterId: chapter.id, bookId: book.id)
+        await progressStore?.flush()
+        await refreshProgress()
     }
 
     func refresh() async {
         guard let library else { return }
         books = await library.all()
         bytesOnDisk = await library.bytesOnDisk()
+        await refreshProgress()
+    }
+
+    func refreshProgress() async {
+        guard let progressStore else { return }
+        progress = await progressStore.chapters()
+    }
+
+    /// Has this chapter been listened to the end?
+    func isFinished(_ chapter: Chapter) -> Bool {
+        progress[chapter.id]?.finished ?? false
+    }
+
+    /// How far into a chapter the listener got, or nil if they never started
+    /// it. A finished chapter reports nothing: its bar belongs at neither end.
+    func position(in chapter: Chapter) -> Double? {
+        guard let record = progress[chapter.id], !record.finished, record.position > 1 else {
+            return nil
+        }
+        return record.position
+    }
+
+    /// What Resume should open: where the listener was, or the first chapter
+    /// they have not finished.
+    ///
+    /// The stored chapter wins even when an earlier one is unfinished — going
+    /// back to skipped chapters is a choice, and the button that means "carry
+    /// on" should carry on.
+    func resumeTarget(for book: Book) -> (chapter: Chapter, position: Double)? {
+        if let chapter = lastChapter(of: book), !isFinished(chapter) {
+            return (chapter, progress[chapter.id]?.position ?? 0)
+        }
+        guard let next = book.chapters.first(where: { !isFinished($0) }) else { return nil }
+        return (next, progress[next.id]?.position ?? 0)
+    }
+
+    /// The chapter of this book that was touched most recently.
+    private func lastChapter(of book: Book) -> Chapter? {
+        book.chapters
+            .compactMap { chapter in progress[chapter.id].map { (chapter, $0.updatedAt) } }
+            .max { $0.1 < $1.1 }?.0
     }
 
     func clearFailure() { loadFailure = nil }

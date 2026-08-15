@@ -1,0 +1,68 @@
+{
+  "": {
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/primary.swiftdeps"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/BookTests.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/BookTests.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/BookTests.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/BookTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/BookTests.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/BookTests.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/ChunkerTests.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ChunkerTests.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ChunkerTests.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ChunkerTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ChunkerTests.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ChunkerTests.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/ConverterTests.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ConverterTests.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ConverterTests.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ConverterTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ConverterTests.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ConverterTests.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/EngineTests.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/EngineTests.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/EngineTests.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/EngineTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/EngineTests.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/EngineTests.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/LanguageTests.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/LanguageTests.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/LanguageTests.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/LanguageTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/LanguageTests.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/LanguageTests.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/PlaybackTests.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/PlaybackTests.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/PlaybackTests.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/PlaybackTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/PlaybackTests.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/PlaybackTests.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/SamplerTests.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/SamplerTests.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/SamplerTests.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/SamplerTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/SamplerTests.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/SamplerTests.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/TokenizerTests.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/TokenizerTests.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/TokenizerTests.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/TokenizerTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/TokenizerTests.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/TokenizerTests.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/DerivedSources/resource_bundle_accessor.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/resource_bundle_accessor.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/resource_bundle_accessor.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/resource_bundle_accessor~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/resource_bundle_accessor.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/resource_bundle_accessor.dia"
+  }
+}

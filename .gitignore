@@ -88,15 +88,35 @@ legacy/mobile/node_modules/
 # ios (native Swift app — Chatterbox Nano on Core ML)
 #
 # Nothing model-shaped is committed. The .mlpackages come out of
-# apps/ios/export, the compiled .mlmodelc and the voice pack are derived from
+# tools/export, the compiled .mlmodelc and the voice pack are derived from
 # them, and together they are the better part of a gigabyte.
 # ---------------------------------------------------------------------------
 apps/ios/Models/
 apps/ios/Voices/
 apps/ios/build/
 apps/ios/build-voices/
-apps/ios/.build/
-apps/ios/.swiftpm/
 apps/ios/DerivedData/
 apps/ios/Huiver.xcodeproj/xcuserdata/
 apps/ios/Huiver.xcodeproj/project.xcworkspace/xcuserdata/
+
+# ---------------------------------------------------------------------------
+# mac (native Swift companion app — Chatterbox Multilingual on Core ML)
+# ---------------------------------------------------------------------------
+apps/mac/Models/
+apps/mac/Voices/
+apps/mac/build/
+apps/mac/build-mtl/
+apps/mac/DerivedData/
+apps/mac/Huiver.xcodeproj/xcuserdata/
+apps/mac/Huiver.xcodeproj/project.xcworkspace/xcuserdata/
+
+# ---------------------------------------------------------------------------
+# packages/huiverkit (the shared Swift package both apps compile)
+# ---------------------------------------------------------------------------
+packages/huiverkit/.build/
+packages/huiverkit/.swiftpm/
+
+# ---------------------------------------------------------------------------
+# tools/export (Core ML export tooling)
+# ---------------------------------------------------------------------------
+tools/export/__pycache__/

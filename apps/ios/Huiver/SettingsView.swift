@@ -39,6 +39,16 @@ struct SettingsView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(voice.name).foregroundStyle(.primary)
                                     Text(voice.detail).font(.caption).foregroundStyle(.secondary)
+                                    // Only for the voice in use: ten paragraphs
+                                    // of prose would turn the picker into an
+                                    // essay to scroll past.
+                                    if let persona = voice.persona,
+                                       model.selectedVoiceId == voice.id {
+                                        Text(persona)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .padding(.top, 2)
+                                    }
                                 }
                                 Spacer()
                                 if model.selectedVoiceId == voice.id {
@@ -73,16 +83,25 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Queued", value: queueSummary)
+                NavigationLink {
+                    QueueView()
+                } label: {
+                    LabeledContent("Queued", value: queueSummary)
+                }
             } header: {
                 Text("Conversion")
             } footer: {
                 Text("Conversion runs while huiver is open. iOS suspends apps that leave the screen, and it offers no way to keep computing in the background — so leaving mid-chapter finishes the sentence being worked on and stops there. Coming back picks up exactly where it left off, without pressing convert again, even after a force quit. Listening does keep going off screen, because then the app really is playing audio.")
             }
 
-            Section("Storage") {
+            Section {
                 LabeledContent("Books", value: "\(model.books.count)")
                 LabeledContent("Audio on disk", value: size(model.bytesOnDisk))
+                Toggle("Clean up finished chapters", isOn: cleanupBinding)
+            } header: {
+                Text("Storage")
+            } footer: {
+                Text("An hour of audio is about 170 MB. A chapter you have listened all the way through has its audio removed a week later — the text always stays, and rendering it again brings the audio back. Whatever is playing or waiting to convert is left alone.")
             }
 
             if !model.placement.isEmpty {
@@ -107,6 +126,12 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.refresh() }
         .onDisappear { preview.stop() }
+    }
+
+    /// `autoCleanup` lives in UserDefaults rather than in observable state, so
+    /// it needs a binding written out rather than `@Bindable`'s.
+    private var cleanupBinding: Binding<Bool> {
+        .init(get: { model.autoCleanup }, set: { model.autoCleanup = $0 })
     }
 
     private var queueSummary: String {

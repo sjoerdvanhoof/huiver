@@ -1,0 +1,1132 @@
+{
+  "builtTestProducts" : [
+    {
+      "binaryPath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.xctest/Contents/MacOS/HuiverKitPackageTests",
+      "packagePath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios",
+      "productName" : "HuiverKitPackageTests"
+    }
+  ],
+  "copyCommands" : {
+    "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit_HuiverKitTests.bundle/Fixtures" : {
+      "inputs" : [
+        {
+          "kind" : "directory",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/Fixtures"
+        }
+      ],
+      "outputs" : [
+        {
+          "kind" : "directory",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit_HuiverKitTests.bundle/Fixtures"
+        }
+      ]
+    }
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.HuiverKit-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/sources",
+      "importPath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Audio/NowPlaying.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Audio/PlaybackLog.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Audio/WavFile.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/Extract.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/HTML.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/XMLTree.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/Zip.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Library/Cover.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Library/Library.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Render/ChapterRenderer.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Render/Converter.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Render/Narrator.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/TTS/ChatterboxEngine.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/TTS/Sampler.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/TTS/VoicePack.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/BPETokenizer.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/Chunker.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/Format.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/Language.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/PuncNorm.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "HuiverKit",
+      "moduleOutputPath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/Modules/HuiverKit.swiftmodule",
+      "objects" : [
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/NowPlaying.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PlaybackLog.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/WavFile.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Extract.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/HTML.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/XMLTree.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Zip.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Cover.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Library.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChapterRenderer.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Converter.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Narrator.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChatterboxEngine.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Sampler.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/VoicePack.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/BPETokenizer.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Chunker.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Format.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Language.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PuncNorm.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx15.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j8",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-emit-objc-header",
+        "-emit-objc-header-path",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/include/HuiverKit-Swift.h",
+        "-swift-version",
+        "6",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "ios"
+      ],
+      "outputFileMapPath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/NowPlaying.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PlaybackLog.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/WavFile.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Extract.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/HTML.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/XMLTree.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Zip.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Cover.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Library.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChapterRenderer.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Converter.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Narrator.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChatterboxEngine.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Sampler.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/VoicePack.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/BPETokenizer.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Chunker.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Format.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Language.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PuncNorm.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/Modules/HuiverKit.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Audio/NowPlaying.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Audio/PlaybackLog.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Audio/WavFile.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/Extract.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/HTML.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/XMLTree.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/Zip.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Library/Cover.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Library/Library.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Render/ChapterRenderer.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Render/Converter.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Render/Narrator.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/TTS/ChatterboxEngine.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/TTS/Sampler.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/TTS/VoicePack.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/BPETokenizer.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/Chunker.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/Format.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/Language.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/PuncNorm.swift"
+      ],
+      "tempsPath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build",
+      "wholeModuleOptimization" : false
+    },
+    "C.HuiverKitPackageTests-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.build/sources",
+      "importPath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.derived/runner.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/Modules/HuiverKitTests.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "HuiverKitPackageTests",
+      "moduleOutputPath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/Modules/HuiverKitPackageTests.swiftmodule",
+      "objects" : [
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.build/runner.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx15.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-Xfrontend",
+        "-enable-cross-import-overlays",
+        "-j8",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-emit-objc-header",
+        "-emit-objc-header-path",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.build/include/HuiverKitPackageTests-Swift.h",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "ios"
+      ],
+      "outputFileMapPath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.build/runner.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/Modules/HuiverKitPackageTests.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.derived/runner.swift"
+      ],
+      "tempsPath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.build",
+      "wholeModuleOptimization" : false
+    },
+    "C.HuiverKitTests-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/sources",
+      "importPath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/BookTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/ChunkerTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/ConverterTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/EngineTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/LanguageTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/PlaybackTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/SamplerTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/TokenizerTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/DerivedSources/resource_bundle_accessor.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "virtual",
+          "name" : "<HuiverKitTests-arm64-apple-macosx-debug.module-resources>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/Modules/HuiverKit.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "HuiverKitTests",
+      "moduleOutputPath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/Modules/HuiverKitTests.swiftmodule",
+      "objects" : [
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/BookTests.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ChunkerTests.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ConverterTests.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/EngineTests.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/LanguageTests.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/PlaybackTests.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/SamplerTests.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/TokenizerTests.swift.o",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/resource_bundle_accessor.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx15.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-Xfrontend",
+        "-enable-cross-import-overlays",
+        "-j8",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_AVAILABLE",
+        "-module-cache-path",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-swift-version",
+        "6",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "ios"
+      ],
+      "outputFileMapPath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/BookTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ChunkerTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ConverterTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/EngineTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/LanguageTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/PlaybackTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/SamplerTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/TokenizerTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/resource_bundle_accessor.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/Modules/HuiverKitTests.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/BookTests.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/ChunkerTests.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/ConverterTests.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/EngineTests.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/LanguageTests.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/PlaybackTests.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/SamplerTests.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/TokenizerTests.swift",
+        "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/DerivedSources/resource_bundle_accessor.swift"
+      ],
+      "tempsPath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build",
+      "wholeModuleOptimization" : false
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "HuiverKit" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "HuiverKit",
+      "-package-name",
+      "ios",
+      "-c",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Audio/NowPlaying.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Audio/PlaybackLog.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Audio/WavFile.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/Extract.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/HTML.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/XMLTree.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/Zip.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Library/Cover.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Library/Library.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Render/ChapterRenderer.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Render/Converter.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Render/Narrator.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/TTS/ChatterboxEngine.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/TTS/Sampler.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/TTS/VoicePack.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/BPETokenizer.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/Chunker.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/Format.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/Language.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/PuncNorm.swift",
+      "-I",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx15.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j8",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-emit-objc-header",
+      "-emit-objc-header-path",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/include/HuiverKit-Swift.h",
+      "-swift-version",
+      "6",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "ios",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ],
+    "HuiverKitPackageTests" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "HuiverKitPackageTests",
+      "-package-name",
+      "ios",
+      "-c",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.derived/runner.swift",
+      "-I",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx15.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-Xfrontend",
+      "-enable-cross-import-overlays",
+      "-j8",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-emit-objc-header",
+      "-emit-objc-header-path",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.build/include/HuiverKitPackageTests-Swift.h",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "ios",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ],
+    "HuiverKitTests" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "HuiverKitTests",
+      "-package-name",
+      "ios",
+      "-c",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/BookTests.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/ChunkerTests.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/ConverterTests.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/EngineTests.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/LanguageTests.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/PlaybackTests.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/SamplerTests.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/TokenizerTests.swift",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/DerivedSources/resource_bundle_accessor.swift",
+      "-I",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx15.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-Xfrontend",
+      "-enable-cross-import-overlays",
+      "-j8",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_AVAILABLE",
+      "-module-cache-path",
+      "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-swift-version",
+      "6",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "ios",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "HuiverKit" : [
+
+    ],
+    "HuiverKitPackageTests" : [
+      "HuiverKitTests",
+      "HuiverKit"
+    ],
+    "HuiverKitTests" : [
+      "HuiverKit"
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+    "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.derived/runner.swift" : {
+      "inputs" : [
+
+      ],
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.derived/runner.swift"
+        }
+      ]
+    }
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Audio/NowPlaying.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Audio/PlaybackLog.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Audio/WavFile.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/Extract.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/HTML.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/XMLTree.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/Zip.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Library/Cover.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Library/Library.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Render/ChapterRenderer.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Render/Converter.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Render/Narrator.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/TTS/ChatterboxEngine.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/TTS/Sampler.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/TTS/VoicePack.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/BPETokenizer.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/Chunker.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/Format.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/Language.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/PuncNorm.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/sources"
+    },
+    "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.derived/runner.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.build/sources"
+    },
+    "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/BPETokenizer.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChapterRenderer.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChatterboxEngine.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Chunker.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Converter.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Cover.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Extract.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Format.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/HTML.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Language.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Library.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Narrator.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/NowPlaying.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PlaybackLog.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PuncNorm.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Sampler.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/VoicePack.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/WavFile.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/XMLTree.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Zip.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.build/runner.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/BookTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ChunkerTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/ConverterTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/EngineTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/LanguageTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/PlaybackTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/SamplerTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/TokenizerTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/resource_bundle_accessor.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.product/Objects.LinkFileList"
+    },
+    "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/BookTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/ChunkerTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/ConverterTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/EngineTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/LanguageTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/PlaybackTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/SamplerTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Tests/HuiverKitTests/TokenizerTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/DerivedSources/resource_bundle_accessor.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitTests.build/sources"
+    },
+    "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+    }
+  }
+}

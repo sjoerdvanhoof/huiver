@@ -20,7 +20,13 @@ struct HuiverApp: App {
                 .task { await model.load() }
                 .onChange(of: phase) { _, new in
                     switch new {
-                    case .background: model.converter?.applicationDidEnterBackground()
+                    case .background:
+                        model.converter?.applicationDidEnterBackground()
+                        // The ticker stops when the app is suspended, and being
+                        // killed while suspended is the usual way this app ends.
+                        // Write the position down while there is still a process
+                        // to write it from.
+                        model.narrator?.checkpoint()
                     case .active:
                         model.converter?.applicationWillEnterForeground()
                         // Core ML stops working while the screen is locked, so a
