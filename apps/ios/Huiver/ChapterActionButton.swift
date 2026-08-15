@@ -5,7 +5,7 @@ import SwiftUI
 /// An arrow to render the chapter, a ring filling with progress while it works,
 /// a tick once the audio is on disk. Tapping mid-render stops it — which is a
 /// pause, not a discard: the chunks already written are kept and picked up next
-/// time. A port of `apps/mobile/src/components/ChapterAction.tsx`.
+/// time. A port of `legacy/mobile/src/components/ChapterAction.tsx`.
 struct ChapterActionButton: View {
     enum State: Equatable {
         case none

@@ -5,10 +5,11 @@ A native Swift app that reads books in a cloned voice, with
 the phone through Core ML. No server, no network after the app is installed, and
 no Kokoro: this app is Chatterbox only.
 
-It is a separate app from `apps/mobile`, which is the Expo/Kokoro one. Neither
-replaces the other and they share no code.
+It replaced `legacy/mobile`, the Expo/Kokoro app, which is retired and no longer
+worked on. They share no code. The comparison is kept because it is the reason
+this app exists:
 
-| | `apps/mobile` (Expo) | `apps/ios` (this) |
+| | `legacy/mobile` (Expo, retired) | `apps/ios` (this) |
 | --- | --- | --- |
 | Engine | Kokoro via `react-native-sherpa-onnx` | Chatterbox Nano via Core ML |
 | Voices | 21 built-in | 11 cloned, shipped with the app |

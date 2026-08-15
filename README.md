@@ -16,12 +16,13 @@ This is a monorepo:
 | Workspace | What it is |
 | --- | --- |
 | `apps/web` | The Bun server and its React frontend. Kokoro runs as a Python subprocess. |
-| `apps/mobile` | A standalone Expo app for iOS and Android. Kokoro runs on the device. |
 | `apps/ios` | A native Swift app for iPhone. Chatterbox Nano runs on the device, through Core ML. |
 | `packages/shared` | The EPUB reader, chunker, WAV layout and DTOs the TypeScript apps share. |
+| `legacy/mobile` | The retired Expo app. Not maintained, not in the workspace — see [legacy/README.md](legacy/README.md). |
 
-Each phone app keeps its own library: it imports its own books, renders its own audio and
-needs no server. See [Mobile app](#mobile-app) and [iOS app](#ios-app).
+The two things being worked on are the web app and the iOS app. The phone app keeps
+its own library: it imports its own books, renders its own audio and needs no server.
+See [iOS app](#ios-app).
 
 **Input formats:** `.epub` (or a zipped one), `.txt`, `.md`, `.html`
 
@@ -250,7 +251,8 @@ Two more things worth knowing:
 
 ### Not in the Expo app
 
-`apps/mobile` stays Kokoro-only. It runs speech through `react-native-sherpa-onnx`, which
+The retired `legacy/mobile` was Kokoro-only, and this is a large part of why it was
+retired. It runs speech through `react-native-sherpa-onnx`, which
 supports non-autoregressive TTS (VITS, Matcha, Kokoro, Kitten); Chatterbox is an
 autoregressive token model plus a flow-matching decoder, a different architecture family, and
 the only ONNX exports that exist are of the 500M and multilingual variants for transformers.js
@@ -371,119 +373,17 @@ upload → extract chapters → chunk to ~420 chars → TTS → concat → ffmpe
   so they don't each pay the model-load cost
 - State lives in SQLite at `apps/web/data/huiver.db`
 
-## Mobile app
+## Mobile app (retired)
 
-`apps/mobile` is a standalone Expo app: it imports EPUBs on the phone, splits them
-into chapters with the same extractor the server uses, and renders them with Kokoro
-running on the device. There is no server involved and no network after the model is
-downloaded.
-
-### Building it
-
-On-device speech is a native module, so Expo Go will not do — you need a development
-build. Install Xcode itself (the command line tools alone are not enough), with the
-iOS platform component; watchOS, tvOS and visionOS are not needed. Then point the
-tooling at it:
-
-```bash
-sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-sudo xcodebuild -license accept
-```
-
-```bash
-bun install
-bun run mobile:prebuild        # regenerates ios/ and android/; both are gitignored
-```
-
-Use that script rather than `bunx expo prebuild` directly: CocoaPods crashes with
-`Unicode Normalization not appropriate for ASCII-8BIT` when `LANG` is unset, which it
-is by default on a fresh macOS shell, and the script sets it. If you would rather fix
-it once for every project, put this in your shell profile instead:
-
-```bash
-export LANG=en_US.UTF-8
-```
-
-Prebuild runs `pod install`, which downloads the sherpa-onnx xcframework (~185 MB) and
-compiles libarchive — a few minutes the first time. Then open
-`apps/mobile/ios/huiver.xcworkspace` in Xcode, pick your team under *Signing &
-Capabilities*, and run it on your iPhone. A free Apple ID works; the build expires
-after seven days and you re-run it.
-
-Or skip Xcode's UI once the signing team is set. For the phone, name the device
-explicitly — a bare `--device` opens a picker that lists simulators alongside phones,
-and iOS reuses the same device name across your old and new handsets, so the UDID is
-the only unambiguous answer:
-
-```bash
-xcodebuild -workspace apps/mobile/ios/huiver.xcworkspace -scheme huiver \
-  -showdestinations | grep "platform:iOS," | grep -v Simulator
-
-bun run mobile:ios:device <id-from-that-listing>
-```
-
-Build **Release** for the phone, which that script does. A Debug build leaves the JS
-on the Mac's Metro server, so the phone has to stay on the same Wi-Fi — no use for
-testing background audio or the lock screen while walking around.
-
-Simulator: `bun run mobile:ios`. Android: `bun run mobile:android`. Day-to-day,
-`bun run mobile` starts the Metro dev server against an installed Debug build.
-
-`ios/` and `android/` are generated, not committed: everything native comes from
-`app.config.ts` and `plugins/`, so a prebuild always reproduces them. If pods ever
-drift without a full regeneration, `bun run --cwd apps/mobile pods` reinstalls them.
-
-### The voice model
-
-Kokoro is downloaded on first use from settings — `kokoro-multi-lang-v1_0`, about
-350 MB, unpacked to roughly 400 MB. It carries the same 21 English voices the desktop
-app offers, at the same ids, so a book sounds the same whichever huiver read it. An
-interrupted download resumes rather than starting over.
-
-The fp32 model is used deliberately: the int8 build is a third of the size but runs
-about twice as slow on Apple silicon, and barely saves memory. Expect roughly 800 MB
-of RAM while a chapter is being rendered.
-
-### Converting and listening
-
-The controls match the web app's: convert a chapter and it renders in the background,
-or just press play on an unconverted one and listen while it is written.
-
-Live playback works differently from the web's, because iOS cannot seek an open-ended
-HTTP stream. Each chunk is rendered to its own small WAV, and the player walks them as
-they land, so seeking backwards inside what has been rendered is exact rather than a
-re-request. The scrubber dims the part that does not exist yet. When the chapter
-finishes the chunks are stitched into one file and it becomes an ordinary track.
-
-Those chunk files are also the checkpoint: a render interrupted anywhere leaves a
-prefix, and pressing convert again continues from it. As on the server, a prefix is
-only reused when the work is identical — same text, same voice, same chunking.
-
-**Backgrounding.** iOS suspends an app a few seconds after it leaves the screen unless
-audio is playing. So synthesis keeps running in the background while you are listening,
-and pauses when you background the app with nothing playing — picking up from the
-checkpoint when you come back. The app says as much rather than pretending otherwise.
-
-**Storage.** There is no ffmpeg on the phone, so chapters stay as 24 kHz 16-bit WAV:
-about 173 MB per hour, against roughly 29 MB per hour for the desktop app's 64 kbps
-MP3. A ten-hour book is therefore around 1.7 GB. Deleting a book removes its audio.
-
-### How it maps to the web app
-
-| Web | Mobile |
-| --- | --- |
-| `Bun.serve` + REST | nothing — the screens read SQLite directly |
-| `bun:sqlite` in `data/` | `expo-sqlite`, same table shapes minus the job queue |
-| Python Kokoro subprocess | `react-native-sherpa-onnx` (ONNX Runtime) in-process |
-| Chatterbox Nano cloned voices | not here — it is the whole point of [`apps/ios`](#ios-app) |
-| `<audio>` + Media Session | `expo-audio` + its lock-screen controls |
-| chunked MP3 stream | per-chunk WAV files the player walks |
-| Tailwind + shadcn | `StyleSheet` over the same tokens, in `src/theme/tokens.ts` |
+The Expo app has moved to [`legacy/mobile`](legacy/README.md) and is no longer worked
+on. It ran Kokoro on the device through `react-native-sherpa-onnx` and worked fine; it
+is parked because `apps/ios` is the phone app being carried forward, and cloned voices
+were never going to work in the Expo one. Its documentation moved with it.
 
 ## iOS app
 
-`apps/ios` is a second phone app, and a different bet from `apps/mobile`: native Swift,
-iPhone only, and **Chatterbox Nano rather than Kokoro**. Books are read in a cloned voice,
+`apps/ios` is the phone app, and a different bet from the Expo one it replaced: native
+Swift, iPhone only, and **Chatterbox Nano rather than Kokoro**. Books are read in a cloned voice,
 on the device, with the model converted to Core ML and the token loop driven from Swift.
 
 There is no off-the-shelf Core ML build of Nano, so `apps/ios/export/` makes one — a stateful
@@ -522,8 +422,9 @@ bun run e2e:resume    # kills the server mid-chapter and checks resuming is seam
 ```
 
 `bun run test`, not a bare `bun test` from the repo root. Each workspace's tests run
-with that workspace as the working directory, which matters once `apps/mobile/ios`
-exists: with the generated native projects and their Pods in the tree, `bun test` from
+with that workspace as the working directory, which matters as soon as anything like
+`legacy/mobile/ios` exists: with generated native projects and their Pods in the tree,
+`bun test` from
 the root walks ~100k files, and the server tests that spawn ffmpeg then get a subprocess
 whose stdin is closed before it can write — they fail with `EPIPE: broken pipe` and no
 explanation. Running them from `apps/web` avoids the walk entirely.

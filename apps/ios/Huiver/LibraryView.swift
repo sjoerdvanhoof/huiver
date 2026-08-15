@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// The shelf. Cover, title, author, and how much of it has been rendered —
-/// laid out as in `apps/mobile/app/index.tsx`, with the "Add a book" button
+/// laid out as in `legacy/mobile/app/index.tsx`, with the "Add a book" button
 /// pinned to the bottom where a thumb reaches it.
 struct LibraryView: View {
     @Environment(AppModel.self) private var model

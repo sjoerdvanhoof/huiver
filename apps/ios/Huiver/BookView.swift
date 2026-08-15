@@ -2,7 +2,7 @@ import SwiftUI
 
 /// A book: cover and details at the top, then its chapters.
 ///
-/// The layout follows `apps/mobile/app/book/[id].tsx` — large cover beside the
+/// The layout follows `legacy/mobile/app/book/[id].tsx` — large cover beside the
 /// title, a Resume/Play button, and a list of chapters each with the podcast
 /// download control on the right.
 struct BookView: View {

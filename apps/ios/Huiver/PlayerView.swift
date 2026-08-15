@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The full player: art, title, a scrubber, transport, speed.
 ///
-/// A port of `apps/mobile/app/player.tsx`, with two differences that matter on
+/// A port of `legacy/mobile/app/player.tsx`, with two differences that matter on
 /// iOS. The scrubber is a real drag gesture rather than tap-to-seek, and it
 /// stops at what has been rendered — seeking into audio that does not exist yet
 /// is not a thing that can be done, so the track shows where the edge is instead

@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The web app's design tokens, as they reached React Native in
-/// `apps/mobile/src/theme/tokens.ts`.
+/// `legacy/mobile/src/theme/tokens.ts`.
 ///
 /// Same names and same values, so a colour changed in
 /// `apps/web/styles/globals.css` has an obvious counterpart in all three apps.

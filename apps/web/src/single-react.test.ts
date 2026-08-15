@@ -34,11 +34,12 @@ test("only one copy of react is installed", async () => {
   const found: string[] = [];
   for await (const line of new Bun.Glob("**/node_modules/react/package.json").scan({
     cwd: repoRoot,
-    // The generated iOS project vendors its own copies and is not on any
-    // resolution path the app uses.
+    // `legacy/` is out of the workspace and off every resolution path the apps
+    // use. The retired Expo project in particular vendors its own copies of
+    // React inside its generated native projects.
     absolute: false,
   })) {
-    if (line.includes("apps/mobile/ios/") || line.includes("apps/mobile/android/")) continue;
+    if (line.includes("legacy/mobile/")) continue;
     found.push(line);
   }
 
