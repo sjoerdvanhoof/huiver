@@ -479,24 +479,28 @@ public actor ChatterboxEngine {
     /// model's own silence token. Text chunks are sized to fit in one window;
     /// the loop is here for the occasional chunk where the model rambles.
     func decodeToAudio(tokens: [Int32], voice: Voice) throws -> [Float] {
+        guard !tokens.isEmpty else { return [] }
         var audio: [Float] = []
-        for start in stride(from: 0, to: tokens.count, by: genTokens) {
-            let window = Array(tokens[start..<min(start + genTokens, tokens.count)])
-            var next = try decodeWindow(window, voice: voice)
-            // Each window is decoded independently, with its own noise, so the
-            // waveform on one side of a join has no relationship to the other:
-            // butt-joining them steps the signal and that step is an audible
-            // click in the middle of a word. Ramping both sides to zero costs a
-            // few milliseconds nobody can hear and removes the step.
-            //
-            // Chunks are sized to fit in one window, so this is for the rare
-            // sentence that cannot be broken and still overruns.
+
+        for step in Self.windowPlan(
+            tokenCount: tokens.count, window: genTokens, runUp: Self.runUpTokens,
+            tail: Self.tailTokens
+        ) {
+            let piece = try decodeWindow(Array(tokens[step.start..<step.end]), voice: voice)
+            let from = (step.keepFrom - step.start) * tokenMelRatio * hop
+            let to = min((step.keepUntil - step.start) * tokenMelRatio * hop, piece.count)
+            guard from < to else { continue }
+            var slice = Array(piece[from..<to])
+
+            // Whatever is left of the discontinuity, taken down to zero on both
+            // sides. Five milliseconds, inaudible as a dip.
             if !audio.isEmpty {
                 rampOut(&audio)
-                rampIn(&next)
+                rampIn(&slice)
             }
-            audio += next
+            audio += slice
         }
+
         fadeIn(&audio)
         // Every chunk ends at zero, whatever happened. The renderer appends a
         // quarter-second of silence to each one, and a chunk whose last sample
@@ -504,6 +508,69 @@ public actor ChatterboxEngine {
         // a chunk cut short by the token budget would do.
         fadeOut(&audio)
         return audio
+    }
+
+    /// Tokens of already-spoken context handed to a window that is not the
+    /// first, and then thrown away. Two and a half seconds.
+    ///
+    /// The mel decoder is not autoregressive: it renders a window of tokens
+    /// against the voice's reference clip and nothing else. A window starting
+    /// cold therefore begins the way an utterance begins — pitch and pace
+    /// reset to the reference baseline — which at a join in the middle of a
+    /// sentence is heard as the reader stopping and starting again. Giving it
+    /// the preceding tokens to run up to the join, and keeping only what comes
+    /// after, means the audio we use was rendered mid-sentence.
+    static let runUpTokens = 64
+
+    /// Tokens dropped from the end of a window that is not the last.
+    ///
+    /// `decodeWindow` appends three silence tokens so a window does not end
+    /// mid-phoneme — but on a *full* window those are pushed back out by
+    /// `prefix(genTokens)`, so its final moments are exactly the clipped word
+    /// the silence was meant to prevent. The next window re-renders this
+    /// stretch with proper run-up, so it is dropped here rather than heard.
+    static let tailTokens = 8
+
+    /// One window's worth of work: which tokens to decode, and which slice of
+    /// the resulting audio to keep.
+    struct WindowStep: Equatable {
+        let start: Int
+        let end: Int
+        /// First token whose audio is kept. Between `start` and this is run-up.
+        let keepFrom: Int
+        let keepUntil: Int
+    }
+
+    /// How to cover `tokenCount` tokens with overlapping windows.
+    ///
+    /// Pure arithmetic, kept apart from Core ML so the awkward part — that the
+    /// kept slices tile the whole run exactly once, in order, with no gap and
+    /// no repeat — can be tested without a model.
+    static func windowPlan(
+        tokenCount: Int, window: Int, runUp: Int, tail: Int
+    ) -> [WindowStep] {
+        // Three silence tokens have to fit alongside the content or the window
+        // ends on a clipped word, so that is the content a window can hold —
+        // not `window` itself.
+        let capacity = window - 3
+        guard tokenCount > capacity else {
+            return [WindowStep(start: 0, end: tokenCount, keepFrom: 0, keepUntil: tokenCount)]
+        }
+
+        var steps: [WindowStep] = []
+        var covered = 0
+        while covered < tokenCount {
+            let start = max(0, covered - runUp)
+            let end = min(start + capacity, tokenCount)
+            let isFinal = end == tokenCount
+            // A non-final window's tail is re-rendered by its successor.
+            let keepUntil = isFinal ? end : max(covered + 1, end - tail)
+            steps.append(
+                WindowStep(start: start, end: end, keepFrom: covered, keepUntil: keepUntil)
+            )
+            covered = keepUntil
+        }
+        return steps
     }
 
     /// Length of the ramp used to hide a join: five milliseconds, short enough

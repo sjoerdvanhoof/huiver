@@ -11,8 +11,14 @@ public struct SamplingOptions: Sendable, Equatable {
     public var topP: Float = 0.95
     public var topK: Int = 1000
     public var repetitionPenalty: Float = 1.2
-    /// Give up on a chunk after this many speech tokens (~40s of audio).
-    public var maxTokens: Int = 1000
+    /// Give up on a chunk after this many speech tokens (~48s of audio at
+    /// 25 Hz).
+    ///
+    /// The engine takes `min` of this and what the KV cache can actually hold,
+    /// so asking for more than the model allows costs nothing — it is a
+    /// backstop against a chunk that never emits its stop token, not a budget
+    /// to ration. Keeping it low was silently truncating long sentences.
+    public var maxTokens: Int = 1200
 
     public init() {}
 }

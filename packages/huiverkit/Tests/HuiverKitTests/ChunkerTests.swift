@@ -136,6 +136,23 @@ struct ChunkBoundaryTests {
         #expect(Chunker.chunk(sentence) == [sentence])
     }
 
+    /// The sentence from "The Five Orange Pips" that v3 cut at a comma,
+    /// stranding "like untamed beasts in a cage" as a chunk of its own with a
+    /// quarter-second of silence in front of it.
+    @Test("a long literary sentence is read in one breath")
+    func keepsAConanDoyleSentenceWhole() {
+        let paragraph = """
+            All day the wind had screamed and the rain had beaten against the \
+            windows, so that even here in the heart of great, hand-made London we \
+            were forced to raise our minds for the instant from the routine of \
+            life and to recognise the presence of those great elemental forces \
+            which shriek at mankind through the bars of his civilisation, like \
+            untamed beasts in a cage.
+            """
+        #expect(paragraph.count > Chunker.defaultMaxChars, "longer than the packing target")
+        #expect(Chunker.chunk(paragraph) == [paragraph], "and still said in one piece")
+    }
+
     /// A sentence too long for the model to say at all still has to break, but
     /// at its own punctuation rather than between two arbitrary words.
     @Test("an enormous sentence breaks at its own punctuation")
@@ -159,31 +176,32 @@ struct ChunkBoundaryTests {
 
     /// The reason the ceiling is what it is.
     ///
-    /// The mel decoder is exported at one fixed window of 768 speech tokens. A
-    /// chunk that needs two windows is decoded twice with different noise and
-    /// the halves are joined at an arbitrary phase — a click in the middle of a
-    /// word. The engine ramps that seam now, but a chunk that never needs a
-    /// second window cannot produce one at all.
-    @Test("no chunk needs a second decoder window")
-    func fitsOneDecoderWindow() {
-        // The decoder pads three tokens of its own, at 25 Hz, and an unhurried
-        // narrator reads about twelve characters a second.
-        let usableTokens = 768 - 3
-        let seconds = Double(usableTokens) / 25
+    /// Generation stops after `SamplingOptions.maxTokens` and silently drops
+    /// the rest of the sentence, so the ceiling has to sit below that even for
+    /// a narrator who reads slowly. This is the only limit that loses words —
+    /// the mel decoder's 768-token window costs a five-millisecond ramp, which
+    /// is why chunks are allowed to exceed it.
+    @Test("no chunk can outrun the generation budget")
+    func staysWithinTheGenerationBudget() {
+        // What the KV cache has left for speech once the voice conditioning
+        // (376) and the text and its BOS are in it. A 500-character chunk is
+        // roughly 125 BPE tokens of English.
+        let budget = min(SamplingOptions().maxTokens, 1697 - 376 - 125 - 1)
+        let seconds = Double(budget) / 25
         let slowestCharactersPerSecond = 12.0
         let safeCharacters = Int(seconds * slowestCharactersPerSecond)
 
         #expect(
             Chunker.hardMaxChars <= safeCharacters,
             """
-            a \(Chunker.hardMaxChars)-character chunk can exceed one \(768)-token \
-            window (\(safeCharacters) characters at \(slowestCharactersPerSecond)/s)
+            a \(Chunker.hardMaxChars)-character chunk can outrun a \(budget)-token \
+            budget (\(safeCharacters) characters at \(slowestCharactersPerSecond)/s), \
+            and the overrun is dropped without a word about it
             """
         )
     }
 
-    /// The ceiling is the model's, not a preference: generation stops after
-    /// 1000 speech tokens and silently truncates the rest.
+    /// The ceiling is the model's, not a preference.
     @Test("no chunk can overrun the model's speech budget")
     func staysWithinTheSpeechBudget() {
         let texts = [

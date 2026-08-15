@@ -23,7 +23,7 @@ public enum Chunker {
     /// whole sentences, and the pause lands where a reader would pause anyway.
     ///
     /// The ceiling above it is not a prosody decision at all — see `ceiling`.
-    public static let defaultMaxChars = 300
+    public static let defaultMaxChars = 350
 
     /// How far a single sentence may overshoot the target rather than be cut.
     ///
@@ -31,23 +31,26 @@ public enum Chunker {
     /// sentence read straight through is right, and the same sentence with a
     /// gap dropped into the middle of it is not.
     ///
-    /// Past it, a sentence has to break — and that ceiling belongs to the mel
-    /// decoder, which is exported at **one fixed window of 768 speech tokens**.
-    /// A chunk that generates more than that is decoded in two passes, each
-    /// with its own noise, and the two waveforms are joined at an arbitrary
-    /// phase: an audible click in the middle of a word. `ChatterboxEngine`
-    /// fades that seam now, but the fade is damage control — the fix is for
-    /// chunks to fit in one window in the first place.
+    /// Past it, a sentence has to break — and the only thing that justifies
+    /// breaking one is the model dropping words otherwise.
     ///
-    /// Working backwards: 768 tokens less the three the decoder pads with is
-    /// 765, at 25 Hz that is 30.6 seconds, and an unhurried narrator reads
-    /// about 12 characters a second. Hence roughly 360, and a 300-character
-    /// target to fill up to. (A chunk this size also stays well inside
-    /// `SamplingOptions.maxTokens`, so it cannot be silently truncated either.)
-    static func ceiling(for max: Int) -> Int { (max * 6) / 5 }
+    /// Generation stops after `SamplingOptions.maxTokens` speech tokens and
+    /// *silently truncates* the rest, so that is the real ceiling: ~1170 tokens
+    /// once the voice conditioning and the text are in the KV cache, 47 seconds
+    /// at 25 Hz, about 560 characters even for an unhurried narrator at twelve
+    /// characters a second. 500 leaves margin on that.
+    ///
+    /// Note what is deliberately *not* a reason to split: the mel decoder's
+    /// fixed 768-token window. Only the vocoding is windowed — the speech
+    /// tokens are produced in one continuous pass, so a chunk spanning two
+    /// windows keeps a single unbroken prosody and costs a five-millisecond
+    /// ramp at the join. Splitting the sentence into two chunks instead would
+    /// restart the prosody *and* insert a quarter-second of silence. Spanning
+    /// windows is the cheaper of the two, so the window does not get a vote.
+    static func ceiling(for max: Int) -> Int { (max * 10) / 7 }
 
-    /// The ceiling at the default size: 360 characters, which fits the mel
-    /// decoder's single window even when read slowly.
+    /// The ceiling at the default size: 500 characters, comfortably inside what
+    /// the model will actually finish saying.
     public static var hardMaxChars: Int { ceiling(for: defaultMaxChars) }
 
     /// Bumped whenever a change here would move chunk boundaries.
@@ -64,8 +67,12 @@ public enum Chunker {
     ///
     /// v3: sized to the mel decoder's single 768-token window. v2 allowed 480
     /// characters, which for a slow voice needs two windows, and the join
-    /// between two independently decoded windows clicks.
-    public static let version = 3
+    /// between two independently decoded windows clicked.
+    ///
+    /// v4: sized to the generation budget instead, which is the only limit that
+    /// loses words. v3 was measuring against the wrong boundary and cut long
+    /// sentences at a comma to respect it.
+    public static let version = 4
 
     /// Break a paragraph after sentence-ending punctuation, keeping the
     /// punctuation and any closing quote with the sentence it belongs to.
