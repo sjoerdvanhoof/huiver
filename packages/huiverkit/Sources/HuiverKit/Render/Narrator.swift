@@ -119,6 +119,27 @@ public final class Narrator {
         var seconds: Double { Double(frames) / Double(WavFile.sampleRate) }
     }
     private var timeline: [Segment] = []
+
+    /// A chunk waiting its turn to be handed to the node.
+    private struct Pending {
+        let url: URL
+        let chapterStart: Double
+        /// Seconds to skip at the front, for a seek landing inside the chunk.
+        let skip: Double
+    }
+    /// Rendered chunks not yet opened or scheduled. Every file handed to the
+    /// node holds an open descriptor until it has played, and a long chapter
+    /// has more chunks than the process has descriptors — handing a fully
+    /// rendered 290-chunk chapter over at once ran out around 256, and the
+    /// chunks past the limit were *silently* dropped from the timeline. So
+    /// chunks queue here and `topUp` feeds the node a bounded window.
+    private var pending: [Pending] = []
+
+    /// How far past the playhead the node is kept fed: five minutes, which is
+    /// ~30 open files at typical chunk lengths — far from the descriptor
+    /// limit, and far more than a ticker hiccup could drain.
+    private static let scheduleAhead = AVAudioFramePosition(WavFile.sampleRate * 300)
+
     private var ticker: Task<Void, Never>?
     /// How many chunks have been put on the player. A resumed render walks the
     /// chapter from the beginning again, re-reporting everything already on
@@ -506,6 +527,7 @@ public final class Narrator {
         ticker?.cancel()
         ticker = nil
         timeline.removeAll()
+        pending.removeAll()
         scheduledChunks = 0
         renderFailure = nil
         if started {
@@ -572,19 +594,8 @@ public final class Narrator {
         let chapterStart = renderedSeconds
         renderedSeconds += progress.seconds
 
-        guard let file = try? AVAudioFile(forReading: progress.url) else { return }
-        let rate = Double(WavFile.sampleRate)
-        nextFrame = Self.startFrame(cursor: nextFrame, playhead: playheadFrame(), rate: rate)
-
-        player.scheduleFile(
-            file,
-            at: AVAudioTime(sampleTime: nextFrame, atRate: rate),
-            completionHandler: nil
-        )
-        timeline.append(
-            Segment(nodeStart: nextFrame, frames: file.length, chapterStart: chapterStart)
-        )
-        nextFrame += file.length
+        pending.append(Pending(url: progress.url, chapterStart: chapterStart, skip: 0))
+        topUp()
 
         // Once everything is rendered the total is known rather than guessed.
         estimatedDuration = renderedChunks >= chunkCount && chunkCount > 0
@@ -592,6 +603,51 @@ public final class Narrator {
             : max(estimatedDuration, renderedSeconds)
         if state == .preparing { state = .speaking }
         applyPendingResume()
+    }
+
+    /// Feed the node from `pending` up to the scheduling window.
+    ///
+    /// Called wherever the queue or the playhead moves: when a chunk lands,
+    /// on every tick, and after a seek rebuilds the queue.
+    private func topUp() {
+        guard started else { return }
+        while !pending.isEmpty, nextFrame < playheadFrame() + Self.scheduleAhead {
+            scheduleNow(pending.removeFirst())
+        }
+    }
+
+    /// Open one chunk and put it on the node's timeline.
+    private func scheduleNow(_ item: Pending) {
+        guard let file = try? AVAudioFile(forReading: item.url) else { return }
+        let rate = Double(WavFile.sampleRate)
+        let offset = AVAudioFramePosition(item.skip * rate)
+        let frames = AVAudioFrameCount(max(0, file.length - offset))
+        guard frames > 0 else { return }
+        nextFrame = Self.startFrame(cursor: nextFrame, playhead: playheadFrame(), rate: rate)
+
+        if offset > 0 {
+            player.scheduleSegment(
+                file,
+                startingFrame: offset,
+                frameCount: frames,
+                at: AVAudioTime(sampleTime: nextFrame, atRate: rate),
+                completionHandler: nil
+            )
+        } else {
+            player.scheduleFile(
+                file,
+                at: AVAudioTime(sampleTime: nextFrame, atRate: rate),
+                completionHandler: nil
+            )
+        }
+        timeline.append(
+            Segment(
+                nodeStart: nextFrame,
+                frames: AVAudioFramePosition(frames),
+                chapterStart: item.chapterStart + item.skip
+            )
+        )
+        nextFrame += AVAudioFramePosition(frames)
     }
 
     /// Jump to the stored position, once there is enough audio to jump to.
@@ -689,6 +745,9 @@ public final class Narrator {
                 // apart even when nobody touched anything.
                 ticks += 1
                 if ticks % 20 == 0 { PlaybackLog.note("tick \(vitals)") }
+                // Keep the node fed as the playhead advances into the
+                // scheduling window — see `topUp`.
+                topUp()
                 if state == .speaking {
                     position = observedPosition()
                     recordPosition()
@@ -768,8 +827,11 @@ public final class Narrator {
     /// the end of the last scheduled chunk constantly, for a fraction of a second
     /// at a time, and acting on that would have the player flapping between states
     /// several times a chapter.
+    ///
+    /// Audio still waiting in `pending` counts as not dry: it exists, the node
+    /// just has not been handed it yet.
     private var hasRunDry: Bool {
-        guard started else { return false }
+        guard started, pending.isEmpty else { return false }
         return playheadFrame() > nextFrame + AVAudioFramePosition(WavFile.sampleRate)
     }
 
@@ -816,24 +878,32 @@ public final class Narrator {
 
         player.stop()
         timeline.removeAll()
+        pending.removeAll()
         nextFrame = 0
 
         var elapsed = 0.0
         var found = false
-        var queue: [(url: URL, chapterStart: Double, skip: Double)] = []
+        var diskChunks = 0
         for url in renderer.rendered(book: book.id, chapter: chapter.id, of: chapter.chunkCount) {
             let length = WavFile.duration(ofFileAt: url) ?? 0
             if !found, elapsed + length > target {
                 found = true
-                queue.append((url, elapsed, target - elapsed))
+                pending.append(Pending(url: url, chapterStart: elapsed, skip: target - elapsed))
             } else if found {
-                queue.append((url, elapsed, 0))
+                pending.append(Pending(url: url, chapterStart: elapsed, skip: 0))
             }
             elapsed += length
+            diskChunks += 1
         }
+        // Everything on disk is on the timeline now, including a chunk the
+        // renderer has written but not yet reported. Without this, that
+        // chunk's report passed the guard in `schedule` and it played twice.
+        scheduledChunks = max(scheduledChunks, diskChunks)
+        renderedChunks = max(renderedChunks, diskChunks)
+        renderedSeconds = max(renderedSeconds, elapsed)
 
         player.play()
-        for item in queue { scheduleSegment(item.url, chapterStart: item.chapterStart, skipping: item.skip) }
+        topUp()
         position = target
         if state == .paused { player.pause() } else { state = .speaking }
         publish()
@@ -861,32 +931,6 @@ public final class Narrator {
               let index = book.chapters.firstIndex(where: { $0.id == chapter.id })
         else { return false }
         return book.chapters.indices.contains(index + delta)
-    }
-
-    /// Schedule part of a chunk, used when seeking lands inside one.
-    private func scheduleSegment(_ url: URL, chapterStart: Double, skipping: Double) {
-        guard let file = try? AVAudioFile(forReading: url) else { return }
-        let rate = Double(WavFile.sampleRate)
-        let offset = AVAudioFramePosition(skipping * rate)
-        let frames = AVAudioFrameCount(max(0, file.length - offset))
-        guard frames > 0 else { return }
-        nextFrame = Self.startFrame(cursor: nextFrame, playhead: playheadFrame(), rate: rate)
-
-        player.scheduleSegment(
-            file,
-            startingFrame: offset,
-            frameCount: frames,
-            at: AVAudioTime(sampleTime: nextFrame, atRate: rate),
-            completionHandler: nil
-        )
-        timeline.append(
-            Segment(
-                nodeStart: nextFrame,
-                frames: AVAudioFramePosition(frames),
-                chapterStart: chapterStart + skipping
-            )
-        )
-        nextFrame += AVAudioFramePosition(frames)
     }
 
     // MARK: - Off screen

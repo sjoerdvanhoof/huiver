@@ -1,3 +1,4 @@
+import Accelerate
 import CoreML
 import Foundation
 
@@ -37,6 +38,7 @@ public actor ChatterboxEngine {
         case textTooLong(Int, Int)
         case badOutput(String)
         case unloadable(String, String)
+        case voiceMismatch(String, Int, Int)
 
         public var errorDescription: String? {
             switch self {
@@ -49,6 +51,8 @@ public actor ChatterboxEngine {
             case .badOutput(let what): "Model produced no \(what)"
             case .unloadable(let model, let why):
                 "Core ML could not load \(model) on any processor: \(why)"
+            case .voiceMismatch(let what, let got, let want):
+                "Voice \(what) is \(got) values; these models want \(want). Re-run: bun run ios:voices"
             }
         }
     }
@@ -57,13 +61,17 @@ public actor ChatterboxEngine {
     /// it does not belong behind the actor.
     public nonisolated let sampleRate = 24000
 
-    /// Replaceable, and briefly absent: see `reload`. Implicitly unwrapped because
-    /// they are nil only between being freed and being loaded again, inside a
-    /// single actor-isolated call, so nothing can observe them empty.
-    private var prefill: MLModel!
-    private var decode: MLModel!
-    private var flow: MLModel!
-    private var vocoder: MLModel!
+    /// Replaceable — see `reload`, which swaps each one for a freshly loaded
+    /// copy. Never nil: the actor suspends inside `reload`, and a `speak`
+    /// queued behind that suspension must find a working model, old or new.
+    private var prefill: MLModel
+    private var decode: MLModel
+    private var flow: MLModel
+    private var vocoder: MLModel
+    /// The decode model's KV cache, kept between chunks rather than allocated
+    /// per chunk (~62 MB a time). Belongs to exactly one `MLModel`, so it is
+    /// dropped when `reload` replaces `decode`.
+    private var decodeState: MLState?
     private let tokenizer: BPETokenizer
     /// Where the models came from, kept so they can be loaded again.
     private let source: Models
@@ -86,6 +94,13 @@ public actor ChatterboxEngine {
     private let silenceToken: Int32
     private let melFrames: Int
     private let hop: Int
+
+    // What the models expect of a voice, read off their input shapes so a
+    // stale or foreign voice file throws `voiceMismatch` instead of trapping
+    // inside a buffer copy.
+    private let speakerEmbeddingSize: Int
+    private let xvectorSize: Int
+    private let melDimension: Int
 
     /// How far along `load` is.
     ///
@@ -118,8 +133,9 @@ public actor ChatterboxEngine {
     ///
     /// Worth surfacing rather than hiding: which processor a model gets is the
     /// single biggest thing determining how fast this app is, Core ML decides it
-    /// silently, and it can differ per model and per device.
-    public nonisolated let placement: [String: String]
+    /// silently, and it can differ per model and per device. Refreshed by
+    /// `reload`, so it tracks the models actually in use.
+    public private(set) var placement: [String: String]
 
     /// Compute units to try, hardest-working first.
     ///
@@ -170,20 +186,48 @@ public actor ChatterboxEngine {
     /// the cache. Everything derived from the models — the metadata, the tokenizer,
     /// the language list — is the same for the same files, so only the models
     /// themselves are swapped.
-    /// Each model is freed before its replacement is loaded, one at a time. Loading
-    /// a second set beside the first needs twice 736 MB of weights, and iOS answers
-    /// that by killing the app — silently, with no crash report, which is a
-    /// miserable thing to debug. Doing them in sequence keeps the high-water mark
-    /// near one set instead of two.
+    ///
+    /// The models are replaced one at a time, each loaded into a local and only
+    /// then assigned. Two things depend on that shape. Loading a whole second
+    /// set beside the first needs twice 736 MB of weights, and iOS answers that
+    /// by killing the app — silently, with no crash report — so the high-water
+    /// mark must stay near one set plus the single model being swapped. And the
+    /// actor suspends at every `await` here; it is reentrant, so a `speak`
+    /// queued by the other consumer runs *during* a reload and must find every
+    /// model present — old or new, never nil. (An earlier version nil-ed each
+    /// field before loading its replacement, which crashed exactly there.)
+    ///
+    /// Narrator and Converter can both ask for a reload on the same foreground
+    /// event; the second caller joins the pass already running rather than
+    /// starting a second one, which would put two full sets in flight.
     public func reload() async throws {
-        prefill = nil
-        (prefill, _) = try await Self.load("T3Prefill", source.prefill, using: Self.ladder)
-        decode = nil
-        (decode, _) = try await Self.load("T3Decode", source.decode, using: Self.ladder)
-        flow = nil
-        (flow, _) = try await Self.load("S3Flow", source.flow, using: Self.ladder)
-        vocoder = nil
-        (vocoder, _) = try await Self.load("S3Vocoder", source.vocoder, using: Self.ladder)
+        if reloadTask == nil {
+            reloadTask = Task {
+                defer { reloadTask = nil }
+                try await performReload()
+            }
+        }
+        guard let task = reloadTask else { return }
+        try await task.value
+    }
+
+    /// A reload in flight, shared by every caller that arrives while it runs.
+    private var reloadTask: Task<Void, Error>?
+
+    private func performReload() async throws {
+        // A throw anywhere here leaves every model loaded — some old, some
+        // new, all working. The caller can simply try again.
+        var label: String
+        (prefill, label) = try await Self.load("T3Prefill", source.prefill, using: Self.ladder)
+        placement["T3Prefill"] = label
+        (decode, label) = try await Self.load("T3Decode", source.decode, using: Self.ladder)
+        placement["T3Decode"] = label
+        // The cached state belongs to the model instance just replaced.
+        decodeState = nil
+        (flow, label) = try await Self.load("S3Flow", source.flow, using: Self.ladder)
+        placement["S3Flow"] = label
+        (vocoder, label) = try await Self.load("S3Vocoder", source.vocoder, using: Self.ladder)
+        placement["S3Vocoder"] = label
     }
 
     private static func loadModels(
@@ -341,6 +385,17 @@ public actor ChatterboxEngine {
         silenceToken = Int32(try meta(flow, "S3Flow", "silenceToken"))
         melFrames = try meta(vocoder, "S3Vocoder", "melFrames")
         hop = try meta(vocoder, "S3Vocoder", "hop")
+
+        func lastDimension(_ model: MLModel, _ modelName: String, _ input: String) throws -> Int {
+            guard let shape = model.modelDescription.inputDescriptionsByName[input]?
+                .multiArrayConstraint?.shape,
+                let last = shape.last
+            else { throw EngineError.missingMetadata(modelName, "\(input) shape") }
+            return last.intValue
+        }
+        speakerEmbeddingSize = try lastDimension(prefill, "T3Prefill", "speaker_emb")
+        xvectorSize = try lastDimension(flow, "S3Flow", "embedding")
+        melDimension = try lastDimension(flow, "S3Flow", "prompt_feat")
     }
 
     /// Speak one chunk of text. Returns mono 24 kHz float samples.
@@ -352,13 +407,64 @@ public actor ChatterboxEngine {
         _ text: String,
         voice: Voice,
         options: SamplingOptions = SamplingOptions(),
+        beginsMidSentence: Bool = false,
+        endsMidSentence: Bool = false,
         cancelled: @Sendable () -> Bool = { false }
     ) throws -> [Float] {
-        let tokens = try generateSpeechTokens(
-            for: text, voice: voice, options: options, cancelled: cancelled
-        )
-        if tokens.isEmpty { return [] }
-        return try decodeToAudio(tokens: tokens, voice: voice)
+        try validate(voice)
+        var audio: [Float] = []
+        let pieces = splitToFit(text)
+        for (index, piece) in pieces.enumerated() {
+            if cancelled() { break }
+            let tokens = try generateSpeechTokens(
+                for: piece,
+                voice: voice,
+                options: options,
+                // The seams an emergency split adds are themselves mid-sentence.
+                beginsMidSentence: beginsMidSentence || index > 0,
+                endsMidSentence: endsMidSentence || index < pieces.count - 1,
+                cancelled: cancelled
+            )
+            if tokens.isEmpty { continue }
+            audio += try decodeToAudio(tokens: tokens, voice: voice)
+        }
+        return audio
+    }
+
+    /// A voice whose tensors do not match the loaded models must fail here,
+    /// as an error naming the mismatch — further in it is a trap inside a
+    /// buffer copy, or worse, a silently wrong shape.
+    private func validate(_ voice: Voice) throws {
+        let wants: [(String, Int, Int)] = [
+            ("speaker embedding", voice.speakerEmbedding.count, speakerEmbeddingSize),
+            ("conditioning tokens", voice.condPromptTokens.count, condPrefixLength - 1),
+            ("prompt tokens", voice.promptTokens.count, promptTokenLength),
+            ("prompt features", voice.promptFeatures.count, promptFeatureLength * melDimension),
+            ("x-vector", voice.xvector.count, xvectorSize),
+        ]
+        for (what, got, want) in wants where got != want {
+            throw EngineError.voiceMismatch(what, got, want)
+        }
+    }
+
+    /// The chunker budgets in characters against an English ~4 chars/token;
+    /// text that tokenizes worse — degenerate ASCII, non-Latin scripts — can
+    /// blow the prefill ceiling anyway. Rather than failing the chunk (which
+    /// used to abort the whole chapter), split it at a word boundary near the
+    /// middle and speak the pieces one after another. Rare enough that the
+    /// prosody reset at the join is acceptable; dropped words would not be.
+    private func splitToFit(_ text: String) -> [String] {
+        // Measured with `PuncNorm`'s default shape; the real call may add a
+        // token or two (a trailing stop, a capitalisation), so a small margin
+        // keeps a piece measured here from being refused there.
+        guard tokenizer.encode(PuncNorm.apply(text)).count > maxTextTokens - 4 else { return [text] }
+        let words = text.split(whereSeparator: \.isWhitespace)
+        // A single unbreakable over-long word is left for `generateSpeechTokens`
+        // to refuse; there is nothing sayable to salvage from it.
+        guard words.count > 1 else { return [text] }
+        let head = words[..<(words.count / 2)].joined(separator: " ")
+        let tail = words[(words.count / 2)...].joined(separator: " ")
+        return splitToFit(head) + splitToFit(tail)
     }
 
     // MARK: - T3, the token loop
@@ -367,15 +473,26 @@ public actor ChatterboxEngine {
         for text: String,
         voice: Voice,
         options: SamplingOptions,
+        beginsMidSentence: Bool = false,
+        endsMidSentence: Bool = false,
         cancelled: @Sendable () -> Bool
     ) throws -> [Int32] {
-        let textTokens = tokenizer.encode(PuncNorm.apply(text)).map(Int32.init)
+        let normalized = PuncNorm.apply(
+            text, beginsMidSentence: beginsMidSentence, endsMidSentence: endsMidSentence
+        )
+        let textTokens = tokenizer.encode(normalized).map(Int32.init)
         guard !textTokens.isEmpty else { return [] }
         guard textTokens.count <= maxTextTokens else {
             throw EngineError.textTooLong(textTokens.count, maxTextTokens)
         }
 
         let prefixLength = condPrefixLength + textTokens.count + 1
+        // What the KV cache has room for. The export sized `maxContext` as
+        // prefix + maxTextTokens + 1 + a 1000-token generation budget
+        // (`MAX_GEN_TOKENS` in tools/export/common.py), so for text shorter
+        // than the ceiling this exceeds that budget by the unused text room.
+        // Deliberate and safe: every position still fits the cache, and the
+        // headroom only matters for a chunk that would otherwise be cut off.
         let budget = min(options.maxTokens, maxContext - prefixLength)
 
         let prefixOut = try prefill.prediction(from: try MLDictionaryFeatureProvider(dictionary: [
@@ -394,38 +511,64 @@ public actor ChatterboxEngine {
               let values = prefixOut.featureValue(for: "v_cache")?.multiArrayValue
         else { throw EngineError.badOutput("prefill output") }
 
-        let state = decode.makeState()
+        // The state is ~62 MB of KV cache, so it is made once and reused for
+        // every chunk. Safe: `seed` rewrites everything up to `prefixLength`,
+        // and the decode model masks every slot above the position it is
+        // given, so a longer previous chunk's leftovers are never read.
+        let state: MLState
+        if let cached = decodeState {
+            state = cached
+        } else {
+            state = decode.makeState()
+            decodeState = state
+        }
         seed(state: state, keys: keys, values: values, length: prefixLength)
 
         var sampler = Sampler(options: options)
         var generated: [Int32] = []
         // The repetition penalty starts against the start-of-speech token, as
         // it does upstream, and switches to the real history after the first.
-        var history: [Int32] = [startSpeechToken]
+        var penalized: Set<Int32> = [startSpeechToken]
 
         let tokenInput = try MLMultiArray(shape: [1, 1], dataType: .int32)
         let positionInput = try MLMultiArray(shape: [1], dataType: .int32)
+        // One feature provider and one output buffer for the whole loop — the
+        // provider reads the arrays above by reference, and the backing spares
+        // Core ML allocating a fresh logits array per token.
+        let stepInput = try MLDictionaryFeatureProvider(dictionary: [
+            "token": tokenInput, "position": positionInput,
+        ])
+        let stepOptions = MLPredictionOptions()
+        stepOptions.outputBackings = [
+            "logits": try MLMultiArray(shape: [1, NSNumber(value: vocabulary)], dataType: .float32),
+        ]
 
-        var current = sample(&sampler, logits, history: history)
+        var current = sample(&sampler, logits, history: penalized)
         for step in 0..<budget {
             if current == stopSpeechToken || cancelled() { break }
             generated.append(current)
-            history = generated
+            if generated.count == 1 { penalized.remove(startSpeechToken) }
+            penalized.insert(current)
 
             tokenInput[0] = NSNumber(value: current)
             positionInput[0] = NSNumber(value: Int32(prefixLength + step))
-            let out = try decode.prediction(
-                from: try MLDictionaryFeatureProvider(dictionary: [
-                    "token": tokenInput, "position": positionInput,
-                ]),
-                using: state
-            )
+            let out = try decode.prediction(from: stepInput, using: state, options: stepOptions)
             guard let next = out.featureValue(for: "logits")?.multiArrayValue else {
                 throw EngineError.badOutput("decode logits")
             }
-            current = sample(&sampler, next, history: history)
+            current = sample(&sampler, next, history: penalized)
         }
         if current != stopSpeechToken, generated.count < budget { generated.append(current) }
+        if current != stopSpeechToken, generated.count >= budget, !cancelled() {
+            // The words past the budget are dropped, and nothing downstream
+            // can tell — the fade-out hides even the click. Rare by
+            // construction (the chunker sizes chunks well inside the budget),
+            // so when it does happen it should at least be in the log.
+            PlaybackLog.note(
+                "t3: hit the \(budget)-token budget mid-sentence; "
+                    + "the tail of a \(textTokens.count)-text-token chunk was dropped"
+            )
+        }
 
         // Control tokens live at and above the start-of-speech id. The mel
         // decoder's embedding table stops below them, so one that slips through
@@ -433,9 +576,10 @@ public actor ChatterboxEngine {
         return generated.filter { $0 < startSpeechToken }
     }
 
-    private func sample(_ sampler: inout Sampler, _ logits: MLMultiArray, history: [Int32]) -> Int32 {
+    private func sample(_ sampler: inout Sampler, _ logits: MLMultiArray, history: Set<Int32>) -> Int32 {
         logits.withUnsafeMutableBufferPointer(ofType: Float.self) { buffer, _ in
-            sampler.next(logits: buffer, history: history)
+            assert(buffer.count == vocabulary, "logits are \(buffer.count) wide, not \(vocabulary)")
+            return sampler.next(logits: buffer, history: history)
         }
     }
 
@@ -447,24 +591,35 @@ public actor ChatterboxEngine {
     /// decode model masks every slot above the position it was given, and every
     /// slot at or below it has been written by then.
     private func seed(state: MLState, keys: MLMultiArray, values: MLMultiArray, length: Int) {
-        let row = length * headDim * 2  // float16
-        let stride = maxContext * headDim * 2
-        let rows = layers * heads
-
         for (name, source) in [("k_cache", keys), ("v_cache", values)] {
-            // Lifted into a plain array first. Holding a pointer into one
-            // MLMultiArray while writing through another trips Swift 6's
-            // concurrency checking, and at ~12 MB once per chunk the copy is
-            // not worth arguing with.
-            let bytes: [UInt8] = source.withUnsafeBytes { Array($0) }
-            state.withMultiArray(for: name) { destination in
-                destination.withUnsafeMutableBytes { raw, _ in
-                    guard let dst = raw.baseAddress else { return }
-                    bytes.withUnsafeBytes { src in
-                        guard let src = src.baseAddress else { return }
+            // Derived from the arrays rather than hardcoded, so an export at a
+            // different precision fails loudly here instead of scrambling the
+            // cache with a wrong stride.
+            let element = source.dataType == .float16 ? 2 : 4
+            let row = length * headDim * element
+            let stride = maxContext * headDim * element
+            let rows = layers * heads
+
+            // The source pointer crosses into the destination's closure in a
+            // plain box: holding it directly there trips Swift 6's
+            // concurrency checking, and the box costs nothing where the old
+            // workaround copied ~9 MB into an array first.
+            struct Span: @unchecked Sendable {
+                let base: UnsafeRawPointer
+            }
+            source.withUnsafeBytes { bytes in
+                guard let base = bytes.baseAddress else { return }
+                let span = Span(base: base)
+                state.withMultiArray(for: name) { destination in
+                    assert(
+                        destination.dataType == source.dataType,
+                        "prefill emits \(source.dataType), the decode cache holds \(destination.dataType)"
+                    )
+                    destination.withUnsafeMutableBytes { raw, _ in
+                        guard let dst = raw.baseAddress else { return }
                         for index in 0..<rows {
                             dst.advanced(by: index * stride)
-                                .copyMemory(from: src.advanced(by: index * row), byteCount: row)
+                                .copyMemory(from: span.base.advanced(by: index * row), byteCount: row)
                         }
                     }
                 }
@@ -490,15 +645,22 @@ public actor ChatterboxEngine {
             let from = (step.keepFrom - step.start) * tokenMelRatio * hop
             let to = min((step.keepUntil - step.start) * tokenMelRatio * hop, piece.count)
             guard from < to else { continue }
-            var slice = Array(piece[from..<to])
 
-            // Whatever is left of the discontinuity, taken down to zero on both
-            // sides. Five milliseconds, inaudible as a dip.
-            if !audio.isEmpty {
-                rampOut(&audio)
-                rampIn(&slice)
+            // The seam is an equal-power crossfade, not a dip: the run-up
+            // means this window also rendered the last few milliseconds the
+            // previous one kept, so the two versions of that same moment are
+            // blended — where ramping each side to zero left a five-
+            // millisecond notch of silence at every window join.
+            let overlap = min(seamRamp, from, audio.count)
+            if overlap > 1 {
+                for i in 0..<overlap {
+                    let t = Float(i) / Float(overlap - 1)
+                    audio[audio.count - overlap + i] =
+                        audio[audio.count - overlap + i] * cosf(.pi / 2 * t)
+                        + piece[from - overlap + i] * sinf(.pi / 2 * t)
+                }
             }
-            audio += slice
+            audio += piece[from..<to]
         }
 
         fadeIn(&audio)
@@ -524,11 +686,12 @@ public actor ChatterboxEngine {
 
     /// Tokens dropped from the end of a window that is not the last.
     ///
-    /// `decodeWindow` appends three silence tokens so a window does not end
-    /// mid-phoneme — but on a *full* window those are pushed back out by
-    /// `prefix(genTokens)`, so its final moments are exactly the clipped word
-    /// the silence was meant to prevent. The next window re-renders this
-    /// stretch with proper run-up, so it is dropped here rather than heard.
+    /// The last tokens before a window edge are rendered against silence
+    /// padding rather than the speech that actually follows them, so their
+    /// audio is subtly wrong even though no words are clipped (`windowPlan`
+    /// reserves room for the three silence tokens). The next window re-renders
+    /// this stretch with proper run-up, so it is dropped here rather than
+    /// heard.
     static let tailTokens = 8
 
     /// One window's worth of work: which tokens to decode, and which slice of
@@ -573,30 +736,18 @@ public actor ChatterboxEngine {
         return steps
     }
 
-    /// Length of the ramp used to hide a join: five milliseconds, short enough
-    /// to be inaudible as a dip and long enough to remove a step.
+    /// Length of the crossfade that hides a window join: five milliseconds,
+    /// long enough to remove a step, short enough that blending two slightly
+    /// different renderings of the same moment cannot smear a phoneme.
     private var seamRamp: Int { sampleRate / 200 }
 
-    private func rampOut(_ audio: inout [Float]) {
-        let ramp = min(seamRamp, audio.count)
-        guard ramp > 1 else { return }
-        for i in 0..<ramp {
-            audio[audio.count - ramp + i] *= Float(ramp - 1 - i) / Float(ramp - 1)
-        }
-    }
-
-    private func rampIn(_ audio: inout [Float]) {
-        let ramp = min(seamRamp, audio.count)
-        guard ramp > 1 else { return }
-        for i in 0..<ramp {
-            audio[i] *= Float(i) / Float(ramp - 1)
-        }
-    }
-
     /// Ramp the last few milliseconds to silence, so the file ends at zero.
+    ///
+    /// Scaled down rather than skipped for a very short chunk — skipping left
+    /// it ending off zero, which clicks against the silence appended after it.
     private func fadeOut(_ audio: inout [Float]) {
-        let ramp = sampleRate / 100
-        guard audio.count > ramp * 2 else { return }
+        let ramp = min(sampleRate / 100, audio.count / 2)
+        guard ramp > 1 else { return }
         for i in 0..<ramp {
             audio[audio.count - ramp + i] *= Float(ramp - 1 - i) / Float(ramp - 1)
         }
@@ -611,7 +762,6 @@ public actor ChatterboxEngine {
         padded += Array(repeating: silenceToken, count: max(0, genTokens - padded.count))
         padded = Array(padded.prefix(genTokens))
 
-        let melDimension = voice.promptFeatures.count / promptFeatureLength
         let melLength = (promptTokenLength + genTokens) * tokenMelRatio
         let melOut = try flow.prediction(from: try MLDictionaryFeatureProvider(dictionary: [
             "prompt_tokens": try array(voice.promptTokens, shape: [1, promptTokenLength]),
@@ -637,9 +787,12 @@ public actor ChatterboxEngine {
 
     /// Chatterbox fades the first 40 ms of every render, to keep the tail of
     /// the reference clip from bleeding into the first word.
+    ///
+    /// Scaled down rather than skipped for a very short chunk, so even a stub
+    /// of audio starts and ends at zero.
     private func fadeIn(_ audio: inout [Float]) {
-        let ramp = sampleRate / 50
-        guard audio.count > ramp * 2 else { return }
+        let ramp = min(sampleRate / 50, audio.count / 2)
+        guard ramp > 1 else { return }
         for i in 0..<ramp { audio[i] = 0 }
         for i in 0..<ramp {
             let t = Float(i) / Float(ramp)
@@ -651,6 +804,7 @@ public actor ChatterboxEngine {
 
     private func array(_ values: [Float], shape: [Int]) throws -> MLMultiArray {
         let out = try MLMultiArray(shape: shape.map(NSNumber.init), dataType: .float32)
+        assert(values.count == out.count, "\(values.count) floats into shape \(shape)")
         out.withUnsafeMutableBufferPointer(ofType: Float.self) { buffer, _ in
             _ = buffer.update(fromContentsOf: values)
         }
@@ -659,6 +813,7 @@ public actor ChatterboxEngine {
 
     private func array(_ values: [Int32], shape: [Int]) throws -> MLMultiArray {
         let out = try MLMultiArray(shape: shape.map(NSNumber.init), dataType: .int32)
+        assert(values.count == out.count, "\(values.count) ints into shape \(shape)")
         out.withUnsafeMutableBufferPointer(ofType: Int32.self) { buffer, _ in
             _ = buffer.update(fromContentsOf: values)
         }
@@ -668,20 +823,45 @@ public actor ChatterboxEngine {
     /// The flow decoder starts from gaussian noise rather than generating it
     /// internally — Core ML has no random number generator, so the seed lives
     /// on this side of the boundary.
+    ///
+    /// Box-Muller over bulk random bits, vectorised with Accelerate: the array
+    /// is ~163k floats per window, and drawing them one `Float.random` at a
+    /// time was measurable against the model itself.
     private func gaussian(shape: [Int]) throws -> MLMultiArray {
         let out = try MLMultiArray(shape: shape.map(NSNumber.init), dataType: .float32)
+        let count = out.count
+        guard count > 0 else { return out }
+        let pairs = (count + 1) / 2
+
+        var bits = [UInt32](repeating: 0, count: pairs * 2)
+        arc4random_buf(&bits, bits.count * MemoryLayout<UInt32>.size)
+
+        // Radii from the first half of the bits, angles from the second. The
+        // +0.5 keeps the uniform strictly inside (0, 1), so the log is finite.
+        var radius = [Float](repeating: 0, count: pairs)
+        var angle = [Float](repeating: 0, count: pairs)
+        for i in 0..<pairs {
+            radius[i] = Float((Double(bits[i]) + 0.5) * 0x1p-32)
+            angle[i] = Float(Double(bits[pairs + i]) * 0x1p-32 * 2 * .pi)
+        }
+        var n = Int32(pairs)
+        vvlogf(&radius, radius, &n)
+        vDSP.multiply(-2, radius, result: &radius)
+        vvsqrtf(&radius, radius, &n)
+        var sines = [Float](repeating: 0, count: pairs)
+        var cosines = [Float](repeating: 0, count: pairs)
+        vvsincosf(&sines, &cosines, angle, &n)
+
         out.withUnsafeMutableBufferPointer(ofType: Float.self) { buffer, _ in
-            var index = 0
-            while index < buffer.count {
-                // Box-Muller: two normals per pair of uniforms.
-                let u1 = Float.random(in: Float.leastNormalMagnitude..<1)
-                let u2 = Float.random(in: 0..<1)
-                let radius = sqrtf(-2 * logf(u1))
-                buffer[index] = radius * cosf(2 * .pi * u2)
-                index += 1
-                if index < buffer.count {
-                    buffer[index] = radius * sinf(2 * .pi * u2)
-                    index += 1
+            // The two normals of a pair land in separate halves rather than
+            // interleaved — they are independent, so placement is free.
+            vDSP.multiply(radius, cosines, result: &cosines)
+            cosines.withUnsafeBufferPointer { _ = buffer.update(fromContentsOf: $0[0..<min(pairs, count)]) }
+            if count > pairs {
+                vDSP.multiply(radius, sines, result: &sines)
+                sines.withUnsafeBufferPointer {
+                    _ = UnsafeMutableBufferPointer(rebasing: buffer[pairs...])
+                        .update(fromContentsOf: $0[0..<(count - pairs)])
                 }
             }
         }

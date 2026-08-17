@@ -12,12 +12,19 @@ struct TokenizerTests {
     /// the repo. Skipping is right: the check is worth having when they are
     /// there and is not worth a 1 MB fixture when they are not.
     static var tokenizer: BPETokenizer? {
-        let models = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Models")
-        return try? BPETokenizer(directory: models)
+        let package = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // HuiverKitTests
+            .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // huiverkit
+        // Where `bun run ios:models` installs them, and an older local layout.
+        for models in [
+            package.deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("apps/ios/Models"),
+            package.appendingPathComponent("Models"),
+        ] {
+            if let tokenizer = try? BPETokenizer(directory: models) { return tokenizer }
+        }
+        return nil
     }
 
     static let cases: [(String, [Int])] = [
@@ -55,6 +62,40 @@ struct TokenizerTests {
         }
     }
 
+    /// The chunker budgets in characters — `hardMaxChars` is 500, sized on the
+    /// assumption that English runs about four characters per BPE token. The
+    /// prefill model refuses anything over 320 text tokens, so the assumption
+    /// has to hold with room to spare, and this checks it against the real
+    /// tokenizer over deliberately awkward prose. (Text that still breaches it
+    /// — non-Latin scripts, base64 — is re-split by the engine at synthesis
+    /// time rather than trusted to this margin.)
+    @Test("a full-size English chunk fits the prefill ceiling")
+    func chunkFitsPrefill() throws {
+        guard let tokenizer = Self.tokenizer else {
+            withKnownIssue("Models/ not installed; run scripts/install-models.sh") {
+                Issue.record("skipped")
+            }
+            return
+        }
+        let awkward = [
+            // Quoted, dashed, numbered dialogue tokenizes worse than plain prose.
+            String(repeating: #""Hm?!" — 12,5% of £3.99, per Dr. Quixote's 'zyzzyva' — "no". "#, count: 12),
+            // Ordinary literary prose at full chunk size.
+            String(repeating: "The harbourmaster, who had by then given up pretending to keep the register, said so. ", count: 8),
+            // Rare vocabulary, which BPE breaks into many pieces.
+            String(repeating: "Sesquipedalian obfuscation notwithstanding, borborygmus quixotically overwhelmed perspicacity. ", count: 7),
+        ]
+        for text in awkward {
+            for chunk in Chunker.chunk(text) {
+                let tokens = tokenizer.encode(PuncNorm.apply(chunk))
+                #expect(
+                    tokens.count <= 320,
+                    "a \(chunk.count)-character chunk is \(tokens.count) tokens, over the prefill's 320"
+                )
+            }
+        }
+    }
+
     /// GPT-2's byte alphabet has to cover all 256 values and collide with none
     /// of them, or some byte sequences would encode to the same token.
     @Test("byte alphabet is a bijection")
@@ -81,5 +122,35 @@ struct PuncNormTests {
         // Already ends in punctuation, so nothing is added.
         #expect(PuncNorm.apply("Done!") == "Done!")
         #expect(PuncNorm.apply("") == "You need to add some text for me to talk.")
+    }
+
+    /// Fragments of a sentence too long to say in one go must not be shaped
+    /// as whole sentences: no capital cueing sentence-opening prosody, and a
+    /// comma rather than a full stop when the sentence carries on.
+    @Test("mid-sentence fragments keep their shape")
+    func midSentenceFragments() {
+        #expect(
+            PuncNorm.apply("like untamed beasts in a cage", beginsMidSentence: true)
+                == "like untamed beasts in a cage."
+        )
+        #expect(
+            PuncNorm.apply("All day the wind had screamed", endsMidSentence: true)
+                == "All day the wind had screamed,"
+        )
+        #expect(
+            PuncNorm.apply("and to recognise those forces", beginsMidSentence: true, endsMidSentence: true)
+                == "and to recognise those forces,"
+        )
+        // The one clause mark the replacements leave alone becomes the comma
+        // it prosodically is, rather than picking up a stray full stop.
+        #expect(
+            PuncNorm.apply("the register was kept;", endsMidSentence: true)
+                == "The register was kept,"
+        )
+        // A fragment already ending on an ender is left alone.
+        #expect(
+            PuncNorm.apply("it screamed,", beginsMidSentence: true, endsMidSentence: true)
+                == "it screamed,"
+        )
     }
 }

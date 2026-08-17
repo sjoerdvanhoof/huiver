@@ -1,3 +1,4 @@
+import Accelerate
 import Foundation
 
 /// How adventurous the model is allowed to be.
@@ -30,9 +31,18 @@ public struct SamplingOptions: Sendable, Equatable {
 /// is unusual — most implementations penalise before filtering — but matching
 /// upstream matters more than being conventional, because a different order
 /// gives a different voice.
+///
+/// This runs ~1200 times per chunk over a 6563-wide vocabulary, so it keeps
+/// its scratch buffers between calls and sorts once: a single descending index
+/// sort serves both top-k (the k-th value is at rank k−1) and top-p (the
+/// nucleus walk), where an earlier version sorted a fresh copy for each.
 public struct Sampler {
     public var options: SamplingOptions
     private var generator: SystemRandomNumberGenerator
+    /// Token indices, descending by logit. Reused between calls.
+    private var order: [vDSP_Length] = []
+    /// Probabilities by rank (for top-p), then by token (for the draw).
+    private var weights: [Float] = []
 
     public init(options: SamplingOptions) {
         self.options = options
@@ -42,22 +52,44 @@ public struct Sampler {
     /// - Parameters:
     ///   - logits: modified in place; the caller owns the buffer.
     ///   - history: tokens generated so far, for the repetition penalty.
-    public mutating func next(logits: UnsafeMutableBufferPointer<Float>, history: [Int32]) -> Int32 {
+    public mutating func next(
+        logits: UnsafeMutableBufferPointer<Float>, history: Set<Int32>
+    ) -> Int32 {
+        filter(logits: logits, history: history)
+        return multinomial(logits)
+    }
+
+    /// The deterministic half: everything before the draw. Split out so the
+    /// tests can compare it against a reference implementation exactly.
+    mutating func filter(logits: UnsafeMutableBufferPointer<Float>, history: Set<Int32>) {
         let count = logits.count
 
         if options.temperature > 0, options.temperature != 1 {
             for i in 0..<count { logits[i] /= options.temperature }
         }
 
-        if options.topK > 0, options.topK < count {
-            let cutoff = kthLargest(logits, k: options.topK)
-            for i in 0..<count where logits[i] < cutoff { logits[i] = -.infinity }
+        let wantsTopK = options.topK > 0 && options.topK < count
+        let wantsTopP = options.topP < 1
+        if wantsTopK || wantsTopP {
+            if order.count != count {
+                order = Array(0..<vDSP_Length(count))
+            } else {
+                for i in 0..<count { order[i] = vDSP_Length(i) }
+            }
+            vDSP_vsorti(logits.baseAddress!, &order, nil, vDSP_Length(count), -1)
+
+            if wantsTopK {
+                // Everything *below* the k-th value goes; ties with it stay,
+                // which is what HuggingFace's TopKLogitsWarper keeps too.
+                let cutoff = logits[Int(order[options.topK - 1])]
+                for i in 0..<count where logits[i] < cutoff { logits[i] = -.infinity }
+            }
+
+            if wantsTopP { applyTopP(logits) }
         }
 
-        if options.topP < 1 { applyTopP(logits) }
-
         if options.repetitionPenalty != 1 {
-            for token in Set(history) {
+            for token in history {
                 let i = Int(token)
                 guard i >= 0, i < count, logits[i].isFinite else { continue }
                 logits[i] = logits[i] < 0
@@ -65,30 +97,21 @@ public struct Sampler {
                     : logits[i] / options.repetitionPenalty
             }
         }
-
-        return multinomial(logits)
-    }
-
-    /// The k-th largest value, by selection rather than a full sort: the
-    /// vocabulary is 6563 wide and this runs once per token.
-    private func kthLargest(_ logits: UnsafeMutableBufferPointer<Float>, k: Int) -> Float {
-        var values = Array(logits)
-        values.sort(by: >)
-        return values[k - 1]
     }
 
     /// Keep the smallest set of tokens whose probabilities sum past `topP`.
-    private func applyTopP(_ logits: UnsafeMutableBufferPointer<Float>) {
+    /// `order` is already sorted descending when this runs.
+    private mutating func applyTopP(_ logits: UnsafeMutableBufferPointer<Float>) {
         let count = logits.count
-        var order = Array(0..<count)
-        order.sort { logits[$0] > logits[$1] }
+        let maximum = logits[Int(order[0])]
+        guard maximum.isFinite else { return }
 
-        let maximum = logits[order[0]]
+        if weights.count != count { weights = [Float](repeating: 0, count: count) }
         var total: Float = 0
-        var probabilities = [Float](repeating: 0, count: count)
-        for (rank, index) in order.enumerated() {
-            let p = logits[index].isFinite ? expf(logits[index] - maximum) : 0
-            probabilities[rank] = p
+        for rank in 0..<count {
+            let value = logits[Int(order[rank])]
+            let p = value.isFinite ? expf(value - maximum) : 0
+            weights[rank] = p
             total += p
         }
         guard total > 0 else { return }
@@ -99,10 +122,10 @@ public struct Sampler {
         // sum instead — the easy mistake — truncates the nucleus by one token
         // on every step.
         var prefix: Float = 0
-        for (rank, index) in order.enumerated() {
+        for rank in 0..<count {
             // Never the first token, so there is always something to sample.
-            if rank > 0, prefix >= options.topP { logits[index] = -.infinity }
-            prefix += probabilities[rank] / total
+            if rank > 0, prefix >= options.topP { logits[Int(order[rank])] = -.infinity }
+            prefix += weights[rank] / total
         }
     }
 
@@ -112,8 +135,8 @@ public struct Sampler {
         for i in 0..<count where logits[i] > maximum { maximum = logits[i] }
         guard maximum.isFinite else { return 0 }
 
+        if weights.count != count { weights = [Float](repeating: 0, count: count) }
         var total: Float = 0
-        var weights = [Float](repeating: 0, count: count)
         for i in 0..<count {
             let p = logits[i].isFinite ? expf(logits[i] - maximum) : 0
             weights[i] = p

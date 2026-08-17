@@ -118,7 +118,8 @@ final class AppModel {
                 stopAtChapterEnd: { [weak narrator] stop in
                     narrator?.stopAtChapterEnd = stop
                     if !stop { narrator?.cancelFade() }
-                }
+                },
+                cancelFade: { [weak narrator] in narrator?.cancelFade() }
             )
             let converter = Converter(engine: engine, library: library!)
             converter.voices = voices
@@ -131,7 +132,7 @@ final class AppModel {
             if let voice = selectedVoice {
                 converter.restore(voice: voice, options: options)
             }
-            placement = engine.placement
+            placement = await engine.placement
             engineLanguages = engine.languages
             UserDefaults.standard.set(true, forKey: "preparedOnce")
         } catch {
@@ -216,6 +217,9 @@ final class AppModel {
         guard let library, let converter, let voice = selectedVoice else { return }
         if narrator?.chapterId == chapter.id { narrator?.stop() }
         converter.cancel(chapter.id)
+        // Let the cancelled pass wind down before deleting its directory —
+        // discarding immediately raced the chunk still being written.
+        await converter.waitUntilIdle()
         try? await library.discardAudio(chapterId: chapter.id, bookId: book.id)
 
         // Re-chunk against the current chunker now the audio that pinned the

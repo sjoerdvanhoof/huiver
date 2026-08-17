@@ -45,6 +45,7 @@ public final class SleepTimer {
     /// rather than held, so this type stays testable without an audio engine.
     private var onFade: ((Double) -> Void)?
     private var onStopAtChapterEnd: ((Bool) -> Void)?
+    private var onCancelFade: (() -> Void)?
     private var countdown: Task<Void, Never>?
 
     public init() {}
@@ -52,10 +53,12 @@ public final class SleepTimer {
     /// Wire the timer to a narrator. Called once, after both exist.
     public func attach(
         fade: @escaping (Double) -> Void,
-        stopAtChapterEnd: @escaping (Bool) -> Void
+        stopAtChapterEnd: @escaping (Bool) -> Void,
+        cancelFade: @escaping () -> Void = {}
     ) {
         onFade = fade
         onStopAtChapterEnd = stopAtChapterEnd
+        onCancelFade = cancelFade
     }
 
     public func start(_ mode: Mode) {
@@ -91,6 +94,10 @@ public final class SleepTimer {
     public func cancel() {
         countdown?.cancel()
         countdown = nil
+        // Cancelling in the final seconds must also abandon the volume ramp
+        // already running — without this the fade completed and paused anyway,
+        // right after the listener asked it not to.
+        if case .minutes = mode { onCancelFade?() }
         if mode == .endOfChapter { onStopAtChapterEnd?(false) }
         mode = nil
         remaining = nil

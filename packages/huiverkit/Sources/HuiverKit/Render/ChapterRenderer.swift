@@ -49,16 +49,20 @@ public actor ChapterRenderer {
         AsyncThrowingStream { continuation in
             Task {
                 do {
-                    let chunks = Chunker.chunkWithSentenceLead(chapter.text)
+                    let chunks = Chunker.chunksWithSentenceLead(chapter.text)
                     let directory = library.audioDirectory(book: book.id, chapter: chapter.id)
 
                     // Audio left over from a different chunker cannot be
                     // continued: `00007.wav` says something else under the new
                     // boundaries, so carrying on from it would repeat one
-                    // stretch of the chapter and skip another. Same reasoning
-                    // as a change of voice, and the same remedy.
+                    // stretch of the chapter and skip another. Audio in a
+                    // different voice cannot be continued either — half a
+                    // chapter each from two narrators is worse than
+                    // re-rendering — and the check has to live here, where
+                    // every render path passes: `Narrator.play` compared
+                    // voices itself, but the converter queue did not.
                     if let existing = ChunkManifest.read(from: directory),
-                       existing.chunkerVersion != Chunker.version {
+                       existing.chunkerVersion != Chunker.version || existing.voice != voice.id {
                         try await library.discardAudio(chapterId: chapter.id, bookId: book.id)
                     }
 
@@ -70,15 +74,20 @@ public actor ChapterRenderer {
                     // but only by a build that chunks the same way, and read-
                     // along would then silently highlight the wrong sentence
                     // for every chapter rendered before a chunker change.
-                    ChunkManifest(voice: voice.id, texts: chunks).write(to: directory)
+                    ChunkManifest(voice: voice.id, texts: chunks.map(\.text)).write(to: directory)
 
-                    for (index, text) in chunks.enumerated() {
+                    for (index, chunk) in chunks.enumerated() {
                         if cancelled() { break }
                         let url = library.chunkURL(book: book.id, chapter: chapter.id, index: index)
 
                         if !FileManager.default.fileExists(atPath: url.path) {
                             let samples = try await engine.speak(
-                                text, voice: voice, options: options, cancelled: cancelled
+                                chunk.text,
+                                voice: voice,
+                                options: options,
+                                beginsMidSentence: chunk.beginsMidSentence,
+                                endsMidSentence: chunk.endsMidSentence,
+                                cancelled: cancelled
                             )
                             if cancelled() { break }
                             // A quarter-second of silence between chunks, the

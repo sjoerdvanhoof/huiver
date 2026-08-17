@@ -95,6 +95,11 @@ public struct ChunkMap: Sendable, Equatable {
         // and this runs four times a second. Binary search here would be
         // cleverness with nothing to buy.
         for chunk in chunks where chunk.start <= position {
+            // Only rendered chunks can be *at* a position. The unrendered tail
+            // all shares the rendered edge as its start, and letting it win
+            // snapped the highlight to the last sentence of the chapter every
+            // time playback caught up with synthesis.
+            guard chunk.isRendered else { break }
             best = chunk.index
         }
         return best ?? chunks.first?.index

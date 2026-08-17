@@ -57,6 +57,18 @@ struct ChunkMapTests {
         #expect(map.index(at: 2.25) == 1)
     }
 
+    /// When playback catches the render edge, every unrendered chunk shares
+    /// that edge as its start. The highlight must stay on the last *rendered*
+    /// chunk — it used to snap to the last sentence of the chapter.
+    @Test("the highlight never runs ahead of the rendered edge")
+    func staysAtTheRenderedEdge() {
+        let map = makeMap([10, 10, 0, 0, 0])
+        #expect(map.index(at: 20) == 1, "at the edge, the last rendered chunk holds")
+        #expect(map.index(at: 500) == 1)
+        // A chapter with nothing rendered highlights its opening sentence.
+        #expect(makeMap([0, 0, 0]).index(at: 0) == 0)
+    }
+
     // MARK: - Loading from disk
 
     func makeLibraryBook() async throws -> (Library, Book) {

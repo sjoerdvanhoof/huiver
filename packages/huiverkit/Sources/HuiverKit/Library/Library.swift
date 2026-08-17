@@ -224,7 +224,13 @@ public actor Library {
               let chapterIndex = books[bookIndex].chapters.firstIndex(where: { $0.id == chapter.id })
         else { return }
         books[bookIndex].chapters[chapterIndex] = chapter
-        try save()
+        // Debounced, not immediate: the renderer updates its chapter once per
+        // chunk, and the index — which carries the full text of every chapter
+        // of every book — was being re-encoded and atomically rewritten whole
+        // every few seconds for an entire conversion. Losing the trailing
+        // writes to a crash costs nothing; the WAVs on disk are the real
+        // progress, and the row catches up at the next update.
+        saveSoon()
     }
 
     /// Record — or clear — why a chapter last failed to render.
@@ -286,6 +292,20 @@ public actor Library {
 
     private func save() throws {
         try Self.write(books, to: indexURL)
+    }
+
+    /// A save already on its way, so a burst of updates writes once.
+    private var saveTask: Task<Void, Never>?
+
+    private func saveSoon() {
+        guard saveTask == nil else { return }
+        saveTask = Task {
+            // Cancellation is "write now": the sleep ends early and the save
+            // below still runs.
+            try? await Task.sleep(for: .seconds(5))
+            saveTask = nil
+            try? save()
+        }
     }
 
     static func write(_ books: [Book], to url: URL) throws {

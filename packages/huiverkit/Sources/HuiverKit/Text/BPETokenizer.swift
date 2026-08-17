@@ -54,11 +54,20 @@ public struct BPETokenizer: Sendable {
         let extra = (try? JSONSerialization.jsonObject(with: read("added_tokens.json"))) as? [String: Int]
 
         var ranks: [Pair: Int] = [:]
-        // The first line is a `#version:` comment.
-        for (index, line) in merges.split(separator: "\n").dropFirst().enumerated() {
+        var rank = 0
+        // Split on any newline, so a merges.txt saved with CRLF endings does
+        // not leave a `\r` on every right-hand symbol — that made *no* merge
+        // ever match, and every byte became its own token, silently.
+        for line in merges.split(whereSeparator: \.isNewline) {
+            // The first line is normally a `#version:` comment, but only skip
+            // what actually is one — unconditionally dropping the first line
+            // would discard the highest-priority merge from a file without it.
+            // (Only the literal header: real merges can begin with `#`.)
+            if line.hasPrefix("#version") { continue }
             let parts = line.split(separator: " ")
             guard parts.count == 2 else { continue }
-            ranks[Pair(left: String(parts[0]), right: String(parts[1]))] = index
+            ranks[Pair(left: String(parts[0]), right: String(parts[1]))] = rank
+            rank += 1
         }
 
         self.encoder = vocab
@@ -66,6 +75,19 @@ public struct BPETokenizer: Sendable {
         // Longest first, so `[clear throat]` is not matched as `[c`...
         self.added = (extra ?? [:]).sorted { $0.key.count > $1.key.count }.map { ($0.key, $0.value) }
         self.byteToUnicode = Self.byteEncoder()
+
+        // A tokenizer that loads but cannot tokenize is worse than one that
+        // fails here: `encodeWord` drops symbols the vocabulary lacks, so a
+        // skewed vocab/merges pair deletes words from the audio with no
+        // diagnostic anywhere. Every byte symbol and every merge product must
+        // be encodable, and there must be merges at all.
+        guard !ranks.isEmpty else { throw LoadError.malformed("merges.txt (no merges)") }
+        for character in byteToUnicode.values where vocab[String(character)] == nil {
+            throw LoadError.malformed("vocab.json (missing byte symbol \(character))")
+        }
+        for pair in ranks.keys where vocab[pair.left + pair.right] == nil {
+            throw LoadError.malformed("merges.txt (merge \(pair.left)+\(pair.right) not in vocab.json)")
+        }
     }
 
     public var count: Int { encoder.count + added.count }

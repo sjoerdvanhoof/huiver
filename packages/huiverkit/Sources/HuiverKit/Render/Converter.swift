@@ -180,75 +180,107 @@ public final class Converter {
         work?.cancel()
     }
 
+    /// Bumped whenever a new pass is started, so a superseded pass cannot
+    /// clear `work` out from under its replacement.
+    private var generation = 0
+
     private func start() {
-        guard work == nil, !queue.isEmpty, voice != nil else { return }
-        stopping.isSet = false
+        guard !queue.isEmpty, voice != nil else { return }
+        // A pass that is running and has not been told to stop will pick the
+        // new queue entries up on its own.
+        if work != nil, !stopping.isSet { return }
 
+        generation += 1
+        let mine = generation
+        // A pass told to stop takes a moment to wind down. The old guard
+        // (`work == nil`) just returned here, which stranded the queue with
+        // nothing running — re-render hit it every time. Chain behind the old
+        // pass instead.
+        let predecessor = work
         work = Task { [weak self] in
-            guard let self else { return }
-            if modelsNeedReloading {
-                // A Core ML model that has failed once fails for good, and the
-                // most common way to fail is for the app to lose the GPU by
-                // leaving the screen mid-conversion. Without this, every attempt
-                // for the rest of the session fails exactly as the first did.
-                // See `ChatterboxEngine.reload`.
-                modelsNeedReloading = false
-                try? await engine.reload()
+            await predecessor?.value
+            guard let self, self.generation == mine else { return }
+            self.stopping.isSet = false
+            await self.run()
+            if self.generation == mine {
+                self.work = nil
+                self.endAssertion()
             }
-            while let job = queue.first, !stopping.isSet {
-                guard let book = await library.book(job.bookId),
-                      let chapter = book.chapters.first(where: { $0.id == job.chapterId }),
-                      let voice = voice(for: job)
-                else {
-                    queue.removeFirst()
-                    continue
+        }
+    }
+
+    private func run() async {
+        if modelsNeedReloading {
+            // A Core ML model that has failed once fails for good, and the
+            // most common way to fail is for the app to lose the GPU by
+            // leaving the screen mid-conversion. Without this, every attempt
+            // for the rest of the session fails exactly as the first did.
+            // See `ChatterboxEngine.reload`.
+            modelsNeedReloading = false
+            try? await engine.reload()
+        }
+        while let job = queue.first, !stopping.isSet {
+            guard let book = await library.book(job.bookId),
+                  let chapter = book.chapters.first(where: { $0.id == job.chapterId }),
+                  let voice = voice(for: job)
+            else {
+                queue.removeFirst()
+                continue
+            }
+
+            active = job
+            renderedChunks = 0
+            chunkCount = chapter.chunkCount
+            // Per job, not per pass: left standing it turned `removeFirst()`
+            // below into "drop every later interrupted job too".
+            failure = nil
+
+            do {
+                let stream = await renderer.render(
+                    book: book,
+                    chapter: chapter,
+                    voice: voice,
+                    options: options,
+                    cancelled: { [flag = stopping] in flag.isSet }
+                )
+                for try await progress in stream {
+                    renderedChunks = progress.chunkIndex + 1
+                    chunkCount = progress.chunkCount
+                    didChange?()
                 }
-
-                active = job
-                renderedChunks = 0
-                chunkCount = chapter.chunkCount
-
-                do {
-                    let stream = await renderer.render(
-                        book: book,
-                        chapter: chapter,
-                        voice: voice,
-                        options: options,
-                        cancelled: { [flag = stopping] in flag.isSet }
-                    )
-                    for try await progress in stream {
-                        renderedChunks = progress.chunkIndex + 1
-                        chunkCount = progress.chunkCount
-                        didChange?()
-                    }
-                } catch is CancellationError {
-                    // Stopping is ordinary, and leaves a usable prefix.
-                } catch {
-                    failure = error.localizedDescription
+            } catch is CancellationError {
+                // Stopping is ordinary, and leaves a usable prefix.
+            } catch {
+                failure = error.localizedDescription
+                switch error {
+                case ChatterboxEngine.EngineError.textTooLong,
+                     ChatterboxEngine.EngineError.voiceMismatch:
+                    // A text or voice problem; the models are fine, and
+                    // reloading them would only make the next job slower.
+                    break
+                default:
                     modelsNeedReloading = true
-                    // On the chapter as well as on the converter: the banner
-                    // goes away, and a chapter that failed overnight should
-                    // still say so in the morning.
-                    try? await library.setRenderError(
-                        error.localizedDescription, chapterId: job.chapterId, bookId: job.bookId
-                    )
                 }
-                // The job stays at the head of the queue until the chapter is
-                // actually finished. Removing it when work *started* — which is
-                // what the old `removeFirst()` did — loses it the moment iOS
-                // suspends the app mid-chapter, so nothing resumes and the
-                // button has to be pressed again.
-                let done = await library.book(job.bookId)?
-                    .chapters.first { $0.id == job.chapterId }?.isComplete ?? false
-                if done || failure != nil { queue.removeFirst() }
-
-                active = nil
-                persist()
-                didChange?()
-                if !done { break }
+                // On the chapter as well as on the converter: the banner
+                // goes away, and a chapter that failed overnight should
+                // still say so in the morning.
+                try? await library.setRenderError(
+                    error.localizedDescription, chapterId: job.chapterId, bookId: job.bookId
+                )
             }
-            work = nil
-            endAssertion()
+            // The job stays at the head of the queue until the chapter is
+            // actually finished. Removing it when work *started* — which is
+            // what the old `removeFirst()` did — loses it the moment iOS
+            // suspends the app mid-chapter, so nothing resumes and the
+            // button has to be pressed again.
+            let done = await library.book(job.bookId)?
+                .chapters.first { $0.id == job.chapterId }?.isComplete ?? false
+            if done || failure != nil { queue.removeFirst() }
+
+            active = nil
+            persist()
+            didChange?()
+            if !done { break }
         }
     }
 

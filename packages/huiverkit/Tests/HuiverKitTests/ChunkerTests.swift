@@ -63,15 +63,106 @@ struct ChunkerTests {
 
     @Test("leads with a single sentence for a fast first chunk")
     func sentenceLead() {
-        let text = "First one. " + String(repeating: "more words here. ", count: 30)
+        let first = "The first sentence is long enough to lead."
+        let text = "\(first) " + String(repeating: "more words here. ", count: 30)
         let chunks = Chunker.chunkWithSentenceLead(text, max: 260)
-        #expect(chunks[0] == "First one.")
+        #expect(chunks[0] == first)
         #expect(chunks.count > 2)
+    }
+
+    /// A lead below `minimumLead` is an audible stub — "Mr." or "1." alone,
+    /// then a quarter-second of silence — so the fast start is skipped.
+    @Test("refuses a stub as the fast first chunk")
+    func noTinyLead() {
+        let text = "1. Introduction to the whole business of the harbour. "
+            + String(repeating: "more words here. ", count: 30)
+        let chunks = Chunker.chunkWithSentenceLead(text, max: 260)
+        #expect(chunks[0].count >= Chunker.minimumLead)
     }
 
     @Test("drops empty input")
     func empty() {
         #expect(Chunker.chunk("   \n\n  ", max: 420).isEmpty)
+    }
+}
+
+/// v5: a full stop is only a sentence boundary when it is one.
+///
+/// v4 split at every terminator, which *invented* boundaries inside "3.14",
+/// "U.S.A." and a literal "..." — and because sentences are rejoined with a
+/// single space, the text itself was corrupted: "3. 14" is read as "three.
+/// fourteen". The round-trip tests above never saw it, because they compare
+/// with whitespace stripped; these compare exactly.
+struct SentenceBoundaryTests {
+    @Test("a literal ellipsis is one boundary, not three")
+    func literalEllipsis() {
+        #expect(Chunker.sentences(in: "Wait... then he left.") == ["Wait...", "then he left."])
+    }
+
+    @Test("interrobangs stay together")
+    func interrobang() {
+        #expect(Chunker.sentences(in: "What?! Surely not.") == ["What?!", "Surely not."])
+        #expect(Chunker.sentences(in: "No!? Very well.") == ["No!?", "Very well."])
+    }
+
+    @Test("a decimal point is not a boundary")
+    func decimals() {
+        #expect(Chunker.sentences(in: "Pi is 3.14 or so. Roughly.")
+            == ["Pi is 3.14 or so.", "Roughly."])
+        #expect(Chunker.sentences(in: "It cost $3.99 at the shop. A bargain.")
+            == ["It cost $3.99 at the shop.", "A bargain."])
+    }
+
+    @Test("abbreviations and initials are not boundaries")
+    func abbreviations() {
+        #expect(Chunker.sentences(in: "Mr. Sherlock Holmes was late. As usual.")
+            == ["Mr. Sherlock Holmes was late.", "As usual."])
+        #expect(Chunker.sentences(in: "The U.S.A. is far away. Very far.")
+            == ["The U.S.A. is far away.", "Very far."])
+        #expect(Chunker.sentences(in: "J. K. Rowling wrote it. Apparently.")
+            == ["J. K. Rowling wrote it.", "Apparently."])
+        #expect(Chunker.sentences(in: "Compare, e.g. the harbour. Or not.")
+            == ["Compare, e.g. the harbour.", "Or not."])
+    }
+
+    /// The corruption v4 caused: rejoined chunks must equal the flattened
+    /// original *exactly*, whitespace included.
+    @Test("chunking never adds or moves whitespace")
+    func exactRoundTrip() {
+        let texts = [
+            "Wait... then he left. " + String(repeating: "The tide was low that day. ", count: 20),
+            "Pi is 3.14, or 3.14159 if pressed. " + String(repeating: "More on that later. ", count: 20),
+            "Mr. Holmes said U.S.A. twice. " + String(repeating: "Nobody counted. ", count: 25),
+            "What?! " + String(repeating: "The gulls went about their work. ", count: 15),
+        ]
+        for text in texts {
+            let rejoined = Chunker.chunk(text).joined(separator: " ")
+            #expect(rejoined == Chunker.flatten(text), "whitespace mutated for \(text.prefix(30))…")
+        }
+    }
+
+    /// Fragments of a split sentence carry the flags `PuncNorm` shapes them by.
+    @Test("split-sentence pieces are marked as mid-sentence")
+    func midSentenceFlags() {
+        let sentence = (1...14)
+            .map { "clause number \($0) running on with a good many words in it" }
+            .joined(separator: ", ") + "."
+        let chunks = Chunker.chunks(sentence)
+        #expect(chunks.count > 1)
+        #expect(!chunks[0].beginsMidSentence, "the first piece starts the sentence")
+        #expect(chunks[0].endsMidSentence, "and hands it on")
+        for chunk in chunks.dropFirst() {
+            #expect(chunk.beginsMidSentence, "later pieces continue the sentence")
+        }
+        #expect(!chunks.last!.endsMidSentence, "the last piece finishes it")
+    }
+
+    @Test("whole sentences carry no mid-sentence flags")
+    func wholeSentenceFlags() {
+        for chunk in Chunker.chunks("One thing. Another thing entirely, but short.") {
+            #expect(!chunk.beginsMidSentence)
+            #expect(!chunk.endsMidSentence)
+        }
     }
 }
 

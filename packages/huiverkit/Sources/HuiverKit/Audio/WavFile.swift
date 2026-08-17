@@ -37,6 +37,10 @@ public enum WavFile {
 
         var pcm = [Int16](repeating: 0, count: samples.count)
         for (index, sample) in samples.enumerated() {
+            // A NaN out of the model must become silence: Swift's `min`/`max`
+            // pass NaN through, so unguarded it resolves to +32767 — a
+            // full-scale pop in the middle of speech.
+            guard sample.isFinite else { continue }
             // Clamped, not wrapped: a sample past full scale should be a click
             // at worst, not a sign flip.
             pcm[index] = Int16(max(-32768, min(32767, (sample * 32767).rounded())))
