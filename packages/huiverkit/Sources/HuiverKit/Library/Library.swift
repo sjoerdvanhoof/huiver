@@ -233,6 +233,70 @@ public actor Library {
         saveSoon()
     }
 
+    // MARK: - Sync
+
+    /// Take delivery of a book that arrived over the wire.
+    public func insert(_ bundle: BookBundle) throws {
+        guard !books.contains(where: { $0.contentId == bundle.contentId }) else { return }
+        let localId = UUID().uuidString
+        var coverFile: String?
+        if let cover = bundle.cover {
+            let name = "\(localId).\(bundle.coverExtension ?? "jpg")"
+            let directory = root.appendingPathComponent("covers")
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            if (try? cover.write(to: directory.appendingPathComponent(name), options: .atomic)) != nil {
+                coverFile = name
+            }
+        }
+        books.append(bundle.book(localId: localId, coverFile: coverFile))
+        try save()
+    }
+
+    /// Keep the original EPUB for a book that arrived as a bundle without one.
+    public func attachEpub(_ data: Data, to bookId: String) throws {
+        guard let index = books.firstIndex(where: { $0.id == bookId }) else { return }
+        let directory = root.appendingPathComponent("epubs")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let name = "\(bookId).epub"
+        try data.write(to: directory.appendingPathComponent(name), options: .atomic)
+        books[index].epubFile = name
+        try save()
+    }
+
+    /// Write chunks that arrived over the wire, extending the rendered prefix.
+    ///
+    /// One library save per call, not per chunk — this is the batch boundary
+    /// that keeps a large audio sync from rewriting library.json hundreds of
+    /// times.
+    public func storeChunks(
+        _ chunks: [(index: Int, data: Data)], bookId: String, chapterId: String, voiceId: String
+    ) throws {
+        guard let bookIndex = books.firstIndex(where: { $0.id == bookId }),
+              let chapterIndex = books[bookIndex].chapters.firstIndex(where: { $0.id == chapterId })
+        else { return }
+
+        let directory = audioDirectory(book: bookId, chapter: chapterId)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for chunk in chunks {
+            try chunk.data.write(
+                to: chunkURL(book: bookId, chapter: chapterId, index: chunk.index), options: .atomic
+            )
+        }
+
+        // The rendered count is the contiguous prefix on disk, not the highest
+        // index written: a gap means the missing chunk still has to arrive (or
+        // be rendered) before anything after it is reachable.
+        var contiguous = 0
+        while FileManager.default.fileExists(
+            atPath: chunkURL(book: bookId, chapter: chapterId, index: contiguous).path
+        ) {
+            contiguous += 1
+        }
+        books[bookIndex].chapters[chapterIndex].renderedChunks = contiguous
+        books[bookIndex].chapters[chapterIndex].renderedVoice = voiceId
+        try save()
+    }
+
     /// Record — or clear — why a chapter last failed to render.
     public func setRenderError(_ message: String?, chapterId: String, bookId: String) throws {
         guard let bookIndex = books.firstIndex(where: { $0.id == bookId }),

@@ -94,6 +94,8 @@ struct SettingsView: View {
                 Text("Conversion runs while huiver is open. iOS suspends apps that leave the screen, and it offers no way to keep computing in the background — so leaving mid-chapter finishes the sentence being worked on and stops there. Coming back picks up exactly where it left off, without pressing convert again, even after a force quit. Listening does keep going off screen, because then the app really is playing audio.")
             }
 
+            ConnectorSection()
+
             Section {
                 LabeledContent("Books", value: "\(model.books.count)")
                 LabeledContent("Audio on disk", value: size(model.bytesOnDisk))

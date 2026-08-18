@@ -28,6 +28,9 @@
     "kit:test": "cd packages/huiverkit && swift test",
     "ios:build": "xcodebuild -project apps/ios/Huiver.xcodeproj -scheme Huiver -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -configuration Debug build CODE_SIGNING_ALLOWED=NO",
     "ios:device": "apps/ios/scripts/run-device.sh",
-    "ios:previews": "cd tools/export && ../../apps/web/.venv-chatterbox/bin/python export_previews.py --out ../../apps/ios/build-voices"
+    "ios:previews": "cd tools/export && ../../apps/web/.venv-chatterbox/bin/python export_previews.py --out ../../apps/ios/build-voices",
+    "mac:build": "xcodebuild -project apps/mac/Huiver.xcodeproj -scheme Huiver -configuration Debug build -allowProvisioningUpdates -derivedDataPath apps/mac/DerivedData",
+    "mac:install": "apps/mac/scripts/install-models.sh",
+    "mac:run": "bun run mac:build && open apps/mac/DerivedData/Build/Products/Debug/Huiver.app"
   }
 }
