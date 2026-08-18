@@ -1,0 +1,145 @@
+{
+  "": {
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/primary.swiftdeps"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Audio/NowPlaying.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/NowPlaying.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/NowPlaying.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/NowPlaying~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/NowPlaying.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/NowPlaying.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Audio/PlaybackLog.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PlaybackLog.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PlaybackLog.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PlaybackLog~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PlaybackLog.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PlaybackLog.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Audio/WavFile.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/WavFile.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/WavFile.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/WavFile~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/WavFile.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/WavFile.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/Extract.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Extract.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Extract.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Extract~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Extract.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Extract.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/HTML.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/HTML.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/HTML.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/HTML~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/HTML.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/HTML.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/XMLTree.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/XMLTree.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/XMLTree.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/XMLTree~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/XMLTree.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/XMLTree.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Book/Zip.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Zip.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Zip.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Zip~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Zip.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Zip.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Library/Cover.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Cover.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Cover.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Cover~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Cover.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Cover.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Library/Library.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Library.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Library.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Library~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Library.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Library.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Render/ChapterRenderer.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChapterRenderer.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChapterRenderer.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChapterRenderer~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChapterRenderer.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChapterRenderer.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Render/Converter.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Converter.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Converter.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Converter~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Converter.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Converter.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Render/Narrator.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Narrator.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Narrator.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Narrator~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Narrator.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Narrator.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/TTS/ChatterboxEngine.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChatterboxEngine.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChatterboxEngine.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChatterboxEngine~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChatterboxEngine.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/ChatterboxEngine.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/TTS/Sampler.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Sampler.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Sampler.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Sampler~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Sampler.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Sampler.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/TTS/VoicePack.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/VoicePack.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/VoicePack.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/VoicePack~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/VoicePack.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/VoicePack.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/BPETokenizer.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/BPETokenizer.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/BPETokenizer.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/BPETokenizer~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/BPETokenizer.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/BPETokenizer.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/Chunker.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Chunker.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Chunker.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Chunker~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Chunker.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Chunker.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/Format.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Format.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Format.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Format~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Format.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Format.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/Language.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Language.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Language.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Language~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Language.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/Language.dia"
+  },
+  "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/Sources/HuiverKit/Text/PuncNorm.swift": {
+    "dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PuncNorm.d",
+    "object": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PuncNorm.swift.o",
+    "swiftmodule": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PuncNorm~partial.swiftmodule",
+    "swift-dependencies": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PuncNorm.swiftdeps",
+    "diagnostics": "/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKit.build/PuncNorm.dia"
+  }
+}

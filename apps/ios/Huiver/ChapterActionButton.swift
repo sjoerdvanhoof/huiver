@@ -11,6 +11,8 @@ struct ChapterActionButton: View {
         case none
         case rendering(Double?)
         case done
+        /// The last attempt stopped badly. Tapping tries again.
+        case failed
     }
 
     let state: State
@@ -46,6 +48,12 @@ struct ChapterActionButton: View {
                         .fill(theme.colors.primary)
                         .frame(width: 8, height: 8)
 
+                case .failed:
+                    Circle().strokeBorder(theme.colors.destructive, lineWidth: 1.5)
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(theme.colors.destructive)
+
                 case .none:
                     Circle().strokeBorder(theme.colors.border, lineWidth: 1.5)
                     Image(systemName: "arrow.down")
@@ -65,6 +73,7 @@ struct ChapterActionButton: View {
         case .none: "Render this chapter"
         case .rendering: "Stop rendering"
         case .done: "Rendered"
+        case .failed: "Rendering failed — try again"
         }
     }
 }

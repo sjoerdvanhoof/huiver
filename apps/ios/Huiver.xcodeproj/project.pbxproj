@@ -19,7 +19,7 @@
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		00000000000000000000100E /* Huiver */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Huiver; sourceTree = "<group>"; };
-		00000000000000000000100F /* HuiverKit */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Sources/HuiverKit; sourceTree = "<group>"; };
+		00000000000000000000100F /* HuiverKit */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = ../../packages/huiverkit/Sources/HuiverKit; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */

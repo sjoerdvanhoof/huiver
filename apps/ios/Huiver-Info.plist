@@ -23,5 +23,15 @@
 	<array>
 		<string>online.mo4.huiver.nano.convert</string>
 	</array>
+	<!-- Sync. Browsing for a declared Bonjour type needs no multicast
+	     entitlement; the local-network prompt appears on first use. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Huiver finds your Mac on the local network to sync books, audio and listening positions. Nothing leaves your network.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_huiver._tcp</string>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>The camera is used only to scan the pairing code shown on your Mac.</string>
 </dict>
 </plist>

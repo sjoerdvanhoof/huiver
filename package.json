@@ -21,13 +21,16 @@
     "setup:chatterbox": "bun run --cwd apps/web setup:chatterbox",
     "typecheck": "bunx tsc --noEmit -p apps/web && bunx tsc --noEmit -p packages/shared",
     "ios:setup": "apps/web/.venv-chatterbox/bin/pip install -q coremltools",
-    "ios:export": "cd apps/ios/export && ../../../apps/web/.venv-chatterbox/bin/python export_models.py --out ../build",
-    "ios:voices": "cd apps/ios/export && ../../../apps/web/.venv-chatterbox/bin/python export_voices.py --out ../build-voices",
-    "ios:verify": "cd apps/ios/export && ../../../apps/web/.venv-chatterbox/bin/python verify_parity.py --models ../build",
+    "ios:export": "cd tools/export && ../../apps/web/.venv-chatterbox/bin/python export_models.py --out ../../apps/ios/build",
+    "ios:voices": "cd tools/export && ../../apps/web/.venv-chatterbox/bin/python export_voices.py --out ../../apps/ios/build-voices",
+    "ios:verify": "cd tools/export && ../../apps/web/.venv-chatterbox/bin/python verify_parity.py --models ../../apps/ios/build",
     "ios:install": "apps/ios/scripts/install-models.sh",
-    "ios:test": "cd apps/ios && swift test",
+    "kit:test": "cd packages/huiverkit && swift test",
     "ios:build": "xcodebuild -project apps/ios/Huiver.xcodeproj -scheme Huiver -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -configuration Debug build CODE_SIGNING_ALLOWED=NO",
     "ios:device": "apps/ios/scripts/run-device.sh",
-    "ios:previews": "cd apps/ios/export && ../../../apps/web/.venv-chatterbox/bin/python export_previews.py --out ../build-voices"
+    "ios:previews": "cd tools/export && ../../apps/web/.venv-chatterbox/bin/python export_previews.py --out ../../apps/ios/build-voices",
+    "mac:build": "xcodebuild -project apps/mac/Huiver.xcodeproj -scheme Huiver -configuration Debug build -allowProvisioningUpdates -derivedDataPath apps/mac/DerivedData",
+    "mac:install": "apps/mac/scripts/install-models.sh",
+    "mac:run": "bun run mac:build && open apps/mac/DerivedData/Build/Products/Debug/Huiver.app"
   }
 }

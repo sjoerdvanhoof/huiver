@@ -107,8 +107,8 @@ struct BookView: View {
                     .font(.huiverCaption)
                     .foregroundStyle(theme.colors.mutedForeground)
 
-                Button(action: playFirstUnfinished) {
-                    Text(renderedCount > 0 ? "Resume" : "Play")
+                Button(action: resume) {
+                    Text(model.resumeTarget(for: current)?.position ?? 0 > 1 ? "Resume" : "Play")
                         .font(.huiverLabel)
                         .foregroundStyle(theme.colors.primaryForeground)
                         .padding(.horizontal, Palette.Space.xl)
@@ -125,7 +125,11 @@ struct BookView: View {
 
     private var summary: String {
         let estimate = Double(current.characters) / Format.assumedCharactersPerSecond
-        return "\(renderedCount)/\(current.chapters.count) rendered · \(Format.estimate(estimate))"
+        let finished = current.chapters.filter { model.isFinished($0) }.count
+        var parts = ["\(renderedCount)/\(current.chapters.count) rendered"]
+        if finished > 0 { parts.append("\(finished) finished") }
+        parts.append(Format.estimate(estimate))
+        return parts.joined(separator: " · ")
     }
 
     private var languageWarning: some View {
@@ -156,12 +160,23 @@ struct BookView: View {
         }
     }
 
-    private func playFirstUnfinished() {
+    /// Carry on where the listener left off: the chapter they were in, at the
+    /// second they stopped. Falls back to the first chapter of a book nobody
+    /// has opened yet.
+    private func resume() {
         guard let narrator = model.narrator, let voice = model.selectedVoice else { return }
-        guard let target = current.chapters.first(where: { !$0.isComplete })
-            ?? current.chapters.first
-        else { return }
-        narrator.play(book: current, chapter: target, voice: voice, options: model.options)
+        let target = model.resumeTarget(for: current)
+            ?? current.chapters.first.map { ($0, 0.0) }
+        guard let (chapter, position) = target else { return }
+
+        if chapter.isComplete, chapter.renderedVoice == voice.id {
+            narrator.replay(book: current, chapter: chapter, from: position)
+        } else {
+            narrator.play(
+                book: current, chapter: chapter, voice: voice,
+                options: model.options, from: position
+            )
+        }
         showingPlayer = true
     }
 }
@@ -178,19 +193,33 @@ private struct ChapterRow: View {
     private var narrator: Narrator? { model.narrator }
     private var isCurrent: Bool { narrator?.chapterId == chapter.id }
     private var isConverting: Bool { model.converter?.isQueued(chapter.id) ?? false }
+    private var isFinished: Bool { model.isFinished(chapter) }
+    /// Where the listener got to, when they got somewhere and are not done.
+    private var listened: Double? { model.position(in: chapter) }
 
     var body: some View {
         HStack(spacing: Palette.Space.md) {
             Button(action: play) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(number). \(chapter.title)")
-                        .font(.huiverBody)
-                        .foregroundStyle(isCurrent ? theme.colors.primary : theme.colors.foreground)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
+                    HStack(spacing: Palette.Space.xs) {
+                        if isFinished {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.huiverCaption)
+                                .foregroundStyle(theme.colors.mutedForeground)
+                        }
+                        Text("\(number). \(chapter.title)")
+                            .font(.huiverBody)
+                            .foregroundStyle(titleColor)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
                     Text(detail)
                         .font(.huiverCaption)
                         .foregroundStyle(theme.colors.mutedForeground)
+                    if let listened, chapter.chunkCount > 0 {
+                        ListenedBar(fraction: listened / max(estimatedLength, 1))
+                            .padding(.top, 2)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(.rect)
@@ -203,20 +232,55 @@ private struct ChapterRow: View {
         }
         .padding(.horizontal, Palette.Space.lg)
         .padding(.vertical, Palette.Space.md)
+        .contextMenu {
+            Button(
+                isFinished ? "Mark as unfinished" : "Mark as finished",
+                systemImage: isFinished ? "arrow.uturn.backward" : "checkmark"
+            ) {
+                Task { await model.setFinished(!isFinished, chapter: chapter, in: book) }
+            }
+            if chapter.renderedChunks > 0 {
+                Button("Render again", systemImage: "arrow.clockwise") {
+                    Task { await model.rerender(chapter: chapter, in: book) }
+                }
+            }
+        }
+    }
+
+    private var titleColor: Color {
+        if isCurrent { return theme.colors.primary }
+        return isFinished ? theme.colors.mutedForeground : theme.colors.foreground
+    }
+
+    /// The chapter's length: measured once it is rendered, estimated before.
+    private var estimatedLength: Double {
+        Double(chapter.characters) / Format.assumedCharactersPerSecond
     }
 
     private var actionState: ChapterActionButton.State {
         if chapter.isComplete { return .done }
         if isConverting { return .rendering(model.converter?.progress(for: chapter.id)) }
+        // After the queue, so retrying a failed chapter shows it working again
+        // rather than still showing the old complaint.
+        if chapter.lastRenderError != nil { return .failed }
         return .none
     }
 
     private var detail: String {
-        let estimate = Double(chapter.characters) / Format.assumedCharactersPerSecond
+        let estimate = estimatedLength
+        // Conversion first: while a chapter is being rendered, that is the
+        // thing changing on screen and the thing being waited on.
         if isConverting, let converter = model.converter, converter.active?.chapterId == chapter.id {
             return "converting \(converter.renderedChunks)/\(max(converter.chunkCount, 1)) · \(Format.estimate(estimate))"
         }
         if isConverting { return "queued · \(Format.estimate(estimate))" }
+        if let error = chapter.lastRenderError { return error }
+        if let listened {
+            // Then where the listener is, which beats how much of it has been
+            // synthesised — they already know it plays.
+            return "\(Format.duration(listened)) in · \(Format.estimate(estimate))"
+        }
+        if isFinished { return "finished · \(Format.approximate(estimate))" }
         if isCurrent, let seconds = narrator?.renderedSeconds, seconds > 0 {
             // What exists, which is what the scrubber can reach.
             return chapter.isComplete
@@ -236,12 +300,40 @@ private struct ChapterRow: View {
             opened()
             return
         }
+        // A chapter that was left part-way through picks up there. A finished
+        // one starts again from the top — tapping it is how you re-listen.
+        let from = listened ?? 0
         if chapter.isComplete, chapter.renderedVoice == voice.id {
-            narrator.replay(book: book, chapter: chapter)
+            narrator.replay(book: book, chapter: chapter, from: from)
         } else {
-            narrator.play(book: book, chapter: chapter, voice: voice, options: model.options)
+            narrator.play(
+                book: book, chapter: chapter, voice: voice, options: model.options, from: from
+            )
         }
         opened()
+    }
+
+    /// How far through a chapter the listener is.
+    ///
+    /// Thinner and quieter than the player's `TwoStageBar`, and only about
+    /// listening: how much has been rendered is already in the row's detail
+    /// line and on the action button.
+    private struct ListenedBar: View {
+        let fraction: Double
+
+        @Environment(\.theme) private var theme
+
+        var body: some View {
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    theme.colors.border
+                    theme.colors.primary.opacity(0.7)
+                        .frame(width: geometry.size.width * min(1, max(0, fraction)))
+                }
+                .clipShape(.capsule)
+            }
+            .frame(height: 2)
+        }
     }
 
     /// Convert, which means render to disk and nothing else. Pressing it again

@@ -40,9 +40,22 @@ I will always commit and push myself to github. Don't do this yourself.
 ## Python environment
 Please always use the virtual env. to run your python apps. If there is no virtual python env. yet, please make one with latest stable python version.
 
+## Layout
+
+```
+packages/huiverkit/   the shared Swift package (HuiverKit) — both apps compile it
+apps/ios/             thin SwiftUI shell for the iPhone (Chatterbox Nano)
+apps/mac/             thin SwiftUI shell for the Mac (Chatterbox Multilingual)
+tools/export/         Core ML export + parity tooling (Python)
+```
+
+Both Xcode projects reference `packages/huiverkit/Sources/HuiverKit` as a
+file-system-synchronised group, so a new file there is picked up by both apps
+without touching either project file.
+
 ## iOS app (apps/ios)
 
-After every change under `apps/ios`, build the app target:
+After every change under `apps/ios` or `packages/huiverkit`, build the app target:
 
 ```
 xcodebuild -project apps/ios/Huiver.xcodeproj -scheme Huiver -sdk iphonesimulator \
@@ -50,14 +63,14 @@ xcodebuild -project apps/ios/Huiver.xcodeproj -scheme Huiver -sdk iphonesimulato
   -derivedDataPath /tmp/huiver-xcbuild build
 ```
 
-`swift build` in `apps/ios` only compiles HuiverKit for the Mac, so on its own it
-misses every `#if os(iOS)` branch. Keep `-derivedDataPath` outside the repo:
-without it xcodebuild writes into `apps/ios/build/`, where the exported
+`swift build` in `packages/huiverkit` only compiles HuiverKit for the Mac, so on
+its own it misses every `#if os(iOS)` branch. Keep `-derivedDataPath` outside the
+repo: without it xcodebuild writes into `apps/ios/build/`, where the exported
 `.mlpackage` models live.
 
-`swift test` covers the logic, but `EngineTests` compiles the Core ML models and
-takes about eight minutes — run it in the background, or `--skip EngineTests` for
-a quick pass.
+`bun run kit:test` (`swift test` in `packages/huiverkit`) covers the logic, but
+`EngineTests` compiles the Core ML models and takes about eight minutes — run it
+in the background, or `--skip EngineTests` for a quick pass.
 
 ### Getting it onto my iPhone
 

@@ -1,0 +1,5 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     '/Users/sjoerdvanhoof/GitRepos/personal/huiver/apps/ios/.build/arm64-apple-macosx/debug/HuiverKitPackageTests.xctest/Contents/MacOS/HuiverKitPackageTests'
+relocations:     []
+...

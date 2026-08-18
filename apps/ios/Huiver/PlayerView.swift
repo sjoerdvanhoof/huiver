@@ -13,6 +13,12 @@ struct PlayerView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var dragging: Double?
+    /// Swap the cover for the chapter's text.
+    @State private var readingAlong = false
+    /// The chunk texts and their times. Loaded when read-along is opened and
+    /// when the chapter changes — reading the WAV headers for a whole chapter
+    /// is not something to do four times a second.
+    @State private var chunkMap = ChunkMap(chunks: [])
 
     var body: some View {
         ZStack {
@@ -33,7 +39,15 @@ struct PlayerView: View {
         VStack(spacing: Palette.Space.lg) {
             Spacer(minLength: 0)
 
-            if let book = narrator.book {
+            if readingAlong {
+                ReadAlongView(
+                    map: chunkMap,
+                    currentIndex: chunkMap.index(at: dragging ?? narrator.position),
+                    renderedChunks: narrator.renderedChunks,
+                    seek: { narrator.seek(to: $0) }
+                )
+                .frame(maxHeight: .infinity)
+            } else if let book = narrator.book {
                 BookCover(
                     bookId: book.id,
                     title: book.title,
@@ -63,6 +77,18 @@ struct PlayerView: View {
         }
         .padding(.horizontal, Palette.Space.xl)
         .padding(.vertical, Palette.Space.xl)
+        // The map is rebuilt when the chapter changes, and again as synthesis
+        // extends it — a chunk with no file yet has no duration, so every
+        // chunk after it would otherwise sit at the wrong time.
+        .task(id: narrator.chapterId) { await loadChunkMap() }
+        .task(id: narrator.renderedChunks) { await loadChunkMap() }
+    }
+
+    private func loadChunkMap() async {
+        guard let narrator = model.narrator, let book = narrator.book,
+              let chapter = narrator.chapter, let library = model.library
+        else { return }
+        chunkMap = ChunkMap.load(book: book, chapter: chapter, library: library)
     }
 
     private func subtitle(_ narrator: Narrator) -> String {
@@ -206,6 +232,24 @@ struct PlayerView: View {
                     .background(theme.colors.muted, in: .capsule)
             }
 
+            sleepMenu
+
+            Button {
+                readingAlong.toggle()
+            } label: {
+                Image(systemName: readingAlong ? "text.quote" : "text.alignleft")
+                    .font(.huiverLabel)
+                    .foregroundStyle(
+                        readingAlong ? theme.colors.primary : theme.colors.foreground
+                    )
+                    .padding(.horizontal, Palette.Space.md)
+                    .padding(.vertical, Palette.Space.xs)
+                    .background(theme.colors.muted, in: .capsule)
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, Palette.Space.sm)
+            .accessibilityLabel(readingAlong ? "Show the cover" : "Read along")
+
             Spacer()
 
             Button("Stop", role: .destructive) {
@@ -216,5 +260,43 @@ struct PlayerView: View {
             .foregroundStyle(theme.colors.destructive)
         }
         .padding(.top, Palette.Space.sm)
+    }
+
+    /// Stop reading after a while. In the app only: there is no lock-screen
+    /// control for a sleep timer to attach to.
+    private var sleepMenu: some View {
+        Menu {
+            if model.sleepTimer.isArmed {
+                Button("Off", systemImage: "xmark") { model.sleepTimer.cancel() }
+            }
+            ForEach(SleepTimer.presets, id: \.self) { preset in
+                Button {
+                    model.sleepTimer.start(preset)
+                } label: {
+                    if model.sleepTimer.mode == preset {
+                        Label(preset.label, systemImage: "checkmark")
+                    } else {
+                        Text(preset.label)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: Palette.Space.xs) {
+                Image(systemName: model.sleepTimer.isArmed ? "moon.zzz.fill" : "moon.zzz")
+                if let remaining = model.sleepTimer.remaining {
+                    Text(Format.duration(remaining))
+                } else if model.sleepTimer.mode == .endOfChapter {
+                    Text("chapter")
+                }
+            }
+            .font(.huiverLabel)
+            .foregroundStyle(
+                model.sleepTimer.isArmed ? theme.colors.primary : theme.colors.foreground
+            )
+            .padding(.horizontal, Palette.Space.md)
+            .padding(.vertical, Palette.Space.xs)
+            .background(theme.colors.muted, in: .capsule)
+        }
+        .padding(.leading, Palette.Space.sm)
     }
 }

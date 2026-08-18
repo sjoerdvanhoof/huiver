@@ -223,16 +223,17 @@ metadata. A multilingual export would need that key and a Swift port of
 ## The app
 
 ```
-Sources/HuiverKit/    everything that is not a view
-Huiver/               the SwiftUI screens
-Tests/HuiverKitTests/ swift test
-export/               the Core ML conversion
+apps/ios/Huiver/                            the SwiftUI screens
+packages/huiverkit/Sources/HuiverKit/       everything that is not a view
+packages/huiverkit/Tests/HuiverKitTests/    bun run kit:test
+tools/export/                               the Core ML conversion
 ```
 
-`HuiverKit` is a Swift package so it can be built and tested on the Mac with
-`swift test` — 22 tests, no simulator, under a second. The Xcode target compiles
-the same sources directly rather than depending on the package, which is why the
-app files do not `import HuiverKit`: it is all one module there.
+`HuiverKit` lives outside the app because the Mac companion in `apps/mac` shares
+it. It is a Swift package so it can be built and tested on the Mac with
+`bun run kit:test` — no simulator, under a second. Both Xcode targets compile the
+same sources directly rather than depending on the package, which is why the app
+files do not `import HuiverKit`: it is all one module there.
 
 The text pipeline is a port of the desktop app's, deliberately faithful, so a
 book breaks into the same chapters and pauses in the same places whichever
@@ -257,12 +258,45 @@ re-rendering.
 There is no ffmpeg on the phone, so chapters stay as 24 kHz 16-bit WAV: about
 173 MB per hour, against roughly 29 MB for the desktop app's 64 kbps MP3.
 
+### Listening state
+
+Positions live in `Documents/progress.json`, not in the library: a position
+moves four times a second and the library is rewritten whole, text and all. The
+store keeps them in memory and writes on a timer, plus at the three moments the
+process might not get another chance — pausing, stopping, and the app leaving
+the screen.
+
+Each record is a position, whether the chapter was finished, and when that last
+changed. That shape is not for the phone's benefit; it is what two devices need
+to settle a disagreement by taking the newer one. `finished` deliberately
+outlives the audio it describes, which is what lets the cleanup sweep delete a
+finished chapter's WAVs without the chapter looking unheard afterwards.
+
+A chapter that ends rolls on to the next one. That is also what makes the sleep
+timer's "end of chapter" mean anything — without auto-advance, playback stops
+there regardless and the setting would be a no-op.
+
+### Reading along
+
+The player can show the chapter's text with the sentence being spoken lit up.
+Highlighting is per chunk, which is roughly per sentence: word-level would mean
+forced alignment, a second model on both platforms and in all 23 languages, to
+gain something short of the point. Knowing which sentence is being read is
+following along.
+
+The chunk texts are written to `chunks.json` beside the audio when a render
+starts. They could be recomputed — the chunker is deterministic — but only by a
+build that chunks the same way, and a future chunker change would otherwise
+silently highlight the wrong sentence in every chapter rendered before it.
+
 ### What is not there yet
 
-- Recording your own voice on the phone (see above).
+- Recording your own voice on the phone (see above). It happens on the Mac.
 - Seeking past what has been rendered. The scrubber stops at the rendered edge,
   on the lock screen as well as in the app.
-- A sleep timer, which the Expo app has.
+- Syncing with the Mac. The protocol is written and tested
+  (`Sources/HuiverKit/Sync/`); the transport, the pairing and the Mac app it
+  would talk to are not built yet.
 - Android, which Core ML rules out by construction.
 
 ## Speed

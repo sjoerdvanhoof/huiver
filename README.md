@@ -386,7 +386,7 @@ were never going to work in the Expo one. Its documentation moved with it.
 Swift, iPhone only, and **Chatterbox Nano rather than Kokoro**. Books are read in a cloned voice,
 on the device, with the model converted to Core ML and the token loop driven from Swift.
 
-There is no off-the-shelf Core ML build of Nano, so `apps/ios/export/` makes one — a stateful
+There is no off-the-shelf Core ML build of Nano, so `tools/export/` makes one — a stateful
 KV-cached GPT-2 backbone, a fixed-shape mel decoder, and stand-ins for the two ops Core ML
 does not have. Voices are cloned on the Mac and shipped as ~165 KB of conditionals each, so
 the phone never needs the speech tokenizer or the speaker encoder.

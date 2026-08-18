@@ -1,0 +1,72 @@
+import SwiftUI
+
+/// Sampling, storage and where the models landed — the parts of the iOS
+/// Settings screen that make sense on a Mac. Voices have a sidebar entry of
+/// their own here, so they are not repeated.
+struct SettingsPane: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        @Bindable var model = model
+
+        Form {
+            Section {
+                LabeledContent("Temperature", value: String(format: "%.2f", model.options.temperature))
+                Slider(value: $model.options.temperature, in: 0.4...1.2, step: 0.05)
+                LabeledContent("Top-p", value: String(format: "%.2f", model.options.topP))
+                Slider(value: $model.options.topP, in: 0.5...1.0, step: 0.01)
+                LabeledContent(
+                    "Repetition penalty",
+                    value: String(format: "%.2f", model.options.repetitionPenalty)
+                )
+                Slider(value: $model.options.repetitionPenalty, in: 1.0...2.0, step: 0.05)
+            } header: {
+                Text("Sampling")
+            } footer: {
+                Text("Lower the temperature for a long book and it reads more evenly, at the cost of some life. There is no speed control: the model has none, so change playback speed in the player instead.")
+            }
+
+            Section {
+                LabeledContent("Books", value: "\(model.books.count)")
+                LabeledContent("Audio on disk", value: size(model.bytesOnDisk))
+                Toggle("Clean up finished chapters", isOn: cleanupBinding)
+            } header: {
+                Text("Storage")
+            } footer: {
+                Text("An hour of audio is about 170 MB. A chapter you have listened all the way through has its audio removed a week later — the text always stays, and rendering it again brings the audio back. Whatever is playing or waiting to convert is left alone.")
+            }
+
+            if !model.placement.isEmpty {
+                Section {
+                    ForEach(model.placement.sorted(by: { $0.key < $1.key }), id: \.key) { entry in
+                        LabeledContent(entry.key, value: entry.value)
+                    }
+                } header: {
+                    Text("Where the models run")
+                } footer: {
+                    Text("Core ML picks this per model and per machine. Anything that fell back to CPU is a good place to look if synthesis is slower than you expected.")
+                }
+            }
+
+            if let failure = model.loadFailure {
+                Section("Engine") {
+                    Text(failure).font(.caption).foregroundStyle(.red)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Settings")
+        .task { await model.refresh() }
+    }
+
+    /// `autoCleanup` lives in UserDefaults rather than in observable state, so
+    /// it needs a binding written out rather than `@Bindable`'s.
+    private var cleanupBinding: Binding<Bool> {
+        .init(get: { model.autoCleanup }, set: { model.autoCleanup = $0 })
+    }
+
+    private func size(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
