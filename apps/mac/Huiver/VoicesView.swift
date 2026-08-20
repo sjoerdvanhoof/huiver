@@ -13,6 +13,8 @@ struct VoicesView: View {
     /// are finished files, and auditioning a voice should not wake the model.
     @State private var preview = PreviewPlayer()
 
+    @State private var recording = false
+
     var body: some View {
         Form {
             Section {
@@ -69,6 +71,16 @@ struct VoicesView: View {
                                     }
                                 }
                                 Spacer()
+                                if model.isRecorded(voice) {
+                                    Button {
+                                        model.deleteVoice(voice)
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .foregroundStyle(theme.colors.mutedForeground)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Delete this recorded voice")
+                                }
                                 if model.selectedVoiceId == voice.id {
                                     Image(systemName: "checkmark").foregroundStyle(.tint)
                                 }
@@ -85,13 +97,19 @@ struct VoicesView: View {
             }
 
             Section {
-                Button("Record a voice", systemImage: "mic") {}
-                    .disabled(true)
+                Button("Record a voice", systemImage: "mic") { recording = true }
+                    .disabled(!model.canCloneVoices)
             } footer: {
-                Text("Voice recording arrives with a later update.")
+                Text(model.canCloneVoices
+                    ? "Fifteen seconds of your own reading becomes a voice that can read any "
+                        + "book. The recording is used once and not kept — what is stored is a "
+                        + "set of numbers that cannot be turned back into audio."
+                    : "Cloning needs the multilingual models. Export them with bun run mac:models "
+                        + "and install them with bun run mac:install.")
             }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $recording) { RecordVoiceSheet() }
         .navigationTitle("Voices")
         .onDisappear { preview.stop() }
     }

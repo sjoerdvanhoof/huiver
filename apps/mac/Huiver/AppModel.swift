@@ -91,6 +91,14 @@ final class AppModel {
 
     private(set) var library: Library?
     private(set) var progressStore: ProgressStore?
+    /// Turns a recording into a voice, when the installed models can. Nano's
+    /// export cannot; the multilingual one ships `MTLVoiceCloner`.
+    private(set) var cloner: VoiceCloner?
+    /// Where voices cloned on this Mac live. The bundle's pack is read-only, so
+    /// a recorded voice goes beside the library instead.
+    private(set) var recordedVoices: URL?
+
+    var canCloneVoices: Bool { cloner != nil }
 
     /// Asks from the phone whose book had not arrived yet when they were made.
     ///
@@ -140,11 +148,21 @@ final class AppModel {
             return
         }
 
+        recordedVoices = root.appendingPathComponent("Voices", isDirectory: true)
         do {
-            voices = try VoicePack.load(from: resources.appendingPathComponent("Voices"))
+            voices = try VoicePack.load(
+                from: resources.appendingPathComponent("Voices"), plus: recordedVoices
+            )
         } catch {
             loadFailure = error.localizedDescription
             return
+        }
+
+        // Cloning is a separate model from the four the engine loads, and a
+        // separate failure: a Mac that cannot clone should still read books.
+        let modelDirectory = resources.appendingPathComponent("Models")
+        if VoiceCloner.isAvailable(in: modelDirectory) {
+            cloner = try? await VoiceCloner(models: modelDirectory)
         }
 
         preparingSince = Date()
@@ -432,6 +450,68 @@ final class AppModel {
 
         converter.convert(book: book, chapter: chapter, voice: voice, options: options)
         return status(.queued, rendered: chapter.renderedChunks)
+    }
+
+    // MARK: - Cloning a voice
+
+    /// Turn a recording into a voice and add it to the roster.
+    ///
+    /// The recording itself is not kept. What is written is the five tensors a
+    /// voice consists of, none of which can be turned back into audio — the same
+    /// bargain the shipped voices make, and worth keeping when the recording is
+    /// the listener's own.
+    func cloneVoice(from recording: [Float], name: String) async throws -> Voice {
+        guard let cloner, let recordedVoices else { throw VoiceCloner.CloneError.unavailable }
+
+        // An id from the name, and a number if that name is taken: two voices
+        // called "Me" must not become one file.
+        let base = "rec_" + name.lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: "_", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+        var id = base.isEmpty ? "rec_voice" : base
+        var suffix = 2
+        while voices.contains(where: { $0.id == id }) {
+            id = "\(base)_\(suffix)"
+            suffix += 1
+        }
+
+        let voice = try await cloner.clone(
+            recording,
+            id: id,
+            name: name.isEmpty ? "My voice" : name,
+            detail: "recorded on this Mac",
+            persona: "Your own voice, cloned from a short recording. It reads every "
+                + "language the model knows, with your accent.",
+            // Recorded voices carry no language: the app should not decide that
+            // a Dutch speaker may only read Dutch books, and `voice(for:)`
+            // leaves a voice without one alone.
+            language: nil
+        )
+        try VoicePack.write(voice, to: recordedVoices)
+        voices = try VoicePack.load(
+            from: Bundle.main.resourceURL!.appendingPathComponent("Voices"),
+            plus: recordedVoices
+        )
+        selectedVoiceId = voice.id
+        return voice
+    }
+
+    /// Whether this voice was cloned here, and can therefore be deleted.
+    func isRecorded(_ voice: Voice) -> Bool {
+        guard let recordedVoices else { return false }
+        return FileManager.default.fileExists(
+            atPath: recordedVoices.appendingPathComponent("\(voice.id).voice").path
+        )
+    }
+
+    func deleteVoice(_ voice: Voice) {
+        guard let recordedVoices, isRecorded(voice) else { return }
+        try? VoicePack.remove(id: voice.id, from: recordedVoices)
+        voices = (try? VoicePack.load(
+            from: Bundle.main.resourceURL!.appendingPathComponent("Voices"),
+            plus: recordedVoices
+        )) ?? voices
+        if selectedVoiceId == voice.id { selectedVoiceId = voices.first?.id ?? "mtl_default" }
     }
 
     func clearFailure() { loadFailure = nil }

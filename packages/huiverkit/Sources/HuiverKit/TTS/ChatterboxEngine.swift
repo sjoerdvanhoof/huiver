@@ -229,49 +229,13 @@ public actor ChatterboxEngine {
     /// `reload`, so it tracks the models actually in use.
     public private(set) var placement: [String: String]
 
-    /// Compute units to try, hardest-working first.
-    ///
-    /// `.all` is not always loadable. The decode model is stateful and writes
-    /// into its KV cache at an index that is only known at run time, and a
-    /// device whose compiler will not specialise that for the Neural Engine
-    /// fails the whole load with a bare "failed to build the model execution
-    /// plan" rather than falling back on its own. So the fallback is here.
-    private static let ladder: [(String, MLComputeUnits)] = [
-        ("Neural Engine / GPU / CPU", .all),
-        ("GPU / CPU", .cpuAndGPU),
-        ("CPU", .cpuOnly),
-    ]
+    /// Which processors to try, in order — see `ComputeUnits`, which the voice
+    /// cloner reads the same way.
+    private static var ladder: [(String, MLComputeUnits)] { ComputeUnits.ladder }
 
-    /// The ladder for one model, which is not always the whole ladder.
-    ///
-    /// Two of the multilingual packages must never be offered to the Neural
-    /// Engine, and "must never" rather than "need not": the prefill's flexible
-    /// text dimension over thirty layers takes the *process* down while the ANE
-    /// compiler works on it — no exception, no crash report, just an exit — and
-    /// the vocoder's DFT stand-ins make that compiler fail outright and get
-    /// silently retried elsewhere after a wasted minute. Neither loses anything
-    /// by running on the GPU, which is idle either way.
-    ///
-    /// The export records this, and it is read here out of the compiled model's
-    /// own `metadata.json` rather than out of the loaded `MLModel` — because by
-    /// the time there is an `MLModel` to ask, the load that would have crashed
-    /// has already happened.
     private static func ladder(for url: URL) -> [(String, MLComputeUnits)] {
-        guard let data = try? Data(
-            contentsOf: url.appendingPathComponent("metadata.json")
-        ),
-            let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-            let metadata = entries.first?["userDefinedMetadata"] as? [String: String],
-            let declared = metadata["computeUnits"]
-        else { return ladder }
-
-        return switch declared {
-        case "cpu_gpu": Array(ladder.dropFirst())
-        case "cpu": [ladder[2]]
-        default: ladder
-        }
+        ComputeUnits.ladder(for: url)
     }
-
 
     /// Load the models, reporting progress as each one is prepared.
     ///

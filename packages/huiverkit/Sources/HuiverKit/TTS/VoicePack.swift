@@ -82,6 +82,23 @@ public enum VoicePack {
         }
     }
 
+    /// Read the voices in `directory`, and any the listener has recorded.
+    ///
+    /// Two directories rather than one: the pack that ships is inside the app
+    /// bundle and is read-only, and a voice cloned on this machine has to live
+    /// somewhere writable. A recorded voice with the same id as a shipped one
+    /// wins — that is what re-recording means.
+    public static func load(from directory: URL, plus recorded: URL?) throws -> [Voice] {
+        let shipped = try load(from: directory)
+        guard let recorded, FileManager.default.fileExists(
+            atPath: recorded.appendingPathComponent("voices.json").path
+        ) else { return shipped }
+        // A broken recorded pack must not take the shipped voices down with it.
+        let mine = (try? load(from: recorded)) ?? []
+        let replaced = Set(mine.map(\.id))
+        return shipped.filter { !replaced.contains($0.id) } + mine
+    }
+
     /// Read every voice listed in `voices.json` in the given directory.
     public static func load(from directory: URL) throws -> [Voice] {
         let manifestURL = directory.appendingPathComponent("voices.json")
@@ -128,6 +145,118 @@ public enum VoicePack {
             promptFeatures: try reader.floats(featFrames * melDim),
             xvector: try reader.floats(xvectorDim)
         )
+    }
+
+    // MARK: - Writing one
+
+    /// Write a voice and add it to `directory`'s manifest.
+    ///
+    /// The same layout `export_voices.py` writes, because the app has to read
+    /// both: a voice cloned here and a voice that shipped are the same kind of
+    /// thing, and nothing downstream should be able to tell them apart.
+    public static func write(_ voice: Voice, to directory: URL) throws {
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true
+        )
+        let file = "\(voice.id).voice"
+        var data = Data()
+        func u32(_ value: Int) {
+            var little = UInt32(value).littleEndian
+            withUnsafeBytes(of: &little) { data.append(contentsOf: $0) }
+        }
+        data.append(contentsOf: withUnsafeBytes(of: magic.littleEndian, Array.init))
+        u32(Int(version))
+        u32(voice.speakerEmbedding.count)
+        u32(voice.condPromptTokens.count)
+        u32(voice.promptTokens.count)
+        // The header carries frames and mel width separately; the payload is
+        // frames × width floats.
+        let melDimension = 80
+        u32(voice.promptFeatures.count / melDimension)
+        u32(melDimension)
+        u32(voice.xvector.count)
+
+        func floats(_ values: [Float]) {
+            values.withUnsafeBufferPointer { data.append(Data(buffer: $0)) }
+        }
+        func int32s(_ values: [Int32]) {
+            values.withUnsafeBufferPointer { data.append(Data(buffer: $0)) }
+        }
+        floats(voice.speakerEmbedding)
+        int32s(voice.condPromptTokens)
+        int32s(voice.promptTokens)
+        floats(voice.promptFeatures)
+        floats(voice.xvector)
+
+        // Written whole and moved into place: a half-written voice file that the
+        // manifest already mentions would fail every load from then on.
+        let destination = directory.appendingPathComponent(file)
+        try data.write(to: destination, options: .atomic)
+        try updateManifest(in: directory, with: voice, file: file)
+    }
+
+    /// Remove a recorded voice and forget it in the manifest.
+    public static func remove(id: String, from directory: URL) throws {
+        var manifest = readManifest(in: directory)
+        manifest.voices.removeAll { $0.id == id }
+        try writeManifest(manifest, in: directory)
+        try? FileManager.default.removeItem(
+            at: directory.appendingPathComponent("\(id).voice")
+        )
+        try? FileManager.default.removeItem(
+            at: directory.appendingPathComponent("\(id).preview.wav")
+        )
+    }
+
+    /// The manifest as something writable. `Manifest` itself is decode-only
+    /// because everything else only ever reads one.
+    struct WritableManifest: Codable {
+        struct Entry: Codable {
+            var id: String
+            var name: String
+            var detail: String
+            var file: String
+            var preview: String?
+            var persona: String?
+            var language: String?
+        }
+        var voices: [Entry] = []
+    }
+
+    static func readManifest(in directory: URL) -> WritableManifest {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("voices.json")),
+              let manifest = try? JSONDecoder().decode(WritableManifest.self, from: data)
+        else { return WritableManifest() }
+        return manifest
+    }
+
+    static func writeManifest(_ manifest: WritableManifest, in directory: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(manifest).write(
+            to: directory.appendingPathComponent("voices.json"), options: .atomic
+        )
+    }
+
+    private static func updateManifest(
+        in directory: URL, with voice: Voice, file: String
+    ) throws {
+        var manifest = readManifest(in: directory)
+        let entry = WritableManifest.Entry(
+            id: voice.id,
+            name: voice.name,
+            detail: voice.detail,
+            file: file,
+            preview: voice.previewURL?.lastPathComponent,
+            persona: voice.persona,
+            language: voice.language
+        )
+        if let index = manifest.voices.firstIndex(where: { $0.id == voice.id }) {
+            manifest.voices[index] = entry
+        } else {
+            manifest.voices.append(entry)
+        }
+        try writeManifest(manifest, in: directory)
     }
 
     /// A little-endian cursor. The file is written by `export_voices.py`, so the
