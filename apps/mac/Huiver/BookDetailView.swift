@@ -32,6 +32,7 @@ struct BookDetailView: View {
                 VStack(alignment: .leading, spacing: Palette.Space.lg) {
                     header
                     if !model.canSpeak(current) { languageWarning }
+                    if model.substitutesVoice(for: current) { voiceNote }
                     chapters
                 }
                 .padding(.vertical, Palette.Space.lg)
@@ -135,6 +136,29 @@ struct BookDetailView: View {
         return parts.joined(separator: " · ")
     }
 
+    /// Which reader this book will actually get, when it is not the chosen one.
+    ///
+    /// Said rather than done silently: the voice in Settings is a preference,
+    /// and quietly ignoring it for half the library would be worse than the
+    /// accent it is avoiding.
+    private var voiceNote: some View {
+        HStack(alignment: .top, spacing: Palette.Space.sm) {
+            Image(systemName: "person.wave.2")
+            Text(
+                "\(model.voice(for: current)?.name ?? "Another voice") will read this book — "
+                    + "a \(language.name) reader. The accent comes from the voice's own "
+                    + "recording, so \(model.selectedVoice?.name ?? "the chosen voice") would "
+                    + "read \(language.name) with an accent. Pick it explicitly in Voices if "
+                    + "that is what you want."
+            )
+        }
+        .font(.huiverCaption)
+        .foregroundStyle(theme.colors.mutedForeground)
+        .padding(Palette.Space.md)
+        .background(theme.colors.muted, in: .rect(cornerRadius: Palette.Radius.lg))
+        .padding(.horizontal, Palette.Space.lg)
+    }
+
     private var languageWarning: some View {
         HStack(alignment: .top, spacing: Palette.Space.sm) {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -161,7 +185,7 @@ struct BookDetailView: View {
     /// Queue everything that has not been rendered, in reading order. The
     /// converter works through it one chapter at a time.
     private func convertAll() {
-        guard let converter = model.converter, let voice = model.selectedVoice else { return }
+        guard let converter = model.converter, let voice = model.voice(for: book) else { return }
         for chapter in incomplete {
             converter.convert(book: current, chapter: chapter, voice: voice, options: model.options)
         }
@@ -171,7 +195,7 @@ struct BookDetailView: View {
     /// second they stopped. Falls back to the first chapter of a book nobody
     /// has opened yet.
     private func resume() {
-        guard let narrator = model.narrator, let voice = model.selectedVoice else { return }
+        guard let narrator = model.narrator, let voice = model.voice(for: book) else { return }
         let target = model.resumeTarget(for: current)
             ?? current.chapters.first.map { ($0, 0.0) }
         guard let (chapter, position) = target else { return }
@@ -286,7 +310,7 @@ private struct ChapterRow: View {
     }
 
     private func play() {
-        guard let narrator, let voice = model.selectedVoice else { return }
+        guard let narrator, let voice = model.voice(for: book) else { return }
         if isCurrent {
             narrator.toggle()
             return
@@ -307,7 +331,7 @@ private struct ChapterRow: View {
     /// stops — a pause, not a discard: the chunks written so far are kept and
     /// picked up next time.
     private func toggleRender() {
-        guard let converter = model.converter, let voice = model.selectedVoice else { return }
+        guard let converter = model.converter, let voice = model.voice(for: book) else { return }
         if isConverting {
             converter.cancel(chapter.id)
         } else if !chapter.isComplete {

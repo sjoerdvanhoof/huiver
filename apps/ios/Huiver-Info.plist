@@ -22,6 +22,9 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>online.mo4.huiver.nano.convert</string>
+		<!-- Must match SyncModel.backgroundTaskIdentifier exactly, for the same
+		     reason. This is the slot a large first sync finishes in. -->
+		<string>online.mo4.huiver.nano.sync</string>
 	</array>
 	<!-- Sync. Browsing for a declared Bonjour type needs no multicast
 	     entitlement; the local-network prompt appears on first use. -->

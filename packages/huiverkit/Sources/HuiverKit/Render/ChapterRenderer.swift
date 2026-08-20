@@ -85,6 +85,12 @@ public actor ChapterRenderer {
                                 chunk.text,
                                 voice: voice,
                                 options: options,
+                                // The book's own language, which is what the
+                                // multilingual model needs and Nano ignores.
+                                // Stored per book rather than as a setting, so
+                                // a Dutch novel among twenty English ones needs
+                                // nothing changed before and after.
+                                language: .named(book.languageCode),
                                 beginsMidSentence: chunk.beginsMidSentence,
                                 endsMidSentence: chunk.endsMidSentence,
                                 cancelled: cancelled

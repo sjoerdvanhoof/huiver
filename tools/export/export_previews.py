@@ -26,12 +26,49 @@ from pathlib import Path
 
 import numpy as np
 
-from common import S3GEN_SR, load_nano
+from common import S3GEN_SR, load_multilingual, load_nano
 
 PREVIEW_TEXT = (
     "This is how I sound. If you like it, I can read your whole book, "
     "one chapter at a time."
 )
+
+# The same line per language, for the voices that have one. A Dutch reader
+# auditioning in English tells you nothing about the thing you are choosing it
+# for — the accent is the whole point of a per-language voice, and it only shows
+# in that language.
+PREVIEW_TEXTS = {
+    "en": PREVIEW_TEXT,
+    "nl": "Zo klink ik. Als je dit fijn vindt, lees ik je hele boek voor, "
+          "kapittel voor kapittel.",
+    "de": "So klinge ich. Wenn es dir gefällt, lese ich dir das ganze Buch vor, "
+          "ein Kapitel nach dem anderen.",
+    "fr": "Voilà comment je sonne. Si cela vous plaît, je peux vous lire tout le "
+          "livre, un chapitre à la fois.",
+    "es": "Así es como sueno. Si te gusta, puedo leerte todo el libro, "
+          "un capítulo a la vez.",
+    "it": "Ecco come suono. Se ti piace, posso leggerti tutto il libro, "
+          "un capitolo alla volta.",
+    "pt": "É assim que eu soo. Se gostar, posso ler o livro todo, "
+          "um capítulo por vez.",
+    "sv": "Så här låter jag. Om du tycker om det kan jag läsa hela boken för dig, "
+          "ett kapitel i taget.",
+    "da": "Sådan lyder jeg. Hvis du kan lide det, læser jeg hele bogen for dig, "
+          "et kapitel ad gangen.",
+    "no": "Slik høres jeg ut. Hvis du liker det, kan jeg lese hele boken for deg, "
+          "ett kapittel om gangen.",
+    "fi": "Tältä minä kuulostan. Jos pidät siitä, voin lukea koko kirjan sinulle, "
+          "luku kerrallaan.",
+    "pl": "Tak brzmię. Jeśli ci się podoba, przeczytam ci całą książkę, "
+          "rozdział po rozdziale.",
+    "tr": "Sesim böyle. Beğendiyseniz kitabın tamamını okuyabilirim, "
+          "her seferinde bir bölüm.",
+    "el": "Έτσι ακούγομαι. Αν σου αρέσει, μπορώ να σου διαβάσω ολόκληρο το βιβλίο, "
+          "ένα κεφάλαιο τη φορά.",
+    "ar": "هكذا أبدو. إذا أعجبك ذلك، يمكنني أن أقرأ لك الكتاب كله، فصلاً بعد فصل.",
+    "hi": "मेरी आवाज़ ऐसी है। अगर आपको पसंद आए, तो मैं आपकी पूरी किताब पढ़ सकता हूँ, "
+          "एक बार में एक अध्याय।",
+}
 
 # Matches the app's defaults in SamplingOptions, so the preview is
 # representative rather than flattering.
@@ -65,7 +102,18 @@ def main():
         default=Path(__file__).resolve().parents[2] / "apps" / "web" / "data" / "voices",
         help="where the desktop app keeps its reference clips",
     )
-    ap.add_argument("--text", default=PREVIEW_TEXT, help="what the voices say")
+    ap.add_argument(
+        "--language-clips",
+        type=Path,
+        default=Path(__file__).resolve().parents[2] / "tools" / "voices" / "clips",
+        help="the per-language readers, named <code>.wav",
+    )
+    ap.add_argument("--text", help="what every voice says, overriding the per-language lines")
+    ap.add_argument(
+        "--multilingual",
+        action="store_true",
+        help="render through Chatterbox Multilingual, each voice in its own language",
+    )
     args = ap.parse_args()
 
     manifest_path = args.out / "voices.json"
@@ -78,14 +126,18 @@ def main():
     if not targets:
         raise SystemExit(f"No matching voices. Ids: {', '.join(v['id'] for v in manifest['voices'])}")
 
-    print(f"loading Chatterbox Nano for {len(targets)} preview(s)")
-    model = load_nano()
+    if args.multilingual:
+        print(f"loading Chatterbox Multilingual for {len(targets)} preview(s)")
+        model = load_multilingual()
+    else:
+        print(f"loading Chatterbox Nano for {len(targets)} preview(s)")
+        model = load_nano()
     builtin = model.conds
 
     for voice in targets:
         # The built-in voice is the one that lives in the weights; every other
         # is cloned from the clip it was exported from.
-        if voice["id"] == "nano_default":
+        if voice["id"] in ("nano_default", "mtl_default"):
             model.conds = builtin
             prompt = None
         else:
@@ -93,19 +145,39 @@ def main():
             candidates = [
                 args.clips / "builtin" / f"{stem}.wav",
                 args.clips / "recorded" / f"{stem}.wav",
+                # The per-language readers, named by language code.
+                args.language_clips / f"{stem.removeprefix('lang_')}.wav",
             ]
             prompt = next((c for c in candidates if c.exists()), None)
             if prompt is None:
                 print(f"  {voice['id']:<18} skipped — no reference clip")
                 continue
 
-        wav = model.generate(
-            args.text,
-            audio_prompt_path=str(prompt) if prompt else None,
-            temperature=TEMPERATURE,
-            top_p=TOP_P,
-            repetition_penalty=REPETITION_PENALTY,
-        )
+        language = voice.get("language", "en")
+        text = args.text or PREVIEW_TEXTS.get(language)
+        if text is None:
+            # Said out loud rather than quietly falling back to English: a
+            # Turkish voice auditioning in English is exactly the thing a
+            # per-language voice exists to avoid, and it is invisible unless
+            # someone happens to listen.
+            print(f"  {voice['id']:<18} no preview line for '{language}' — add one to PREVIEW_TEXTS")
+            continue
+        if args.multilingual:
+            wav = model.generate(
+                text,
+                language_id=language,
+                audio_prompt_path=str(prompt) if prompt else None,
+                temperature=TEMPERATURE,
+                repetition_penalty=REPETITION_PENALTY,
+            )
+        else:
+            wav = model.generate(
+                text,
+                audio_prompt_path=str(prompt) if prompt else None,
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+                repetition_penalty=REPETITION_PENALTY,
+            )
         samples = wav.squeeze(0).detach().cpu().numpy()
 
         name = f"{voice['id']}.preview.wav"

@@ -13,6 +13,13 @@ struct ConnectorSection: View {
 
     @State private var showingScanner = false
 
+    /// `SyncModel` is `@Observable` rather than a source of truth for a toggle,
+    /// and the setting behind this one has a side effect — starting or stopping
+    /// the watcher — so it is a computed binding rather than `@Bindable`.
+    private var autoSyncBinding: Binding<Bool> {
+        .init(get: { sync.autoSync }, set: { sync.autoSync = $0 })
+    }
+
     var body: some View {
         Section {
             if let mac = sync.pairedMac {
@@ -45,6 +52,8 @@ struct ConnectorSection: View {
                     }
                 }
 
+                Toggle("Sync automatically", isOn: autoSyncBinding)
+
                 Button("Unpair", role: .destructive) { sync.unpair() }
             } else {
                 Button {
@@ -66,7 +75,8 @@ struct ConnectorSection: View {
                 sync.isPaired
                     ? "Sync moves books both ways, audio from the Mac, and listening positions "
                         + "whichever is newer. Directly between the two devices — nothing leaves "
-                        + "your network."
+                        + "your network. Automatic sync starts a session when the Mac appears on "
+                        + "the network, at most once a minute."
                     : "Open huiver on your Mac, choose Pair a phone, and scan the code it shows."
             )
         }

@@ -65,6 +65,11 @@ public enum WavFile {
         return out
     }
 
+    /// How many samples a file this wrote holds, without decoding it.
+    public static func sampleCount(of data: Data) -> Int {
+        max(0, (data.count - headerSize) / 2)
+    }
+
     /// Duration without reading the samples, for a progress bar.
     public static func duration(ofFileAt url: URL) -> Double? {
         guard let size = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int,

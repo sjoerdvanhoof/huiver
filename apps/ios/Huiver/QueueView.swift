@@ -19,10 +19,27 @@ struct QueueView: View {
         return converter.queue.filter { $0.chapterId != converter.active?.chapterId }
     }
 
+    /// Work this phone has handed to the Mac. It belongs on this screen for the
+    /// same reason the local queue does — it is a chapter that is coming — even
+    /// though nothing on this device is doing it.
+    private var asked: [Asked] {
+        model.books.flatMap { book in
+            book.chapters.compactMap { chapter in
+                model.offloaded[chapter.id].map {
+                    Asked(book: book, chapter: chapter, state: $0)
+                }
+            }
+        }
+    }
+
+    private var isEmpty: Bool {
+        converter?.active == nil && waiting.isEmpty && asked.isEmpty
+    }
+
     var body: some View {
         ZStack {
             theme.colors.background.ignoresSafeArea()
-            if converter?.active == nil, waiting.isEmpty {
+            if isEmpty {
                 empty
             } else {
                 list
@@ -31,6 +48,9 @@ struct QueueView: View {
         .navigationTitle("Queue")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // Only the local queue: what the Mac has been asked for is
+            // cancelled one row at a time, because it is the slower thing to
+            // rebuild and the easier thing to lose by accident.
             if converter?.active != nil || !waiting.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Cancel all", role: .destructive) { converter?.cancelAll() }
@@ -73,8 +93,73 @@ struct QueueView: View {
                 }
                 .listRowBackground(theme.colors.card)
             }
+            if !asked.isEmpty {
+                Section("On the Mac") {
+                    ForEach(asked) { AskedRow(asked: $0) }
+                        .onDelete { offsets in
+                            let rows = asked
+                            for index in offsets {
+                                Task { await model.cancelMacRequest(chapter: rows[index].chapter) }
+                            }
+                        }
+                }
+                .listRowBackground(theme.colors.card)
+            }
         }
         .scrollContentBackground(.hidden)
+    }
+}
+
+/// One chapter the Mac has been asked for.
+private struct Asked: Identifiable {
+    let book: Book
+    let chapter: Chapter
+    let state: AppModel.OffloadState
+    var id: String { chapter.id }
+}
+
+private struct AskedRow: View {
+    let asked: Asked
+
+    @Environment(AppModel.self) private var model
+    @Environment(\.theme) private var theme
+
+    private var voiceName: String {
+        model.voices.first { $0.id == asked.state.voiceId }?.name ?? asked.state.voiceId
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Palette.Space.xs) {
+            Text(asked.chapter.title)
+                .font(.huiverBody)
+                .foregroundStyle(theme.colors.foreground)
+                .lineLimit(1)
+            Text(detail)
+                .font(.huiverCaption)
+                .foregroundStyle(theme.colors.mutedForeground)
+                .lineLimit(1)
+            if let status = asked.state.status, status.state == .rendering, status.chunkCount > 0 {
+                ProgressView(
+                    value: Double(status.renderedChunks) / Double(status.chunkCount)
+                )
+                .tint(theme.colors.primary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var detail: String {
+        var parts = [asked.book.title, "read by \(voiceName)"]
+        switch asked.state.status?.state {
+        case nil: parts.append("waiting for the next sync")
+        case .queued: parts.append("queued on the Mac")
+        case .rendering:
+            let status = asked.state.status
+            parts.append("\(status?.renderedChunks ?? 0)/\(max(status?.chunkCount ?? 1, 1))")
+        case .done: parts.append("done — sync to fetch it")
+        case .failed: parts.append("the Mac could not render it")
+        }
+        return parts.joined(separator: " · ")
     }
 }
 

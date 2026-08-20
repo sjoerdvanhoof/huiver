@@ -1,0 +1,229 @@
+{
+  "voices": [
+    {
+      "id": "mtl_default",
+      "name": "Multilingual",
+      "detail": "the model's own voice",
+      "file": "mtl_default.voice",
+      "language": "en",
+      "persona": "Chatterbox as it comes, with no one cloned into it. Neutral, reliable, and the fastest thing here to start with.",
+      "preview": "mtl_default.preview.wav"
+    },
+    {
+      "id": "lang_ar",
+      "name": "Arabic",
+      "detail": "native Arabic reader",
+      "file": "lang_ar.voice",
+      "language": "ar",
+      "persona": "A LibriVox reader recorded in Arabic. The accent comes from the clip rather than from the text, so this is the one to pick for a Arabic book.",
+      "preview": "lang_ar.preview.wav"
+    },
+    {
+      "id": "lang_da",
+      "name": "Danish",
+      "detail": "native Danish reader",
+      "file": "lang_da.voice",
+      "language": "da",
+      "persona": "A LibriVox reader recorded in Danish. The accent comes from the clip rather than from the text, so this is the one to pick for a Danish book.",
+      "preview": "lang_da.preview.wav"
+    },
+    {
+      "id": "lang_de",
+      "name": "German",
+      "detail": "native German reader",
+      "file": "lang_de.voice",
+      "language": "de",
+      "persona": "A LibriVox reader recorded in German. The accent comes from the clip rather than from the text, so this is the one to pick for a German book.",
+      "preview": "lang_de.preview.wav"
+    },
+    {
+      "id": "lang_el",
+      "name": "Greek",
+      "detail": "native Greek reader",
+      "file": "lang_el.voice",
+      "language": "el",
+      "persona": "A LibriVox reader recorded in Greek. The accent comes from the clip rather than from the text, so this is the one to pick for a Greek book.",
+      "preview": "lang_el.preview.wav"
+    },
+    {
+      "id": "lang_es",
+      "name": "Spanish",
+      "detail": "native Spanish reader",
+      "file": "lang_es.voice",
+      "language": "es",
+      "persona": "A LibriVox reader recorded in Spanish. The accent comes from the clip rather than from the text, so this is the one to pick for a Spanish book.",
+      "preview": "lang_es.preview.wav"
+    },
+    {
+      "id": "lang_fi",
+      "name": "Finnish",
+      "detail": "native Finnish reader",
+      "file": "lang_fi.voice",
+      "language": "fi",
+      "persona": "A LibriVox reader recorded in Finnish. The accent comes from the clip rather than from the text, so this is the one to pick for a Finnish book.",
+      "preview": "lang_fi.preview.wav"
+    },
+    {
+      "id": "lang_fr",
+      "name": "French",
+      "detail": "native French reader",
+      "file": "lang_fr.voice",
+      "language": "fr",
+      "persona": "A LibriVox reader recorded in French. The accent comes from the clip rather than from the text, so this is the one to pick for a French book.",
+      "preview": "lang_fr.preview.wav"
+    },
+    {
+      "id": "lang_hi",
+      "name": "Hindi",
+      "detail": "native Hindi reader",
+      "file": "lang_hi.voice",
+      "language": "hi",
+      "persona": "A LibriVox reader recorded in Hindi. The accent comes from the clip rather than from the text, so this is the one to pick for a Hindi book.",
+      "preview": "lang_hi.preview.wav"
+    },
+    {
+      "id": "lang_it",
+      "name": "Italian",
+      "detail": "native Italian reader",
+      "file": "lang_it.voice",
+      "language": "it",
+      "persona": "A LibriVox reader recorded in Italian. The accent comes from the clip rather than from the text, so this is the one to pick for a Italian book.",
+      "preview": "lang_it.preview.wav"
+    },
+    {
+      "id": "lang_nl",
+      "name": "Dutch",
+      "detail": "native Dutch reader",
+      "file": "lang_nl.voice",
+      "language": "nl",
+      "persona": "A LibriVox reader recorded in Dutch. The accent comes from the clip rather than from the text, so this is the one to pick for a Dutch book.",
+      "preview": "lang_nl.preview.wav"
+    },
+    {
+      "id": "lang_no",
+      "name": "Norwegian",
+      "detail": "native Norwegian reader",
+      "file": "lang_no.voice",
+      "language": "no",
+      "persona": "A LibriVox reader recorded in Norwegian. The accent comes from the clip rather than from the text, so this is the one to pick for a Norwegian book.",
+      "preview": "lang_no.preview.wav"
+    },
+    {
+      "id": "lang_pl",
+      "name": "Polish",
+      "detail": "native Polish reader",
+      "file": "lang_pl.voice",
+      "language": "pl",
+      "persona": "A LibriVox reader recorded in Polish. The accent comes from the clip rather than from the text, so this is the one to pick for a Polish book.",
+      "preview": "lang_pl.preview.wav"
+    },
+    {
+      "id": "lang_pt",
+      "name": "Portuguese",
+      "detail": "native Portuguese reader",
+      "file": "lang_pt.voice",
+      "language": "pt",
+      "persona": "A LibriVox reader recorded in Portuguese. The accent comes from the clip rather than from the text, so this is the one to pick for a Portuguese book.",
+      "preview": "lang_pt.preview.wav"
+    },
+    {
+      "id": "lang_sv",
+      "name": "Swedish",
+      "detail": "native Swedish reader",
+      "file": "lang_sv.voice",
+      "language": "sv",
+      "persona": "A LibriVox reader recorded in Swedish. The accent comes from the clip rather than from the text, so this is the one to pick for a Swedish book.",
+      "preview": "lang_sv.preview.wav"
+    },
+    {
+      "id": "lv_chenevert",
+      "name": "Phil",
+      "detail": "US male, lively",
+      "file": "lv_chenevert.voice",
+      "language": "en",
+      "persona": "Enjoys the material and lets you hear it. Good for adventure, comedy, and anything with dialogue worth acting.",
+      "preview": "lv_chenevert.preview.wav"
+    },
+    {
+      "id": "lv_clarke",
+      "name": "David",
+      "detail": "UK male, crisp and precise",
+      "file": "lv_clarke.voice",
+      "language": "en",
+      "persona": "Articulate and slightly formal. Suits history, biography and anything with footnotes.",
+      "preview": "lv_clarke.preview.wav"
+    },
+    {
+      "id": "lv_golding",
+      "name": "Ruth",
+      "detail": "UK female, measured",
+      "file": "lv_golding.voice",
+      "language": "en",
+      "persona": "Unshowy and exact, the way a good documentary is narrated. Never gets between you and the sentence.",
+      "preview": "lv_golding.preview.wav"
+    },
+    {
+      "id": "lv_klett",
+      "name": "Elizabeth",
+      "detail": "US female, clear and literary",
+      "file": "lv_klett.voice",
+      "language": "en",
+      "persona": "Reads as though the book matters and you have all evening. Best for long novels you intend to finish.",
+      "preview": "lv_klett.preview.wav"
+    },
+    {
+      "id": "lv_neufeld",
+      "name": "Bob",
+      "detail": "US male, deep and unhurried",
+      "file": "lv_neufeld.voice",
+      "language": "en",
+      "persona": "Low, slow and settled. The one to fall asleep to, which is either the point or the problem.",
+      "preview": "lv_neufeld.preview.wav"
+    },
+    {
+      "id": "lv_praetzellis",
+      "name": "Adrian",
+      "detail": "UK male, characterful",
+      "file": "lv_praetzellis.voice",
+      "language": "en",
+      "persona": "Has opinions about the characters and does the voices. Excellent for classics, distracting for a manual.",
+      "preview": "lv_praetzellis.preview.wav"
+    },
+    {
+      "id": "lv_samuel",
+      "name": "Cori",
+      "detail": "UK female, crisp",
+      "file": "lv_samuel.voice",
+      "language": "en",
+      "persona": "Precise and a little dry. Handles complicated prose without letting it become a performance.",
+      "preview": "lv_samuel.preview.wav"
+    },
+    {
+      "id": "lv_savage",
+      "name": "Karen",
+      "detail": "US female, warm and storybook",
+      "file": "lv_savage.voice",
+      "language": "en",
+      "persona": "The voice of someone reading to a room. Unhurried, fond of the characters, good company at bedtime.",
+      "preview": "lv_savage.preview.wav"
+    },
+    {
+      "id": "lv_shallenberg",
+      "name": "Kara",
+      "detail": "US female, bright and brisk",
+      "file": "lv_shallenberg.voice",
+      "language": "en",
+      "persona": "Keeps things moving. Suits non-fiction and anything you want to get through rather than linger over.",
+      "preview": "lv_shallenberg.preview.wav"
+    },
+    {
+      "id": "lv_smith",
+      "name": "Mark",
+      "detail": "US male, steady and even",
+      "file": "lv_smith.voice",
+      "language": "en",
+      "persona": "Even-tempered to the point of being restful. The safe choice for a book you will listen to for twenty hours.",
+      "preview": "lv_smith.preview.wav"
+    }
+  ]
+}

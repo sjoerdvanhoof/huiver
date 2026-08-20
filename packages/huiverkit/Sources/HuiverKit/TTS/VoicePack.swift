@@ -17,6 +17,15 @@ public struct Voice: Sendable, Identifiable, Hashable {
     /// whose warmth it is. Optional: a voice without one just shows less.
     public var persona: String?
 
+    /// The language the reference clip was recorded in.
+    ///
+    /// Not a restriction — the model will read any language in any voice — but
+    /// the accent comes from the clip, so a Dutch book in an English voice is an
+    /// English speaker reading Dutch, and sounds like it. This is what lets the
+    /// app pick a reader who belongs to the book. Absent in voice packs written
+    /// before it existed, which were all English.
+    public var language: String?
+
     /// T3 conditioning: who is speaking, and 375 speech tokens of them saying
     /// the reference passage.
     public let speakerEmbedding: [Float]
@@ -49,6 +58,9 @@ public enum VoicePack {
             let preview: String?
             /// Absent in manifests written before personas existed.
             let persona: String?
+            /// Absent in packs written before voices had a language, all of
+            /// which were English.
+            let language: String?
         }
         let voices: [Entry]
     }
@@ -109,6 +121,7 @@ public enum VoicePack {
             name: entry.name,
             detail: entry.detail,
             persona: entry.persona,
+            language: entry.language,
             speakerEmbedding: try reader.floats(speakerCount),
             condPromptTokens: try reader.int32s(condCount),
             promptTokens: try reader.int32s(promptCount),

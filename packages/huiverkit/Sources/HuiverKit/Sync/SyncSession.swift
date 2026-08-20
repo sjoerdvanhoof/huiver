@@ -17,6 +17,24 @@ public protocol SyncDataSource: Sendable {
     func receive(_ item: WantItem, data: Data) async throws
     /// Merge readings from the other device that are newer than ours.
     func mergeProgress(_ records: [ProgressRecord]) async
+    /// Take on the other device's outstanding "please render this" asks, and
+    /// say what became of each.
+    func acceptConvertRequests(_ requests: [ConvertRequest]) async -> [SyncMessage.JobStatus]
+    /// What the other device made of an ask this one sent.
+    func receive(jobStatus: SyncMessage.JobStatus) async
+}
+
+/// Both halves of convert-offload are optional: a device that renders for
+/// nobody accepts no requests, and one that asks for nothing has nowhere to put
+/// a status. Defaults rather than requirements, so a data source that predates
+/// offload — including the in-memory one the protocol tests run against — is
+/// still a `SyncDataSource`.
+public extension SyncDataSource {
+    func acceptConvertRequests(_ requests: [ConvertRequest]) async -> [SyncMessage.JobStatus] {
+        []
+    }
+
+    func receive(jobStatus: SyncMessage.JobStatus) async {}
 }
 
 /// One sync, start to finish.
@@ -56,6 +74,10 @@ public actor SyncSession {
         public var bytesSent: Int64 = 0
         public var bytesReceived: Int64 = 0
         public var progressMerged: Int = 0
+        /// Asks from the other device that this one took on.
+        public var convertRequestsAccepted: Int = 0
+        /// News about asks this device made, however it arrived.
+        public var jobUpdates: Int = 0
         /// Set when the two devices' clocks disagree enough to make
         /// newest-wins the wrong answer.
         public var clockSkew: TimeInterval?
@@ -102,6 +124,10 @@ public actor SyncSession {
     /// Whether this side wants the other's audio. The phone does; the Mac,
     /// which can render anything faster than the phone can, does not.
     private let wantsAudio: Bool
+    /// Set at the handshake: whether the other device can decode AAC. Audio is
+    /// six times smaller compressed, and the only thing stopping every session
+    /// using it is a peer old enough not to understand it.
+    private var peerAcceptsAAC = false
 
     public init(
         transport: SyncTransport,
@@ -146,6 +172,15 @@ public actor SyncSession {
             summary.progressMerged = newer.count
         }
 
+        // Their asks, before the transfers rather than after: a request is
+        // cheap to accept and a session that dies halfway through a gigabyte of
+        // audio should still have started the next chapter rendering. What
+        // comes back is a status per ask, which the other side picks up
+        // wherever it is in the conversation — see `next()`.
+        let accepted = await source.acceptConvertRequests(theirs.convertRequests)
+        summary.convertRequestsAccepted = accepted.count
+        for status in accepted { try await send(.jobStatus(status)) }
+
         let want = SyncDiff.want(mine: mine, theirs: theirs, audioIsWanted: wantsAudio)
         switch role {
         case .client:
@@ -161,6 +196,7 @@ public actor SyncSession {
             try await receiveFiles(expecting: want, into: &summary)
             _ = try? await next()  // their bye
         }
+        summary.jobUpdates = jobUpdates
         return summary
     }
 
@@ -183,6 +219,8 @@ public actor SyncSession {
             try await send(.helloAck(identity))
         }
 
+        peerAcceptsAAC = peer.accepts(.aac)
+
         guard identity.canTalk(to: peer) else {
             throw SyncError.incompatibleVersion(
                 theirs: peer.protocolVersion, mine: identity.protocolVersion
@@ -198,14 +236,37 @@ public actor SyncSession {
             // Something asked for and then deleted between building the
             // manifest and being asked for it. Not an error: the next session's
             // manifest will not offer it.
-            guard let data = try await source.data(for: item) else { continue }
+            guard let wav = try await source.data(for: item) else { continue }
+
+            // Compressed for the crossing only. A failure here is not worth
+            // failing the transfer over — the uncompressed bytes are right
+            // there, and a chapter that arrives slowly beats one that does not
+            // arrive.
+            var data = wav
+            var codec: AudioManifest.Codec?
+            if case .audio = item, peerAcceptsAAC {
+                do {
+                    let compressed = try ChunkPack.aac(from: wav)
+                    // The container costs about 33 kB whatever it holds, so a
+                    // transfer of one short chunk is genuinely smaller
+                    // uncompressed. Sending the smaller of the two is a
+                    // one-line rule that needs no threshold to tune.
+                    if compressed.count < wav.count {
+                        data = compressed
+                        codec = .aac
+                    }
+                } catch {
+                    PlaybackLog.note("sync: \(item.key) would not encode: \(error)")
+                }
+            }
 
             try await send(
                 .fileHeader(
                     SyncMessage.FileHeader(
                         item: item,
                         size: Int64(data.count),
-                        sha256: ContentIdentity.hash(of: data)
+                        sha256: ContentIdentity.hash(of: data),
+                        codec: codec
                     )
                 )
             )
@@ -248,7 +309,18 @@ public actor SyncSession {
                     PlaybackLog.note("sync: \(header.item.key) failed its hash check")
                     continue
                 }
-                try await source.receive(header.item, data: data)
+                // Back to WAV before the library sees it: what crosses is an
+                // encoding, not a storage format.
+                var payload = data
+                if header.codec == .aac {
+                    do {
+                        payload = try ChunkPack.wav(fromAAC: data)
+                    } catch {
+                        PlaybackLog.note("sync: \(header.item.key) would not decode: \(error)")
+                        continue  // still missing, so the next diff asks again
+                    }
+                }
+                try await source.receive(header.item, data: payload)
                 summary.received += 1
                 summary.bytesReceived += Int64(data.count)
 
@@ -262,9 +334,6 @@ public actor SyncSession {
             case .progressSet(let set):
                 await source.mergeProgress(set.records)
                 summary.progressMerged += set.records.count
-
-            case .jobStatus:
-                continue  // cosmetic; the Mac's queue is the source of truth
 
             default:
                 throw SyncError.unexpectedMessage("\(message)")
@@ -299,7 +368,27 @@ public actor SyncSession {
         try await transport.send(try message.frame())
     }
 
+    /// How many job statuses came in, wherever in the conversation they landed.
+    private var jobUpdates = 0
+
+    /// The next message that is part of the conversation.
+    ///
+    /// Job statuses are not: they are the other device answering something this
+    /// one asked in its manifest, and they can arrive at any point between the
+    /// manifests and the goodbye. Swallowing them here rather than at each call
+    /// site is what lets that be true — a phone with an empty want list never
+    /// enters the receive loop at all, and used to meet a status where it
+    /// expected a want.
     private func next() async throws -> SyncMessage {
+        while true {
+            let message = try await nextMessage()
+            guard case .jobStatus(let status) = message else { return message }
+            await source.receive(jobStatus: status)
+            jobUpdates += 1
+        }
+    }
+
+    private func nextMessage() async throws -> SyncMessage {
         if let pushedBack {
             self.pushedBack = nil
             return pushedBack

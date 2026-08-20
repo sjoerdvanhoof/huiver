@@ -40,7 +40,22 @@ struct VoicesView: View {
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(voice.name).foregroundStyle(.primary)
+                                    HStack(spacing: Palette.Space.xs) {
+                                        Text(voice.name).foregroundStyle(.primary)
+                                        // The language the clip was recorded
+                                        // in, which is the language this voice
+                                        // has an accent for.
+                                        if let code = voice.language {
+                                            Text(Language.named(code).name)
+                                                .font(.caption2)
+                                                .foregroundStyle(theme.colors.mutedForeground)
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 1)
+                                                .background(
+                                                    theme.colors.muted, in: .capsule
+                                                )
+                                        }
+                                    }
                                     Text(voice.detail).font(.caption).foregroundStyle(.secondary)
                                     // Only for the voice in use: ten paragraphs
                                     // of prose would turn the picker into an

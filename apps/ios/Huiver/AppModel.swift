@@ -28,6 +28,10 @@ final class AppModel {
     /// from the store rather than read through it, so a view body never has to
     /// await an actor.
     private(set) var progress: [String: ChapterProgress] = [:]
+    /// Chapters this phone has asked the Mac to render, keyed by chapter id.
+    /// Drawn from `ConvertRequestStore` for the same reason `progress` is drawn
+    /// from the progress store: a view body cannot await an actor.
+    private(set) var offloaded: [String: OffloadState] = [:]
     /// True on the run that actually compiles the models, which is the slow one
     /// worth explaining. Set once the first load finishes.
     var hasPreparedBefore: Bool {
@@ -60,9 +64,20 @@ final class AppModel {
         voices.first { $0.id == selectedVoiceId } ?? voices.first
     }
 
+    /// One outstanding ask, as a chapter row needs it.
+    struct OffloadState: Equatable {
+        var requestId: String
+        var voiceId: String
+        /// The last thing the Mac said, or nil when the two have not met since
+        /// the ask was made.
+        var status: SyncMessage.JobStatus?
+    }
+
     /// Also read directly by the player, to build the read-along map.
     private(set) var library: Library?
     private(set) var progressStore: ProgressStore?
+    /// Read by the sync session, which is what carries these to the Mac.
+    private(set) var convertRequests: ConvertRequestStore?
 
     init() {
         selectedVoiceId = UserDefaults.standard.string(forKey: "voice") ?? "nano_default"
@@ -91,6 +106,13 @@ final class AppModel {
         await progressStore.onChange { [weak self] in
             Task { @MainActor in await self?.refreshProgress() }
         }
+
+        let convertRequests = ConvertRequestStore(root: documents)
+        self.convertRequests = convertRequests
+        await convertRequests.onChange { [weak self] in
+            Task { @MainActor in await self?.refreshOffload() }
+        }
+        await refreshOffload()
 
         guard let resources = Bundle.main.resourceURL else {
             loadFailure = "No resources in the app bundle"
@@ -246,11 +268,66 @@ final class AppModel {
         await refreshProgress()
     }
 
+    // MARK: - Asking the Mac
+
+    /// Ask the Mac to render this chapter, next time the two are in the same
+    /// room.
+    ///
+    /// Deliberately not a transfer: the ask is written down and travels in the
+    /// next manifest, so it can be made with the Mac asleep, elsewhere, or not
+    /// yet holding the book. Nothing here starts a sync.
+    func requestConversionOnMac(chapter: Chapter, in book: Book) async {
+        guard let convertRequests,
+              let contentId = book.contentId,
+              let index = book.chapters.firstIndex(where: { $0.id == chapter.id }),
+              let voice = selectedVoice
+        else { return }
+        await convertRequests.add(
+            contentId: contentId,
+            chapterIndex: index,
+            textHash: chapter.textHash ?? ContentIdentity.chapterHash(chapter.text),
+            voiceId: voice.id
+        )
+        await refreshOffload()
+    }
+
+    /// Take the ask back. The Mac finds out at the next sync, by the request no
+    /// longer being in the manifest; a chapter it has already started is its
+    /// own business, and the audio is welcome if it arrives.
+    func cancelMacRequest(chapter: Chapter) async {
+        guard let convertRequests, let state = offloaded[chapter.id] else { return }
+        await convertRequests.remove(requestId: state.requestId)
+        await refreshOffload()
+    }
+
+    /// Turn the stored asks into something keyed by chapter id, dropping any
+    /// the library says are already satisfied.
+    func refreshOffload() async {
+        guard let convertRequests else { return }
+        let byContent = Dictionary(
+            books.compactMap { book in book.contentId.map { ($0, book) } },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var map: [String: OffloadState] = [:]
+        for request in await convertRequests.pending(against: books) {
+            guard let book = byContent[request.contentId],
+                  book.chapters.indices.contains(request.chapterIndex)
+            else { continue }
+            map[book.chapters[request.chapterIndex].id] = OffloadState(
+                requestId: request.requestId,
+                voiceId: request.voiceId,
+                status: await convertRequests.status(requestId: request.requestId)
+            )
+        }
+        offloaded = map
+    }
+
     func refresh() async {
         guard let library else { return }
         books = await library.all()
         bytesOnDisk = await library.bytesOnDisk()
         await refreshProgress()
+        await refreshOffload()
     }
 
     func refreshProgress() async {

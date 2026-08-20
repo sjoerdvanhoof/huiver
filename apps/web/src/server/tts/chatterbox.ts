@@ -15,7 +15,12 @@ import type { ProviderInfo, TTSProvider, TTSSession } from "./types";
  */
 
 const APP_ROOT = path.join(import.meta.dir, "..", "..", "..");
-const VENV = process.env.HUIVER_CHATTERBOX_VENV ?? path.join(APP_ROOT, ".venv-chatterbox");
+// The Chatterbox venv moved to tools/export when the Mac app took over
+// converting: the export scripts are what need it, and this app is headed for
+// legacy/. Borrowed from there rather than kept here, so there is one 3 GB
+// environment rather than two.
+const VENV = process.env.HUIVER_CHATTERBOX_VENV
+    ?? path.join(APP_ROOT, "..", "..", "tools", "export", ".venv-chatterbox");
 const PYTHON = process.env.HUIVER_CHATTERBOX_PYTHON ?? path.join(VENV, "bin", "python");
 const WORKER = path.join(APP_ROOT, "py", "chatterbox_worker.py");
 

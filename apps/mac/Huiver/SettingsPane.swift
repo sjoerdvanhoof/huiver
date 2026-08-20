@@ -12,10 +12,40 @@ struct SettingsPane: View {
 
         Form {
             Section {
+                LabeledContent("Engine", value: model.engineName)
+                LabeledContent(
+                    "Languages",
+                    value: model.engineLanguages.count == 1
+                        ? model.engineLanguages[0].name
+                        : "\(model.engineLanguages.count) languages"
+                )
+            } header: {
+                Text("Model")
+            } footer: {
+                Text(model.engineVariant == .multilingual
+                    ? "The multilingual model reads every language above, and computes two passes per token — a guided one and an unguided one — which is why it belongs on the Mac rather than the phone. Chinese, Japanese, Hebrew, Korean and Russian are missing because each needs its own text preparation, which this app does not do."
+                    : "Nano is the phone's model: English only, and much faster. Export the multilingual models with bun run mac:models to read the other languages.")
+            }
+
+            Section {
                 LabeledContent("Temperature", value: String(format: "%.2f", model.options.temperature))
                 Slider(value: $model.options.temperature, in: 0.4...1.2, step: 0.05)
                 LabeledContent("Top-p", value: String(format: "%.2f", model.options.topP))
                 Slider(value: $model.options.topP, in: 0.5...1.0, step: 0.01)
+                // Only the multilingual model uses these two, and it uses them
+                // instead of top-k rather than as well.
+                if model.engineVariant == .multilingual {
+                    LabeledContent("Min-p", value: String(format: "%.3f", model.options.minP))
+                    Slider(value: $model.options.minP, in: 0...0.2, step: 0.005)
+                    LabeledContent(
+                        "Guidance", value: String(format: "%.2f", model.options.cfgWeight)
+                    )
+                    Slider(value: $model.options.cfgWeight, in: 0...1.0, step: 0.05)
+                    LabeledContent(
+                        "Expression", value: String(format: "%.2f", model.options.exaggeration)
+                    )
+                    Slider(value: $model.options.exaggeration, in: 0.25...1.0, step: 0.05)
+                }
                 LabeledContent(
                     "Repetition penalty",
                     value: String(format: "%.2f", model.options.repetitionPenalty)
@@ -24,7 +54,9 @@ struct SettingsPane: View {
             } header: {
                 Text("Sampling")
             } footer: {
-                Text("Lower the temperature for a long book and it reads more evenly, at the cost of some life. There is no speed control: the model has none, so change playback speed in the player instead.")
+                Text(model.engineVariant == .multilingual
+                    ? "Lower the temperature for a long book and it reads more evenly, at the cost of some life. Guidance is how hard the model is pushed towards the text — past about 0.7 it starts to sound clipped. There is no speed control: the model has none, so change playback speed in the player instead."
+                    : "Lower the temperature for a long book and it reads more evenly, at the cost of some life. There is no speed control: the model has none, so change playback speed in the player instead.")
             }
 
             Section {

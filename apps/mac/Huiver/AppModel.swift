@@ -21,6 +21,16 @@ final class AppModel {
     private(set) var placement: [String: String] = [:]
     /// Languages the loaded models can actually read.
     private(set) var engineLanguages: [Language] = [.english]
+    /// Which checkpoint is loaded, for Settings to name and for the sampling
+    /// defaults to follow.
+    private(set) var engineVariant: ChatterboxEngine.Models.Variant = .nano
+
+    var engineName: String {
+        switch engineVariant {
+        case .nano: "Chatterbox Nano — English only"
+        case .multilingual: "Chatterbox Multilingual 500M"
+        }
+    }
     /// What the engine is doing while it loads, for the preparing state.
     private(set) var preparing: ChatterboxEngine.LoadProgress?
     private(set) var preparingSince: Date?
@@ -54,8 +64,40 @@ final class AppModel {
         voices.first { $0.id == selectedVoiceId } ?? voices.first
     }
 
+    /// Which voice should read this book.
+    ///
+    /// The chosen voice, unless the book is in a language that voice was not
+    /// recorded in and there *is* a reader for it — then that reader, because
+    /// the accent comes from the reference clip rather than from the text. An
+    /// English clip reading Dutch is an English speaker reading Dutch, which is
+    /// the single most audible thing about the multilingual model.
+    ///
+    /// A preference rather than a rule: the chosen voice wins whenever it can,
+    /// and picking a language nobody was recorded in still reads the book rather
+    /// than refusing.
+    func voice(for book: Book) -> Voice? {
+        guard let selected = selectedVoice else { return nil }
+        let language = book.languageCode
+        if selected.language == nil || selected.language == language { return selected }
+        return voices.first { $0.language == language } ?? selected
+    }
+
+    /// Whether `voice(for:)` would override the chosen voice, so a screen can
+    /// say so rather than surprising the listener.
+    func substitutesVoice(for book: Book) -> Bool {
+        guard let selected = selectedVoice, let chosen = voice(for: book) else { return false }
+        return chosen.id != selected.id
+    }
+
     private(set) var library: Library?
     private(set) var progressStore: ProgressStore?
+
+    /// Asks from the phone whose book had not arrived yet when they were made.
+    ///
+    /// Kept in memory only, and deliberately: the phone re-sends its whole list
+    /// in every manifest, so the worst a forgotten one costs is a round trip.
+    /// Writing them down would mean a second queue to keep honest.
+    private var deferredRequests: [ConvertRequest] = []
 
     init() {
         selectedVoiceId = UserDefaults.standard.string(forKey: "voice") ?? "nano_default"
@@ -122,6 +164,14 @@ final class AppModel {
                 },
                 cancelFade: { [weak narrator] in narrator?.cancelFade() }
             )
+            // The sampling defaults belong to the checkpoint rather than to
+            // the app: the multilingual model filters in a different order and
+            // uses a relative floor where Nano uses top-k, so handing it Nano's
+            // numbers would read the book in a voice the weights were not tuned
+            // for. Set before the converter picks up a restored queue.
+            engineVariant = engine.variant
+            options = engineVariant == .multilingual ? .multilingual : .nano
+
             let converter = Converter(engine: engine, library: library!)
             converter.voices = voices
             converter.didChange = { [weak self] in
@@ -214,7 +264,7 @@ final class AppModel {
     /// never revisited, so without this a chapter keeps whatever it was first
     /// rendered with for good.
     func rerender(chapter: Chapter, in book: Book) async {
-        guard let library, let converter, let voice = selectedVoice else { return }
+        guard let library, let converter, let voice = voice(for: book) else { return }
         if narrator?.chapterId == chapter.id { narrator?.stop() }
         converter.cancel(chapter.id)
         // Let the cancelled pass wind down before deleting its directory —
@@ -288,6 +338,100 @@ final class AppModel {
         book.chapters
             .compactMap { chapter in progress[chapter.id].map { (chapter, $0.updatedAt) } }
             .max { $0.1 < $1.1 }?.0
+    }
+
+    // MARK: - Rendering for the phone
+
+    /// Take on what the phone has asked for, and say what became of each ask.
+    ///
+    /// Called while the manifests are still being exchanged, which is before
+    /// this session's books have arrived — so an ask for a book the Mac has
+    /// never seen is held rather than refused, and placed at the end of the
+    /// session by `placeDeferredRequests()`.
+    func acceptConvertRequests(_ requests: [ConvertRequest]) -> [SyncMessage.JobStatus] {
+        var statuses: [SyncMessage.JobStatus] = []
+        var deferred: [ConvertRequest] = []
+        for request in requests {
+            switch place(request) {
+            case .placed(let status):
+                statuses.append(status)
+            case .bookNotHereYet:
+                deferred.append(request)
+                statuses.append(
+                    SyncMessage.JobStatus(
+                        requestId: request.requestId,
+                        state: .queued,
+                        renderedChunks: 0,
+                        chunkCount: 0
+                    )
+                )
+            }
+        }
+        deferredRequests = deferred
+        return statuses
+    }
+
+    /// Place the asks that arrived before their book did. Called once the
+    /// session's transfers are finished and the library has caught up.
+    func placeDeferredRequests() {
+        let pending = deferredRequests
+        deferredRequests = []
+        for request in pending { _ = place(request) }
+    }
+
+    private enum Placement {
+        case placed(SyncMessage.JobStatus)
+        case bookNotHereYet
+    }
+
+    /// One ask, against the library and the queue as they are now.
+    private func place(_ request: ConvertRequest) -> Placement {
+        guard let book = books.first(where: { $0.contentId == request.contentId }),
+              book.chapters.indices.contains(request.chapterIndex)
+        else { return .bookNotHereYet }
+        let chapter = book.chapters[request.chapterIndex]
+
+        func status(_ state: SyncMessage.JobStatus.State, rendered: Int) -> Placement {
+            .placed(
+                SyncMessage.JobStatus(
+                    requestId: request.requestId,
+                    state: state,
+                    renderedChunks: rendered,
+                    chunkCount: chapter.chunkCount
+                )
+            )
+        }
+
+        if chapter.isComplete {
+            // Already done, in the voice that was asked for: the audio goes
+            // over in this same session's diff.
+            if chapter.renderedVoice == request.voiceId {
+                return status(.done, rendered: chapter.renderedChunks)
+            }
+            // Done, but by another narrator. Re-rendering would throw away
+            // audio this Mac's own listener may be part-way through, which is
+            // the listener's call and not sync's — the same rule the diff
+            // follows when it declines to take audio in a voice it did not ask
+            // for. Say so rather than silently doing nothing.
+            return status(.failed, rendered: chapter.renderedChunks)
+        }
+
+        guard let converter, let voice = voices.first(where: { $0.id == request.voiceId }) else {
+            // Either the engine never loaded, or this is a voice the Mac does
+            // not have. Both are things the phone should hear about.
+            return status(.failed, rendered: chapter.renderedChunks)
+        }
+
+        if converter.isQueued(chapter.id) {
+            let isActive = converter.active?.chapterId == chapter.id
+            return status(
+                isActive ? .rendering : .queued,
+                rendered: isActive ? converter.renderedChunks : chapter.renderedChunks
+            )
+        }
+
+        converter.convert(book: book, chapter: chapter, voice: voice, options: options)
+        return status(.queued, rendered: chapter.renderedChunks)
     }
 
     func clearFailure() { loadFailure = nil }

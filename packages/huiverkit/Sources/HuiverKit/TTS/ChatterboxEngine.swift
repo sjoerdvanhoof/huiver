@@ -2,33 +2,99 @@ import Accelerate
 import CoreML
 import Foundation
 
-/// Chatterbox Nano, running on the phone.
+/// Chatterbox, in either of the two sizes this project ships.
 ///
-/// Four Core ML models, in two stages. T3 is a 12-layer GPT-2 that reads the
-/// text and emits speech tokens at 25 Hz, one at a time; S3Gen turns a whole
-/// run of those tokens into 24 kHz audio in one shot. So the cost of a chunk is
-/// dominated by the token loop, which is why that half is split into a
-/// flexible-shape prefill and a fixed-shape, stateful decode step — the decode
-/// model is the only one that runs hundreds of times, and fixed shapes are what
-/// let it stay on the Neural Engine.
+/// Four Core ML models, in two stages. T3 reads the text and emits speech
+/// tokens at 25 Hz, one at a time; S3Gen turns a whole run of those tokens into
+/// 24 kHz audio in one shot. So the cost of a chunk is dominated by the token
+/// loop, which is why that half is split into a flexible-shape prefill and a
+/// fixed-shape, stateful decode step — the decode model is the only one that
+/// runs hundreds of times, and fixed shapes are what let it stay on the Neural
+/// Engine.
+///
+/// ## Two models, one loop
+///
+/// **Nano** is the phone's: a 12-layer GPT-2 reading GPT-2's English byte
+/// pairs, English only, one row per step.
+///
+/// **Multilingual** is the Mac's: 30 LLaMA layers, a grapheme vocabulary with a
+/// language tag, and — the difference that shapes everything here —
+/// **classifier-free guidance, which is not optional**. Every step computes two
+/// rows, a conditional and an unconditional one, and the two are folded together
+/// inside the exported model. That doubles the arithmetic and the KV cache (333
+/// MB against Nano's 62), which is why one runs on a phone and the other does
+/// not.
+///
+/// Everything variant-specific is either read out of the models' metadata or
+/// switched on `variant` at exactly three places: the prefill inputs, the decode
+/// inputs, and the order the sampler filters in. That is the whole difference in
+/// code; the loop, the windowing and the seams are shared.
 ///
 /// One chunk of text in, one buffer of samples out. Splitting a chapter into
 /// chunks, keeping the audio and playing it belongs to the caller.
 public actor ChatterboxEngine {
     public struct Models: Sendable {
+        /// Which checkpoint these files came out of.
+        public enum Variant: String, Sendable {
+            case nano
+            case multilingual
+        }
+
+        public var variant: Variant
         public var prefill: URL
         public var decode: URL
         public var flow: URL
         public var vocoder: URL
         public var tokenizer: URL
 
-        /// The layout `bun run ios:models` writes.
+        /// The layout `bun run ios:install` and `bun run mac:install` write.
+        ///
+        /// The multilingual packages are named `MTL*`, so both sets can sit in
+        /// one folder — and if they are there, they are what this app runs. That
+        /// is the whole switch: install the models you want and the engine
+        /// follows, rather than a build flag deciding it.
         public init(directory: URL) {
-            prefill = directory.appendingPathComponent("T3Prefill.mlmodelc")
-            decode = directory.appendingPathComponent("T3Decode.mlmodelc")
-            flow = directory.appendingPathComponent("S3Flow.mlmodelc")
-            vocoder = directory.appendingPathComponent("S3Vocoder.mlmodelc")
+            let multilingual = directory.appendingPathComponent("MTLT3Prefill.mlmodelc")
+            let isMultilingual = FileManager.default.fileExists(atPath: multilingual.path)
+            variant = isMultilingual ? .multilingual : .nano
+            let prefix = isMultilingual ? "MTL" : ""
+            prefill = directory.appendingPathComponent("\(prefix)T3Prefill.mlmodelc")
+            decode = directory.appendingPathComponent("\(prefix)T3Decode.mlmodelc")
+            flow = directory.appendingPathComponent("\(prefix)S3Flow.mlmodelc")
+            vocoder = directory.appendingPathComponent("\(prefix)S3Vocoder.mlmodelc")
             tokenizer = directory
+        }
+    }
+
+    /// Either tokenizer, behind one call.
+    ///
+    /// Not variations on a theme: one is byte-level BPE over English byte
+    /// pairs with no unknown token, the other a grapheme vocabulary that
+    /// decomposes accents and takes a language tag. What they share is text in,
+    /// ids out.
+    enum Tokenizing: Sendable {
+        case nano(BPETokenizer)
+        case multilingual(MTLTokenizer)
+
+        func encode(_ text: String, language: Language) -> [Int32] {
+            switch self {
+            case .nano(let tokenizer): tokenizer.encode(text).map(Int32.init)
+            case .multilingual(let tokenizer): tokenizer.encode(text, language: language.code)
+            }
+        }
+
+        /// Whether this tokenizer would rather not try.
+        ///
+        /// Only the multilingual one ever refuses, and only for the five
+        /// languages whose text needs a normaliser that is not ported —
+        /// see `MTLTokenizer`. Nano refuses nothing: it reads Dutch with
+        /// English pronunciation, which the app says out loud rather than
+        /// hiding behind a disabled button.
+        func refuses(_ language: Language) -> Bool {
+            switch self {
+            case .nano: false
+            case .multilingual(let tokenizer): !tokenizer.canRead(language.code)
+            }
         }
     }
 
@@ -39,6 +105,7 @@ public actor ChatterboxEngine {
         case badOutput(String)
         case unloadable(String, String)
         case voiceMismatch(String, Int, Int)
+        case unsupportedLanguage(String)
 
         public var errorDescription: String? {
             switch self {
@@ -53,6 +120,12 @@ public actor ChatterboxEngine {
                 "Core ML could not load \(model) on any processor: \(why)"
             case .voiceMismatch(let what, let got, let want):
                 "Voice \(what) is \(got) values; these models want \(want). Re-run: bun run ios:voices"
+            case .unsupportedLanguage(let name):
+                """
+                \(name) needs text preparation this app does not do — Chinese, \
+                Japanese, Hebrew, Korean and Russian each need their own \
+                normaliser before the model can read them.
+                """
             }
         }
     }
@@ -72,13 +145,24 @@ public actor ChatterboxEngine {
     /// per chunk (~62 MB a time). Belongs to exactly one `MLModel`, so it is
     /// dropped when `reload` replaces `decode`.
     private var decodeState: MLState?
-    private let tokenizer: BPETokenizer
+    private let tokenizer: Tokenizing
     /// Where the models came from, kept so they can be loaded again.
     private let source: Models
+
+    /// Which checkpoint is loaded. Read by the apps to pick sampling defaults
+    /// and to say what the engine is.
+    public nonisolated let variant: Models.Variant
 
     // Read out of the models rather than hardcoded, so re-exporting at a
     // different size needs no change here.
     private let condPrefixLength: Int
+    /// How many speech tokens of the reference clip a voice carries. Nano
+    /// prefixes them whole, so it is the prefix minus the speaker token; the
+    /// multilingual model resamples 150 of them into 32 perceiver latents, so
+    /// the two numbers are unrelated and both come from metadata.
+    private let condPromptLength: Int
+    /// Rows per decode step: one, or two when guidance is mandatory.
+    private let cfgRows: Int
     private let maxTextTokens: Int
     private let maxContext: Int
     private let layers: Int
@@ -87,6 +171,14 @@ public actor ChatterboxEngine {
     private let vocabulary: Int
     private let startSpeechToken: Int32
     private let stopSpeechToken: Int32
+    /// What the text has to be bracketed by, when the model requires it.
+    ///
+    /// The multilingual checkpoint does — `_ensure_BOT_EOT` asserts it — and
+    /// without them the model still speaks, fluently and conditioned on
+    /// something slightly other than the sentence, which is the hardest kind of
+    /// wrong to notice: plausible audio in a faintly wrong accent. Nano needs
+    /// nothing here, so this is nil there rather than a variant check.
+    private let textBrackets: (start: Int32, stop: Int32)?
     private let genTokens: Int
     private let promptTokenLength: Int
     private let promptFeatureLength: Int
@@ -150,6 +242,36 @@ public actor ChatterboxEngine {
         ("CPU", .cpuOnly),
     ]
 
+    /// The ladder for one model, which is not always the whole ladder.
+    ///
+    /// Two of the multilingual packages must never be offered to the Neural
+    /// Engine, and "must never" rather than "need not": the prefill's flexible
+    /// text dimension over thirty layers takes the *process* down while the ANE
+    /// compiler works on it — no exception, no crash report, just an exit — and
+    /// the vocoder's DFT stand-ins make that compiler fail outright and get
+    /// silently retried elsewhere after a wasted minute. Neither loses anything
+    /// by running on the GPU, which is idle either way.
+    ///
+    /// The export records this, and it is read here out of the compiled model's
+    /// own `metadata.json` rather than out of the loaded `MLModel` — because by
+    /// the time there is an `MLModel` to ask, the load that would have crashed
+    /// has already happened.
+    private static func ladder(for url: URL) -> [(String, MLComputeUnits)] {
+        guard let data = try? Data(
+            contentsOf: url.appendingPathComponent("metadata.json")
+        ),
+            let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+            let metadata = entries.first?["userDefinedMetadata"] as? [String: String],
+            let declared = metadata["computeUnits"]
+        else { return ladder }
+
+        return switch declared {
+        case "cpu_gpu": Array(ladder.dropFirst())
+        case "cpu": [ladder[2]]
+        default: ladder
+        }
+    }
+
 
     /// Load the models, reporting progress as each one is prepared.
     ///
@@ -162,13 +284,17 @@ public actor ChatterboxEngine {
         progress: @escaping @Sendable (LoadProgress) -> Void = { _ in }
     ) async throws -> ChatterboxEngine {
         let (loaded, placement) = try await loadModels(models, using: ladder, progress: progress)
+        let tokenizer: Tokenizing = switch models.variant {
+        case .nano: .nano(try BPETokenizer(directory: models.tokenizer))
+        case .multilingual: .multilingual(try MTLTokenizer(directory: models.tokenizer))
+        }
         return try ChatterboxEngine(
             source: models,
             prefill: loaded[0],
             decode: loaded[1],
             flow: loaded[2],
             vocoder: loaded[3],
-            tokenizer: try BPETokenizer(directory: models.tokenizer),
+            tokenizer: tokenizer,
             placement: placement
         )
     }
@@ -217,17 +343,19 @@ public actor ChatterboxEngine {
     private func performReload() async throws {
         // A throw anywhere here leaves every model loaded — some old, some
         // new, all working. The caller can simply try again.
+        func name(_ url: URL) -> String { url.deletingPathExtension().lastPathComponent }
         var label: String
-        (prefill, label) = try await Self.load("T3Prefill", source.prefill, using: Self.ladder)
-        placement["T3Prefill"] = label
-        (decode, label) = try await Self.load("T3Decode", source.decode, using: Self.ladder)
-        placement["T3Decode"] = label
+        let ladder = { (url: URL) in Self.ladder(for: url) }
+        (prefill, label) = try await Self.load(name(source.prefill), source.prefill, using: ladder(source.prefill))
+        placement[name(source.prefill)] = label
+        (decode, label) = try await Self.load(name(source.decode), source.decode, using: ladder(source.decode))
+        placement[name(source.decode)] = label
         // The cached state belongs to the model instance just replaced.
         decodeState = nil
-        (flow, label) = try await Self.load("S3Flow", source.flow, using: Self.ladder)
-        placement["S3Flow"] = label
-        (vocoder, label) = try await Self.load("S3Vocoder", source.vocoder, using: Self.ladder)
-        placement["S3Vocoder"] = label
+        (flow, label) = try await Self.load(name(source.flow), source.flow, using: ladder(source.flow))
+        placement[name(source.flow)] = label
+        (vocoder, label) = try await Self.load(name(source.vocoder), source.vocoder, using: ladder(source.vocoder))
+        placement[name(source.vocoder)] = label
     }
 
     private static func loadModels(
@@ -236,10 +364,10 @@ public actor ChatterboxEngine {
         progress: @escaping @Sendable (LoadProgress) -> Void = { _ in }
     ) async throws -> ([MLModel], [String: String]) {
         let stages = [
-            ("T3Prefill", models.prefill),
-            ("T3Decode", models.decode),
-            ("S3Flow", models.flow),
-            ("S3Vocoder", models.vocoder),
+            (models.prefill.deletingPathExtension().lastPathComponent, models.prefill),
+            (models.decode.deletingPathExtension().lastPathComponent, models.decode),
+            (models.flow.deletingPathExtension().lastPathComponent, models.flow),
+            (models.vocoder.deletingPathExtension().lastPathComponent, models.vocoder),
         ]
         for (_, url) in stages where !FileManager.default.fileExists(atPath: url.path) {
             throw EngineError.missingModel(url)
@@ -283,7 +411,9 @@ public actor ChatterboxEngine {
 
             let model: MLModel
             do {
-                (model, placement[stage.0]) = try await load(stage.0, stage.1, using: ladder)
+                (model, placement[stage.0]) = try await load(
+                    stage.0, stage.1, using: self.ladder(for: stage.1)
+                )
             } catch {
                 ticker.cancel()
                 throw error
@@ -346,15 +476,21 @@ public actor ChatterboxEngine {
         decode: MLModel,
         flow: MLModel,
         vocoder: MLModel,
-        tokenizer: BPETokenizer,
+        tokenizer: Tokenizing,
         placement: [String: String]
     ) throws {
         self.source = source
+        self.variant = source.variant
         self.placement = placement
         let declared = (prefill.modelDescription.metadata[.creatorDefinedKey] as? [String: String])?["languages"]
-        self.languages = (declared?.split(separator: ",").map {
+        // What the checkpoint speaks, minus what this app cannot prepare text
+        // for. The multilingual model has 23 languages and five of them need a
+        // normaliser that is not ported, so offering all 23 would be offering
+        // five ways to be confidently mispronounced.
+        let advertised = (declared?.split(separator: ",").map {
             Language.named(String($0).trimmingCharacters(in: .whitespaces))
         }).flatMap { $0.isEmpty ? nil : $0 } ?? [.english]
+        self.languages = advertised.filter { !tokenizer.refuses($0) }
         self.prefill = prefill
         self.decode = decode
         self.flow = flow
@@ -369,22 +505,44 @@ public actor ChatterboxEngine {
             return value
         }
 
-        condPrefixLength = try meta(prefill, "T3Prefill", "condPrefixLen")
-        maxTextTokens = try meta(prefill, "T3Prefill", "maxTextTokens")
-        maxContext = try meta(decode, "T3Decode", "maxContext")
-        layers = try meta(decode, "T3Decode", "nLayer")
-        heads = try meta(decode, "T3Decode", "nHead")
-        headDim = try meta(decode, "T3Decode", "headDim")
-        vocabulary = try meta(decode, "T3Decode", "speechVocab")
-        startSpeechToken = Int32(try meta(decode, "T3Decode", "startSpeechToken"))
-        stopSpeechToken = Int32(try meta(decode, "T3Decode", "stopSpeechToken"))
-        genTokens = try meta(flow, "S3Flow", "genTokens")
-        promptTokenLength = try meta(flow, "S3Flow", "promptTokenLen")
-        promptFeatureLength = try meta(flow, "S3Flow", "promptFeatLen")
-        tokenMelRatio = try meta(flow, "S3Flow", "tokenMelRatio")
-        silenceToken = Int32(try meta(flow, "S3Flow", "silenceToken"))
-        melFrames = try meta(vocoder, "S3Vocoder", "melFrames")
-        hop = try meta(vocoder, "S3Vocoder", "hop")
+        func optional(_ model: MLModel, _ key: String) -> Int? {
+            let defined = model.modelDescription.metadata[.creatorDefinedKey] as? [String: String]
+            return defined?[key].flatMap(Int.init)
+        }
+
+        let names = (
+            prefill: source.prefill.deletingPathExtension().lastPathComponent,
+            decode: source.decode.deletingPathExtension().lastPathComponent,
+            flow: source.flow.deletingPathExtension().lastPathComponent,
+            vocoder: source.vocoder.deletingPathExtension().lastPathComponent
+        )
+
+        condPrefixLength = try meta(prefill, names.prefill, "condPrefixLen")
+        // Nano's exports predate this key; there, the conditioning prompt is
+        // everything in the prefix except the speaker token.
+        condPromptLength = optional(prefill, "condPromptLen") ?? (condPrefixLength - 1)
+        cfgRows = optional(decode, "cfgRows") ?? 1
+        maxTextTokens = try meta(prefill, names.prefill, "maxTextTokens")
+        maxContext = try meta(decode, names.decode, "maxContext")
+        layers = try meta(decode, names.decode, "nLayer")
+        heads = try meta(decode, names.decode, "nHead")
+        headDim = try meta(decode, names.decode, "headDim")
+        vocabulary = try meta(decode, names.decode, "speechVocab")
+        startSpeechToken = Int32(try meta(decode, names.decode, "startSpeechToken"))
+        stopSpeechToken = Int32(try meta(decode, names.decode, "stopSpeechToken"))
+        if let start = optional(prefill, "startTextToken"),
+           let stop = optional(prefill, "stopTextToken") {
+            textBrackets = (Int32(start), Int32(stop))
+        } else {
+            textBrackets = nil
+        }
+        genTokens = try meta(flow, names.flow, "genTokens")
+        promptTokenLength = try meta(flow, names.flow, "promptTokenLen")
+        promptFeatureLength = try meta(flow, names.flow, "promptFeatLen")
+        tokenMelRatio = try meta(flow, names.flow, "tokenMelRatio")
+        silenceToken = Int32(try meta(flow, names.flow, "silenceToken"))
+        melFrames = try meta(vocoder, names.vocoder, "melFrames")
+        hop = try meta(vocoder, names.vocoder, "hop")
 
         func lastDimension(_ model: MLModel, _ modelName: String, _ input: String) throws -> Int {
             guard let shape = model.modelDescription.inputDescriptionsByName[input]?
@@ -393,9 +551,9 @@ public actor ChatterboxEngine {
             else { throw EngineError.missingMetadata(modelName, "\(input) shape") }
             return last.intValue
         }
-        speakerEmbeddingSize = try lastDimension(prefill, "T3Prefill", "speaker_emb")
-        xvectorSize = try lastDimension(flow, "S3Flow", "embedding")
-        melDimension = try lastDimension(flow, "S3Flow", "prompt_feat")
+        speakerEmbeddingSize = try lastDimension(prefill, names.prefill, "speaker_emb")
+        xvectorSize = try lastDimension(flow, names.flow, "embedding")
+        melDimension = try lastDimension(flow, names.flow, "prompt_feat")
     }
 
     /// Speak one chunk of text. Returns mono 24 kHz float samples.
@@ -407,19 +565,21 @@ public actor ChatterboxEngine {
         _ text: String,
         voice: Voice,
         options: SamplingOptions = SamplingOptions(),
+        language: Language = .english,
         beginsMidSentence: Bool = false,
         endsMidSentence: Bool = false,
         cancelled: @Sendable () -> Bool = { false }
     ) throws -> [Float] {
         try validate(voice)
         var audio: [Float] = []
-        let pieces = splitToFit(text)
+        let pieces = splitToFit(text, language: language)
         for (index, piece) in pieces.enumerated() {
             if cancelled() { break }
             let tokens = try generateSpeechTokens(
                 for: piece,
                 voice: voice,
                 options: options,
+                language: language,
                 // The seams an emergency split adds are themselves mid-sentence.
                 beginsMidSentence: beginsMidSentence || index > 0,
                 endsMidSentence: endsMidSentence || index < pieces.count - 1,
@@ -437,7 +597,7 @@ public actor ChatterboxEngine {
     private func validate(_ voice: Voice) throws {
         let wants: [(String, Int, Int)] = [
             ("speaker embedding", voice.speakerEmbedding.count, speakerEmbeddingSize),
-            ("conditioning tokens", voice.condPromptTokens.count, condPrefixLength - 1),
+            ("conditioning tokens", voice.condPromptTokens.count, condPromptLength),
             ("prompt tokens", voice.promptTokens.count, promptTokenLength),
             ("prompt features", voice.promptFeatures.count, promptFeatureLength * melDimension),
             ("x-vector", voice.xvector.count, xvectorSize),
@@ -453,18 +613,20 @@ public actor ChatterboxEngine {
     /// used to abort the whole chapter), split it at a word boundary near the
     /// middle and speak the pieces one after another. Rare enough that the
     /// prosody reset at the join is acceptable; dropped words would not be.
-    private func splitToFit(_ text: String) -> [String] {
+    private func splitToFit(_ text: String, language: Language) -> [String] {
         // Measured with `PuncNorm`'s default shape; the real call may add a
         // token or two (a trailing stop, a capitalisation), so a small margin
         // keeps a piece measured here from being refused there.
-        guard tokenizer.encode(PuncNorm.apply(text)).count > maxTextTokens - 4 else { return [text] }
+        let brackets = textBrackets == nil ? 0 : 2
+        let measured = tokenizer.encode(PuncNorm.apply(text), language: language).count + brackets
+        guard measured > maxTextTokens - 4 else { return [text] }
         let words = text.split(whereSeparator: \.isWhitespace)
         // A single unbreakable over-long word is left for `generateSpeechTokens`
         // to refuse; there is nothing sayable to salvage from it.
         guard words.count > 1 else { return [text] }
         let head = words[..<(words.count / 2)].joined(separator: " ")
         let tail = words[(words.count / 2)...].joined(separator: " ")
-        return splitToFit(head) + splitToFit(tail)
+        return splitToFit(head, language: language) + splitToFit(tail, language: language)
     }
 
     // MARK: - T3, the token loop
@@ -473,20 +635,33 @@ public actor ChatterboxEngine {
         for text: String,
         voice: Voice,
         options: SamplingOptions,
+        language: Language = .english,
         beginsMidSentence: Bool = false,
         endsMidSentence: Bool = false,
         cancelled: @Sendable () -> Bool
     ) throws -> [Int32] {
+        guard !tokenizer.refuses(language) else {
+            throw EngineError.unsupportedLanguage(language.name)
+        }
         let normalized = PuncNorm.apply(
             text, beginsMidSentence: beginsMidSentence, endsMidSentence: endsMidSentence
         )
-        let textTokens = tokenizer.encode(normalized).map(Int32.init)
+        var textTokens = tokenizer.encode(normalized, language: language)
         guard !textTokens.isEmpty else { return [] }
+        if let textBrackets {
+            textTokens = [textBrackets.start] + textTokens + [textBrackets.stop]
+        }
         guard textTokens.count <= maxTextTokens else {
             throw EngineError.textTooLong(textTokens.count, maxTextTokens)
         }
 
-        let prefixLength = condPrefixLength + textTokens.count + 1
+        // The multilingual prompt ends with *two* start-of-speech tokens, both
+        // at learned position zero. It looks like a slip upstream and it is
+        // what the weights were trained against — see mtl_reference.py, where
+        // the harness pins it down. Tidying it away produces a model that
+        // sounds nearly right.
+        let speechStartTokens = variant == .multilingual ? 2 : 1
+        let prefixLength = condPrefixLength + textTokens.count + speechStartTokens
         // What the KV cache has room for. The export sized `maxContext` as
         // prefix + maxTextTokens + 1 + a 1000-token generation budget
         // (`MAX_GEN_TOKENS` in tools/export/common.py), so for text shorter
@@ -495,16 +670,42 @@ public actor ChatterboxEngine {
         // headroom only matters for a chunk that would otherwise be cut off.
         let budget = min(options.maxTokens, maxContext - prefixLength)
 
-        let prefixOut = try prefill.prediction(from: try MLDictionaryFeatureProvider(dictionary: [
-            "speaker_emb": try array(voice.speakerEmbedding, shape: [1, voice.speakerEmbedding.count]),
-            "prompt_tokens": try array(voice.condPromptTokens, shape: [1, voice.condPromptTokens.count]),
-            "text_tokens": try array(textTokens, shape: [1, textTokens.count]),
-            "text_positions": try array(
-                (0..<textTokens.count).map { Int32(condPrefixLength + $0) },
-                shape: [1, textTokens.count]
-            ),
-            "bos_position": try array([Int32(condPrefixLength + textTokens.count)], shape: [1, 1]),
-        ]))
+        // Where the two models genuinely differ, one of three places. Nano is
+        // handed its learned positions; the multilingual model computes them
+        // inside the graph and takes an emotion scalar instead.
+        let prefillInputs: [String: Any] = switch variant {
+        case .nano:
+            [
+                "speaker_emb": try array(
+                    voice.speakerEmbedding, shape: [1, voice.speakerEmbedding.count]
+                ),
+                "prompt_tokens": try array(
+                    voice.condPromptTokens, shape: [1, voice.condPromptTokens.count]
+                ),
+                "text_tokens": try array(textTokens, shape: [1, textTokens.count]),
+                "text_positions": try array(
+                    (0..<textTokens.count).map { Int32(condPrefixLength + $0) },
+                    shape: [1, textTokens.count]
+                ),
+                "bos_position": try array(
+                    [Int32(condPrefixLength + textTokens.count)], shape: [1, 1]
+                ),
+            ]
+        case .multilingual:
+            [
+                "speaker_emb": try array(
+                    voice.speakerEmbedding, shape: [1, voice.speakerEmbedding.count]
+                ),
+                "prompt_tokens": try array(
+                    voice.condPromptTokens, shape: [1, voice.condPromptTokens.count]
+                ),
+                "text_tokens": try array(textTokens, shape: [1, textTokens.count]),
+                "emotion": try array([options.exaggeration], shape: [1, 1]),
+            ]
+        }
+        let prefixOut = try prefill.prediction(
+            from: try MLDictionaryFeatureProvider(dictionary: prefillInputs)
+        )
 
         guard let logits = prefixOut.featureValue(for: "logits")?.multiArrayValue,
               let keys = prefixOut.featureValue(for: "k_cache")?.multiArrayValue,
@@ -524,7 +725,7 @@ public actor ChatterboxEngine {
         }
         seed(state: state, keys: keys, values: values, length: prefixLength)
 
-        var sampler = Sampler(options: options)
+        var sampler = Sampler(options: options, order: variant == .multilingual ? .multilingual : .nano)
         var generated: [Int32] = []
         // The repetition penalty starts against the start-of-speech token, as
         // it does upstream, and switches to the real history after the first.
@@ -532,18 +733,40 @@ public actor ChatterboxEngine {
 
         let tokenInput = try MLMultiArray(shape: [1, 1], dataType: .int32)
         let positionInput = try MLMultiArray(shape: [1], dataType: .int32)
+        // The multilingual decode step takes two more: the *learned* speech
+        // position, which counts from the start-of-speech token rather than
+        // from the start of the sequence, and the guidance weight, because the
+        // two rows are combined inside the model.
+        let speechPositionInput = try MLMultiArray(shape: [1], dataType: .int32)
+        let guidanceInput = try MLMultiArray(shape: [1], dataType: .float32)
+        guidanceInput[0] = NSNumber(value: options.cfgWeight)
         // One feature provider and one output buffer for the whole loop — the
         // provider reads the arrays above by reference, and the backing spares
         // Core ML allocating a fresh logits array per token.
-        let stepInput = try MLDictionaryFeatureProvider(dictionary: [
-            "token": tokenInput, "position": positionInput,
-        ])
+        let stepInput = try MLDictionaryFeatureProvider(
+            dictionary: variant == .multilingual
+                ? [
+                    "token": tokenInput,
+                    "position": positionInput,
+                    "speech_position": speechPositionInput,
+                    "cfg_weight": guidanceInput,
+                ]
+                : ["token": tokenInput, "position": positionInput]
+        )
         let stepOptions = MLPredictionOptions()
         stepOptions.outputBackings = [
             "logits": try MLMultiArray(shape: [1, NSNumber(value: vocabulary)], dataType: .float32),
         ]
 
-        var current = sample(&sampler, logits, history: penalized)
+        // The prefill hands back both CFG rows, unguided: guidance is folded in
+        // by the *decode* model, which has not run yet when the first token is
+        // chosen. So the first one is combined here, with the same arithmetic —
+        // and the prefill keeps emitting both rows, which is what makes it
+        // comparable against torch in verify_mtl.py.
+        var first = try guide(logits, weight: options.cfgWeight)
+        var current = first.withUnsafeMutableBufferPointer { buffer in
+            sampler.next(logits: buffer, history: penalized)
+        }
         for step in 0..<budget {
             if current == stopSpeechToken || cancelled() { break }
             generated.append(current)
@@ -552,6 +775,9 @@ public actor ChatterboxEngine {
 
             tokenInput[0] = NSNumber(value: current)
             positionInput[0] = NSNumber(value: Int32(prefixLength + step))
+            // Position 0 belongs to the start-of-speech token, so the token
+            // generated at step 0 sits at learned position 1.
+            speechPositionInput[0] = NSNumber(value: Int32(step + 1))
             let out = try decode.prediction(from: stepInput, using: state, options: stepOptions)
             guard let next = out.featureValue(for: "logits")?.multiArrayValue else {
                 throw EngineError.badOutput("decode logits")
@@ -576,6 +802,29 @@ public actor ChatterboxEngine {
         return generated.filter { $0 < startSpeechToken }
     }
 
+    /// One row of logits out of however many the model returned.
+    ///
+    /// `cond + w · (cond − uncond)` when there are two, which is what the
+    /// multilingual decode model does internally; a straight copy when there is
+    /// one.
+    private func guide(_ logits: MLMultiArray, weight: Float) throws -> [Float] {
+        guard cfgRows > 1 else {
+            return logits.withUnsafeBufferPointer(ofType: Float.self) { Array($0) }
+        }
+        guard logits.count == cfgRows * vocabulary else {
+            throw EngineError.badOutput(
+                "prefill logits \(logits.count) wide, not \(cfgRows) × \(vocabulary)"
+            )
+        }
+        return logits.withUnsafeBufferPointer(ofType: Float.self) { buffer in
+            (0..<vocabulary).map { index in
+                let conditional = buffer[index]
+                let unconditional = buffer[vocabulary + index]
+                return conditional + weight * (conditional - unconditional)
+            }
+        }
+    }
+
     private func sample(_ sampler: inout Sampler, _ logits: MLMultiArray, history: Set<Int32>) -> Int32 {
         logits.withUnsafeMutableBufferPointer(ofType: Float.self) { buffer, _ in
             assert(buffer.count == vocabulary, "logits are \(buffer.count) wide, not \(vocabulary)")
@@ -585,9 +834,9 @@ public actor ChatterboxEngine {
 
     /// Copy the prefill's KV cache into the decode model's state.
     ///
-    /// Both are `(layers, 1, heads, position, headDim)` float16, so each
-    /// (layer, head) row is contiguous in both and this is 144 memcpys rather
-    /// than an element-by-element walk. Nothing past `length` is cleared: the
+    /// Both are `(layers, cfgRows, heads, position, headDim)` float16, so each
+    /// (layer, row, head) slice is contiguous in both and this is a few hundred
+    /// memcpys rather than an element-by-element walk. Nothing past `length` is cleared: the
     /// decode model masks every slot above the position it was given, and every
     /// slot at or below it has been written by then.
     private func seed(state: MLState, keys: MLMultiArray, values: MLMultiArray, length: Int) {
@@ -598,7 +847,10 @@ public actor ChatterboxEngine {
             let element = source.dataType == .float16 ? 2 : 4
             let row = length * headDim * element
             let stride = maxContext * headDim * element
-            let rows = layers * heads
+            // Guidance doubles this: the cache is
+            // (layers, rows, heads, context, headDim), and `rows` is 2 when
+            // every step computes a conditional and an unconditional pass.
+            let rows = layers * cfgRows * heads
 
             // The source pointer crosses into the destination's closure in a
             // plain box: holding it directly there trips Swift 6's

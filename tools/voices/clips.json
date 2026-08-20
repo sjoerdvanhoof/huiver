@@ -1,0 +1,158 @@
+{
+ "clips": {
+  "ar": {
+   "item": "kitab_adab_dunya_1107_librivox",
+   "file": "adabaldunyawaldin_01_almawardi_64kb.mp3",
+   "fileIndex": 1,
+   "offsetSeconds": 420,
+   "title": "Kitab Adab al-Dunya w'al-Din (The Ethics of Reli",
+   "reader": "Abu al-Hasan Ali Ibn Muhammad Ibn Habib al-Mawardi",
+   "heard": "ar",
+   "confidence": 0.994,
+   "transcript": "من الإحتمال والحده إنما هو بيان المحلوت يمفع عنه الأشمال والإحتمال هل عقله والعلم بالمدرال؟"
+  },
+  "da": {
+   "item": "danish_fairytales_0805_librivox",
+   "file": "danishfairytales001_02_kejserensnye_64kb.mp3",
+   "fileIndex": 1,
+   "offsetSeconds": 120,
+   "title": "Udvalgte Danske Eventyr 001",
+   "reader": "H. C. Andersen",
+   "heard": "da",
+   "confidence": 0.952,
+   "transcript": "Den bede de her. Jeg kan kende de klogere fra de dumme. Ja, det tøj må straks vedes til mig, og han gav de to bedre over"
+  },
+  "de": {
+   "item": "kleinzaches_1309_librivox",
+   "file": "kleinzaches_02_hoffmann_64kb.mp3",
+   "fileIndex": 1,
+   "offsetSeconds": 120,
+   "title": "Klein Zaches, genannt Zinnober",
+   "reader": "E. T. A. Hoffmann",
+   "heard": "de",
+   "confidence": 0.999,
+   "transcript": "Schien mir hell ins Gesicht, und durch den Schlagbaum, der dicht vor mir stand, gewahrte ich die hohen Türme einer anseh"
+  },
+  "el": {
+   "item": "ecclesiazusae_1709_librivox",
+   "file": "ecclesiazusae_02_aristophanes_64kb.mp3",
+   "fileIndex": 1,
+   "offsetSeconds": 420,
+   "title": "Ecclesiazusae",
+   "reader": "Aristophanes",
+   "heard": "el",
+   "confidence": 0.999,
+   "transcript": "Εδησαλεύριا που θα πάνκει αυτού του ναυσικίδι. Χρεμιστότε πετχείτε πάλι ένα παιδάριο κομψό, είναι όμορφο και πάλι, σαν δ"
+  },
+  "es": {
+   "item": "don_quijote_vol1_0706_librivox",
+   "file": "quijote_vol1_02_cervantes_64kb.mp3",
+   "fileIndex": 1,
+   "offsetSeconds": 420,
+   "title": "Don Quijote, Volume 1",
+   "reader": "Miguel de Cervantes Saavedra",
+   "heard": "es",
+   "confidence": 0.997,
+   "transcript": "suficiencia pocas letras y porque naturalmente soy por trón y presos de andarme buscando a autores que digan lo que yo m"
+  },
+  "fi": {
+   "item": "helsinkiin_librivox",
+   "file": "helsinkiin-aho-chapter2_64kb.mp3",
+   "fileIndex": 1,
+   "offsetSeconds": 120,
+   "title": "Helsinkiin",
+   "reader": "Juhani Aho",
+   "heard": "fi",
+   "confidence": 0.964,
+   "transcript": "Ollut edetsä rakastunut. Oli siihen suunnut olevansa kihloissakin, mutta mitäs nykyään ja naiset, netietysti vai laskeva"
+  },
+  "fr": {
+   "item": "lebleenherbe_2503_librivox",
+   "file": "bleenherbe_02_colette_64kb.mp3",
+   "fileIndex": 1,
+   "offsetSeconds": 120,
+   "title": "Le blé en herbe",
+   "reader": "Colette",
+   "heard": "fr",
+   "confidence": 0.985,
+   "transcript": "Sa cheville qui saignait, est corchée, et les chats sur sa main le sang, et l'eau marine qui m'ellait leur sel. La brise"
+  },
+  "hi": {
+   "item": "dosakhiyan_2512_librivox",
+   "file": "dosakhiyan_07_premchand_64kb.mp3",
+   "fileIndex": 6,
+   "offsetSeconds": 120,
+   "title": "Do Sakhiyan",
+   "reader": "Premchand",
+   "heard": "hi",
+   "confidence": 0.978,
+   "transcript": "کوئی کن جائیشی نہیں رکی. اپنے شاکی چیز کھڑ کرید کر لاتے بھرا مالوم ہوتا ہے. کم سے کم مجھ سے نہیں ہو سکتا. میں جانتی ہوں "
+  },
+  "it": {
+   "item": "avventure_pinocchio_librivox",
+   "file": "avventurepinocchio_02_collodi_64kb.mp3",
+   "fileIndex": 1,
+   "offsetSeconds": 120,
+   "title": "Le avventure di Pinocchio",
+   "reader": "C. Collodi",
+   "heard": "it",
+   "confidence": 0.997,
+   "transcript": "Pronto a servirvi, replicolfa legname, rizzandosi sui ginocchi. Stamani me piovuta nel cervello un'idea. Sentiamola? Ho "
+  },
+  "nl": {
+   "item": "grooteverwachtingen_1309_librivox",
+   "file": "grooteverwachtingen_02_dickens_64kb.mp3",
+   "fileIndex": 1,
+   "offsetSeconds": 120,
+   "title": "Groote Verwachtingen",
+   "reader": "Charles Dickens",
+   "heard": "nl",
+   "confidence": 0.989,
+   "transcript": "Oof zij misschien, om zich te wassen, een muskatrasp in plaats van zeep gebruikte, zij was lang en benerig, en had bijna"
+  },
+  "no": {
+   "item": "densisteviking_2001_librivox",
+   "file": "viking_norsk_02_bojer_64kb.mp3",
+   "fileIndex": 1,
+   "offsetSeconds": 120,
+   "title": "Den siste viking",
+   "reader": "Johan Bojer",
+   "heard": "no",
+   "confidence": 0.782,
+   "transcript": "Gule, eller blå? Hun fik enda kjellene over på kokiovne inne, kjønt kallensattere oss opp og, i vindunnen var der blomst"
+  },
+  "pl": {
+   "item": "antymonachomachia_pn_librivox",
+   "file": "antymonachomachia_2_krasicki_64kb.mp3",
+   "fileIndex": 1,
+   "offsetSeconds": 240,
+   "title": "Antymonachomachia",
+   "reader": "Ignacy Krasicki",
+   "heard": "pl",
+   "confidence": 0.999,
+   "transcript": "i my się śmiejmy, zagadniem i snadnie pozna po śmiechów wyrazek z bydwolny, że Fałsz napisał, odwoła dokładnie. Będziem "
+  },
+  "pt": {
+   "item": "amor_de_perdicao_1408_librivox",
+   "file": "amor_de_perdicao_02_castelobranco_64kb.mp3",
+   "fileIndex": 2,
+   "offsetSeconds": 240,
+   "title": "Amor de Perdição",
+   "reader": "Camilo Castelo Branco",
+   "heard": "pt",
+   "confidence": 0.997,
+   "transcript": "Se mal pute ele tornou-se odioso aos condixipos, que para se salvar ainda em família, o dilataram ao bicho pucão de e ao"
+  },
+  "sv": {
+   "item": "baronolson_1309_librivox",
+   "file": "baronolson_02_stroemberg_64kb.mp3",
+   "fileIndex": 1,
+   "offsetSeconds": 120,
+   "title": "Baron Olson och andra historier",
+   "reader": "Sigge Strömberg",
+   "heard": "sv",
+   "confidence": 0.987,
+   "transcript": "vilket. Jag oponerade mig inte, det var bild som föreslagit att vi skulle lämna min jappolis, och jag måste här känner a"
+  }
+ }
+}

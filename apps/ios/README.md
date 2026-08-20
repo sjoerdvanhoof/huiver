@@ -27,7 +27,7 @@ You need Xcode with the iOS platform, and the desktop app's Chatterbox venv,
 which is where the weights already are.
 
 ```bash
-bun run setup:chatterbox     # if you have not already — creates .venv-chatterbox
+bun run setup:chatterbox     # if you have not already — tools/export/.venv-chatterbox
 bun run ios:setup            # adds coremltools to that venv
 bun run ios:export           # converts Nano to Core ML (~25 min, one time)
 bun run ios:voices           # turns the reference clips into voice files
@@ -217,8 +217,25 @@ pronunciation rather than an error.
 
 The plumbing is in place if that changes: the language travels per book, and the
 engine reports what it can read from a `languages` key in the exported model's
-metadata. A multilingual export would need that key and a Swift port of
-`MTLTokenizer`, and nothing else on this side.
+metadata.
+
+**That key and a Swift port of `MTLTokenizer` are not, as this file used to
+claim, the whole of it.** Read off the checkpoint by `tools/export/probe_mtl.py`,
+the multilingual model also differs in ways the decode loop can see:
+
+| | Nano | Multilingual |
+| --- | --- | --- |
+| Guidance | none | classifier-free, mandatory: every token is a batch of two |
+| Uncond branch | — | text embeddings zeroed, learned positions kept |
+| Conditioning | speaker + 375 prompt tokens | speaker + 32 perceiver latents + an emotion token |
+| Positions | — | RoPE *and* learned, both |
+| Speech vocab | 6563 | 8194 |
+| Sampler order | temperature, top-k, top-p, penalty | CFG, penalty, temperature, min-p, top-p |
+
+None of that is a flag; it is a second engine that happens to share a shape.
+`tools/export/verify_mtl.py` is where the loop is pinned down — it checks a
+second implementation of it against chatterbox's own, which is the step that
+has to come before any of it is written in Swift.
 
 ## The app
 

@@ -14,17 +14,32 @@ public actor LibrarySyncDataSource: SyncDataSource {
     /// Voices available to offer, with their file locations. Bundled voices on
     /// the phone; the voice directory on the Mac.
     private let voiceDirectory: URL?
+    /// The asks this device has made, on the device that makes them. Absent on
+    /// the Mac, which renders rather than asks.
+    private let requests: ConvertRequestStore?
+    /// Where an ask from the other device goes. Absent on the phone, which has
+    /// nowhere to put one.
+    ///
+    /// A closure rather than a protocol because the thing on the far end is the
+    /// Mac's `Converter`, which is `@MainActor` and knows about voices and
+    /// engines — none of which belongs in a data source. It returns a status
+    /// per request, which is what goes back over the wire.
+    private let acceptRequests: (@Sendable ([ConvertRequest]) async -> [SyncMessage.JobStatus])?
 
     public init(
         library: Library,
         progress: ProgressStore,
         deviceId: String,
-        voiceDirectory: URL? = nil
+        voiceDirectory: URL? = nil,
+        requests: ConvertRequestStore? = nil,
+        acceptRequests: (@Sendable ([ConvertRequest]) async -> [SyncMessage.JobStatus])? = nil
     ) {
         self.library = library
         self.progress = progress
         self.deviceId = deviceId
         self.voiceDirectory = voiceDirectory
+        self.requests = requests
+        self.acceptRequests = acceptRequests
     }
 
     // MARK: - Manifest
@@ -58,8 +73,23 @@ public actor LibrarySyncDataSource: SyncDataSource {
                 )
             },
             voices: voiceManifests(),
-            progress: records
+            progress: records,
+            // Pruned against the library first: a chapter that has since been
+            // rendered — here, or on the Mac in an earlier session — is not
+            // something to keep asking for.
+            convertRequests: await requests?.pending(against: books) ?? []
         )
+    }
+
+    public func acceptConvertRequests(
+        _ requests: [ConvertRequest]
+    ) async -> [SyncMessage.JobStatus] {
+        guard let acceptRequests else { return [] }
+        return await acceptRequests(requests)
+    }
+
+    public func receive(jobStatus: SyncMessage.JobStatus) async {
+        await requests?.record(jobStatus)
     }
 
     private func voiceManifests() -> [VoiceManifest] {
@@ -174,53 +204,5 @@ public actor LibrarySyncDataSource: SyncDataSource {
 
     private func book(_ contentId: String) async -> Book? {
         await library.all().first { $0.contentId == contentId }
-    }
-}
-
-/// Several chunk files in one blob: `u32 count | (u32 index | u32 length |
-/// bytes)*`. Little-endian, like the framing.
-///
-/// One blob per requested range rather than one transfer per chunk, because a
-/// chapter is a couple of hundred chunks and each transfer costs a header, a
-/// hash and two control frames.
-enum ChunkPack {
-    static func pack(_ chunks: [(index: Int, data: Data)]) -> Data {
-        var out = Data()
-        append(UInt32(chunks.count), to: &out)
-        for chunk in chunks {
-            append(UInt32(chunk.index), to: &out)
-            append(UInt32(chunk.data.count), to: &out)
-            out.append(chunk.data)
-        }
-        return out
-    }
-
-    static func unpack(_ data: Data) -> [(index: Int, data: Data)] {
-        var offset = data.startIndex
-        guard let count = readU32(data, &offset) else { return [] }
-        var out: [(Int, Data)] = []
-        for _ in 0..<count {
-            guard let index = readU32(data, &offset),
-                  let length = readU32(data, &offset),
-                  data.distance(from: offset, to: data.endIndex) >= Int(length)
-            else { return out }
-            let end = data.index(offset, offsetBy: Int(length))
-            out.append((Int(index), Data(data[offset..<end])))
-            offset = end
-        }
-        return out
-    }
-
-    private static func append(_ value: UInt32, to data: inout Data) {
-        var little = value.littleEndian
-        withUnsafeBytes(of: &little) { data.append(contentsOf: $0) }
-    }
-
-    private static func readU32(_ data: Data, _ offset: inout Data.Index) -> UInt32? {
-        guard data.distance(from: offset, to: data.endIndex) >= 4 else { return nil }
-        let end = data.index(offset, offsetBy: 4)
-        let value = data[offset..<end].withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }
-        offset = end
-        return UInt32(littleEndian: value)
     }
 }

@@ -46,6 +46,13 @@ public enum SyncMessage: Sendable, Equatable {
         /// to sync over.
         public var clock: Date
         public var appVersion: String
+        /// How this device is willing to be sent audio.
+        ///
+        /// Optional, and absent means WAV only: a peer built before AAC
+        /// existed says nothing here, and must not be sent something it cannot
+        /// decode. This is what lets the codec change without a protocol
+        /// version bump — the sender asks rather than assumes.
+        public var audioCodecs: [AudioManifest.Codec]?
 
         public init(
             protocolVersion: Int = SyncProtocol.version,
@@ -53,7 +60,8 @@ public enum SyncMessage: Sendable, Equatable {
             deviceId: String,
             deviceName: String,
             clock: Date = Date(),
-            appVersion: String
+            appVersion: String,
+            audioCodecs: [AudioManifest.Codec]? = [.wav, .aac]
         ) {
             self.protocolVersion = protocolVersion
             self.minimumVersion = minimumVersion
@@ -61,6 +69,13 @@ public enum SyncMessage: Sendable, Equatable {
             self.deviceName = deviceName
             self.clock = clock
             self.appVersion = appVersion
+            self.audioCodecs = audioCodecs
+        }
+
+        /// Whether this device would understand a file sent in this codec.
+        public func accepts(_ codec: AudioManifest.Codec) -> Bool {
+            guard let audioCodecs else { return codec == .wav }
+            return audioCodecs.contains(codec)
         }
 
         /// Can these two talk at all?
@@ -101,11 +116,18 @@ public enum SyncMessage: Sendable, Equatable {
         public var item: WantItem
         public var size: Int64
         public var sha256: String
+        /// How the audio in this transfer is encoded, when it is audio and not
+        /// WAV. The hash and the size are of what is on the wire, so it is
+        /// checked before it is decoded.
+        public var codec: AudioManifest.Codec?
 
-        public init(item: WantItem, size: Int64, sha256: String) {
+        public init(
+            item: WantItem, size: Int64, sha256: String, codec: AudioManifest.Codec? = nil
+        ) {
             self.item = item
             self.size = size
             self.sha256 = sha256
+            self.codec = codec
         }
     }
 

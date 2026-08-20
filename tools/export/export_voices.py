@@ -44,11 +44,22 @@ from common import (
     S3GEN_SR,
     SPEAKER_EMBED_SIZE,
     XVECTOR_DIM,
+    load_multilingual,
     load_nano,
 )
 
 MAGIC = b"HVOI"
 VERSION = 1
+
+# For naming the per-language voices. Only the languages the Swift tokenizer
+# will read — see MTLTokenizer, which declines the five that need a normaliser
+# this project does not port.
+LANGUAGE_NAMES = {
+    "ar": "Arabic", "da": "Danish", "de": "German", "el": "Greek", "en": "English",
+    "es": "Spanish", "fi": "Finnish", "fr": "French", "hi": "Hindi", "it": "Italian",
+    "ms": "Malay", "nl": "Dutch", "no": "Norwegian", "pl": "Polish",
+    "pt": "Portuguese", "sv": "Swedish", "sw": "Swahili", "tr": "Turkish",
+}
 
 # The desktop app's descriptions, so a voice reads the same on both.
 # name, what the voice sounds like, and who it sounds like.
@@ -138,9 +149,9 @@ def fit(tensor: torch.Tensor, length: int, dim: int, pad_value=0) -> torch.Tenso
     return torch.cat([tensor, torch.full(shape, pad_value, dtype=tensor.dtype)], dim=dim)
 
 
-def write_voice(path: Path, conds) -> None:
+def write_voice(path: Path, conds, cond_prompt_len: int = 375) -> None:
     speaker = fit(conds.t3.speaker_emb.reshape(1, -1), SPEAKER_EMBED_SIZE, 1)
-    cond_prompt = fit(conds.t3.cond_prompt_speech_tokens.reshape(1, -1), 375, 1)
+    cond_prompt = fit(conds.t3.cond_prompt_speech_tokens.reshape(1, -1), cond_prompt_len, 1)
     gen = conds.gen
     prompt_token = fit(gen["prompt_token"].reshape(1, -1), PROMPT_TOKEN_LEN, 1)
     prompt_feat = fit(gen["prompt_feat"].reshape(1, -1, MEL_DIM), PROMPT_FEAT_LEN, 1)
@@ -153,7 +164,7 @@ def write_voice(path: Path, conds) -> None:
                 "<7I",
                 VERSION,
                 SPEAKER_EMBED_SIZE,
-                375,
+                cond_prompt_len,
                 PROMPT_TOKEN_LEN,
                 PROMPT_FEAT_LEN,
                 MEL_DIM,
@@ -176,16 +187,41 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument(
+        "--multilingual",
+        action="store_true",
+        help="clone through Chatterbox Multilingual rather than Nano",
+    )
+    ap.add_argument(
         "--clips",
         type=Path,
         default=Path(__file__).resolve().parents[2] / "apps" / "web" / "data" / "voices",
         help="where the desktop app keeps its reference clips",
     )
+    ap.add_argument(
+        "--language-clips",
+        type=Path,
+        default=Path(__file__).resolve().parents[2] / "tools" / "voices" / "clips",
+        help="one native reader per language, named <code>.wav",
+    )
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    print("loading Chatterbox Nano")
-    model = load_nano()
+    # The two checkpoints have their own voice encoders and their own
+    # conditioning length — 150 speech tokens against Nano's 375, because the
+    # multilingual T3 resamples the prompt through a perceiver instead of
+    # prefixing it whole. A voice cloned through one is not readable by the
+    # other, which is why this is a flag and not a shared output directory.
+    if args.multilingual:
+        print("loading Chatterbox Multilingual")
+        model = load_multilingual()
+        cond_prompt_len = model.t3.hp.speech_cond_prompt_len
+        default_voice = ("mtl_default", "Multilingual", "the model's own voice")
+    else:
+        print("loading Chatterbox Nano")
+        model = load_nano()
+        cond_prompt_len = 375
+        default_voice = ("nano_default", "Nano", "the model's own voice")
+    print(f"  conditioning prompt: {cond_prompt_len} speech tokens")
     if model.conds is None:
         raise SystemExit("this checkpoint has no conds.pt, so it has no built-in voice")
 
@@ -195,10 +231,21 @@ def main():
 
     entries = []
 
-    def emit(voice_id: str, name: str, detail: str, conds, persona: str | None = None) -> None:
+    def emit(
+        voice_id: str,
+        name: str,
+        detail: str,
+        conds,
+        persona: str | None = None,
+        language: str = "en",
+    ) -> None:
         filename = f"{voice_id}.voice"
-        write_voice(args.out / filename, conds)
-        entry = dict(id=voice_id, name=name, detail=detail, file=filename)
+        write_voice(args.out / filename, conds, cond_prompt_len=cond_prompt_len)
+        # The language travels with the voice because the accent does: the model
+        # reads any language in any voice, but it reads it *with the reference
+        # clip's accent*, so this is what lets the app offer a reader who
+        # belongs to the book.
+        entry = dict(id=voice_id, name=name, detail=detail, file=filename, language=language)
         if persona:
             entry["persona"] = persona
         entries.append(entry)
@@ -206,9 +253,9 @@ def main():
         print(f"  {voice_id:<18} {name:<12} {size/1024:.0f} KB")
 
     emit(
-        "nano_default",
-        "Nano",
-        "the model's own voice",
+        default_voice[0],
+        default_voice[1],
+        default_voice[2],
         builtin,
         "Chatterbox as it comes, with no one cloned into it. Neutral, "
         "reliable, and the fastest thing here to start with.",
@@ -220,6 +267,28 @@ def main():
             clips += [(prefix, path) for path in sorted(folder.glob("*.wav"))]
     if not clips:
         print(f"  no reference clips under {args.clips} — run: bun run voices")
+
+    # One native reader per language, from tools/voices. Named `<code>.wav`, so
+    # the file name is the language — see find_language_clips.py, which is what
+    # establishes that the reader really speaks it.
+    language_clips = sorted(args.language_clips.glob("*.wav")) if args.language_clips.is_dir() else []
+    if not language_clips:
+        print(f"  no per-language clips under {args.language_clips}")
+
+    for clip in language_clips:
+        code = clip.stem
+        language = LANGUAGE_NAMES.get(code, code)
+        model.prepare_conditionals(str(clip))
+        emit(
+            f"lang_{code}",
+            language,
+            f"native {language} reader",
+            model.conds,
+            f"A LibriVox reader recorded in {language}. The accent comes from the "
+            f"clip rather than from the text, so this is the one to pick for a "
+            f"{language} book.",
+            language=code,
+        )
 
     for prefix, clip in clips:
         stem = clip.stem

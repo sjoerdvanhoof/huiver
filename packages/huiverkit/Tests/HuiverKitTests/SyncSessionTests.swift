@@ -86,17 +86,23 @@ private actor FakeSource: SyncDataSource {
     /// Whether this device can produce audio for any range it is asked for,
     /// the way a real one reads chunk files off disk.
     var servesAudio: Bool
+    /// Whether this device renders for the other one, the way the Mac does.
+    var rendersForOthers: Bool
     private(set) var delivered: [String: Data] = [:]
     private(set) var mergedProgress: [ProgressRecord] = []
+    private(set) var accepted: [ConvertRequest] = []
+    private(set) var heardAbout: [SyncMessage.JobStatus] = []
 
     init(
         manifest: SyncMessage.Manifest = .init(),
         files: [String: Data] = [:],
-        servesAudio: Bool = false
+        servesAudio: Bool = false,
+        rendersForOthers: Bool = false
     ) {
         self.stored = manifest
         self.files = files
         self.servesAudio = servesAudio
+        self.rendersForOthers = rendersForOthers
     }
 
     func manifest() async -> SyncMessage.Manifest { stored }
@@ -117,11 +123,28 @@ private actor FakeSource: SyncDataSource {
     func mergeProgress(_ records: [ProgressRecord]) async {
         mergedProgress.append(contentsOf: records)
     }
+
+    func acceptConvertRequests(_ requests: [ConvertRequest]) async -> [SyncMessage.JobStatus] {
+        guard rendersForOthers else { return [] }
+        accepted.append(contentsOf: requests)
+        return requests.map {
+            SyncMessage.JobStatus(
+                requestId: $0.requestId, state: .queued, renderedChunks: 0, chunkCount: 10
+            )
+        }
+    }
+
+    func receive(jobStatus: SyncMessage.JobStatus) async {
+        heardAbout.append(jobStatus)
+    }
 }
 
 struct SyncSessionTests {
-    func hello(_ name: String) -> SyncMessage.Hello {
-        SyncMessage.Hello(deviceId: name, deviceName: name, appVersion: "test")
+    func hello(_ name: String, acceptsAAC: Bool = true) -> SyncMessage.Hello {
+        SyncMessage.Hello(
+            deviceId: name, deviceName: name, appVersion: "test",
+            audioCodecs: acceptsAAC ? [.wav, .aac] : [.wav]
+        )
     }
 
     func bookManifest(
@@ -146,14 +169,15 @@ struct SyncSessionTests {
     /// Run both halves concurrently, as they run for real.
     fileprivate func runSession(
         client: FakeSource, server: FakeSource, clientWantsAudio: Bool = true,
-        serverWantsAudio: Bool = false, damagingServerBlobs: Bool = false
+        serverWantsAudio: Bool = false, damagingServerBlobs: Bool = false,
+        clientAcceptsAAC: Bool = true
     ) async throws -> (SyncSession.Summary, SyncSession.Summary) {
         let (clientTransport, serverTransport) = MemoryTransport.pair(
             damagingServerBlobs: damagingServerBlobs
         )
         let clientSession = SyncSession(
             transport: clientTransport, role: .client, source: client,
-            identity: hello("phone"), wantsAudio: clientWantsAudio
+            identity: hello("phone", acceptsAAC: clientAcceptsAAC), wantsAudio: clientWantsAudio
         )
         let serverSession = SyncSession(
             transport: serverTransport, role: .server, source: server,
@@ -374,5 +398,196 @@ struct SyncSessionTests {
             ],
             "only the tail, and no second copy of the book"
         )
+    }
+
+    // MARK: - Convert offload
+
+    func request(chapter: Int = 0, voice: String = "ruth") -> ConvertRequest {
+        ConvertRequest(
+            contentId: "book", chapterIndex: chapter, textHash: "hash-\(chapter)", voiceId: voice
+        )
+    }
+
+    @Test("an ask from the phone reaches the Mac and comes back as a status")
+    func convertOffload() async throws {
+        let ask = request()
+        let client = FakeSource(
+            manifest: SyncMessage.Manifest(
+                books: [bookManifest(chapters: 1)], convertRequests: [ask]
+            ),
+            // Something to receive as well, so the status is not the only thing
+            // in flight.
+            files: [:]
+        )
+        let server = FakeSource(
+            manifest: SyncMessage.Manifest(books: [bookManifest(contentId: "other", chapters: 1)]),
+            files: [WantItem.bookBundle(contentId: "other").key: Data("book".utf8)],
+            rendersForOthers: true
+        )
+
+        let (fromClient, fromServer) = try await runSession(client: client, server: server)
+        // By id rather than by value: a `Date` does not survive a JSON round
+        // trip bit-for-bit, and the id is the part that has to match anyway.
+        #expect(await server.accepted.map(\.requestId) == [ask.requestId], "the Mac took it on")
+        #expect(await server.accepted.first?.chapterIndex == 0)
+        #expect(fromServer.convertRequestsAccepted == 1)
+        #expect(await client.heardAbout.map(\.requestId) == [ask.requestId])
+        #expect(await client.heardAbout.first?.state == .queued)
+        #expect(fromClient.jobUpdates == 1)
+    }
+
+    /// The case that made statuses a message the session swallows anywhere
+    /// rather than one handled inside the receive loop: a phone with nothing to
+    /// receive never enters that loop, and used to meet the status where it was
+    /// expecting a want.
+    @Test("a status arrives even when the phone is asking for nothing")
+    func statusWithNothingToReceive() async throws {
+        let ask = request()
+        let manifest = SyncMessage.Manifest(books: [bookManifest(chapters: 1)])
+        let client = FakeSource(
+            manifest: SyncMessage.Manifest(
+                books: manifest.books, convertRequests: [ask]
+            )
+        )
+        let server = FakeSource(manifest: manifest, rendersForOthers: true)
+
+        let (fromClient, _) = try await runSession(client: client, server: server)
+        #expect(fromClient.received == 0, "the libraries already match")
+        #expect(await client.heardAbout.count == 1)
+        #expect(fromClient.jobUpdates == 1)
+    }
+
+    @Test("the Mac does not ask the phone to render anything")
+    func offloadIsOneWay() async throws {
+        let manifest = SyncMessage.Manifest(books: [bookManifest(chapters: 1)])
+        let client = FakeSource(manifest: manifest, rendersForOthers: true)
+        let server = FakeSource(
+            manifest: SyncMessage.Manifest(
+                books: manifest.books, convertRequests: [request()]
+            )
+        )
+
+        // The Mac never populates `convertRequests`, so this is the protocol
+        // being symmetric rather than a direction anything uses — what matters
+        // is that the phone answering does not break the session.
+        let (fromClient, fromServer) = try await runSession(client: client, server: server)
+        #expect(fromClient.convertRequestsAccepted == 1)
+        #expect(fromServer.jobUpdates == 1)
+    }
+
+    // MARK: - Audio on the wire
+
+    /// A chapter's worth of real audio: a few chunks of tone, packed the way
+    /// the library serves them.
+    func audioPack(chunks: Int, samplesEach: Int = 12000) -> Data {
+        ChunkPack.pack(
+            (0..<chunks).map { index in
+                let samples = (0..<samplesEach).map { sample in
+                    Float(sin(2 * Double.pi * 200 * Double(sample) / 24000) * 0.5)
+                }
+                return (index, WavFile.data(from: samples))
+            }
+        )
+    }
+
+    /// The saving that makes syncing a book over a cable bearable, and the
+    /// thing that must survive it: the chunk boundaries.
+    @Test("audio crosses compressed and arrives as the WAV it started as")
+    func audioCrossesAsAAC() async throws {
+        let item = WantItem.audio(
+            contentId: "book", chapterIndex: 0, voiceId: "ruth", chunks: Array(0..<6)
+        )
+        // Half a minute: enough that the container's fixed cost is beside the
+        // point, which is the size a real transfer has.
+        let original = audioPack(chunks: 6, samplesEach: 5 * WavFile.sampleRate)
+        let server = FakeSource(
+            manifest: SyncMessage.Manifest(books: [bookManifest(chapters: 1, audioChunks: 6)]),
+            files: [item.key: original]
+        )
+        let client = FakeSource(
+            manifest: SyncMessage.Manifest(books: [bookManifest(chapters: 1)])
+        )
+
+        let (fromClient, _) = try await runSession(client: client, server: server)
+        let delivered = try #require(await client.delivered[item.key])
+
+        // What was stored is WAV again, chunk for chunk and sample for sample.
+        let before = ChunkPack.unpack(original)
+        let after = ChunkPack.unpack(delivered)
+        #expect(after.map(\.index) == before.map(\.index))
+        #expect(
+            after.map { WavFile.sampleCount(of: $0.data) }
+                == before.map { WavFile.sampleCount(of: $0.data) }
+        )
+
+        // And what crossed was a fraction of it.
+        #expect(fromClient.bytesReceived < Int64(original.count) / 4)
+    }
+
+    /// A phone built before AAC existed says nothing about codecs in its hello,
+    /// and must get what it can read.
+    @Test("a peer that cannot decode AAC is sent WAV")
+    func fallsBackToWav() async throws {
+        let item = WantItem.audio(
+            contentId: "book", chapterIndex: 0, voiceId: "ruth", chunks: Array(0..<2)
+        )
+        let original = audioPack(chunks: 2, samplesEach: 5 * WavFile.sampleRate)
+        let server = FakeSource(
+            manifest: SyncMessage.Manifest(books: [bookManifest(chapters: 1, audioChunks: 2)]),
+            files: [item.key: original]
+        )
+        let client = FakeSource(
+            manifest: SyncMessage.Manifest(books: [bookManifest(chapters: 1)])
+        )
+
+        let (fromClient, _) = try await runSession(
+            client: client, server: server, clientAcceptsAAC: false
+        )
+        #expect(await client.delivered[item.key] == original, "byte for byte, uncompressed")
+        #expect(fromClient.bytesReceived == Int64(original.count))
+    }
+
+    /// An old peer's hello has no codec list at all, which is not the same as
+    /// an empty one.
+    @Test("a hello with nothing to say about codecs means WAV")
+    func silenceMeansWav() {
+        var hello = hello("old")
+        hello.audioCodecs = nil
+        #expect(hello.accepts(.wav))
+        #expect(!hello.accepts(.aac))
+    }
+
+    /// Books and covers are not audio and are not touched by any of this.
+    @Test("a book bundle crosses uncompressed even when AAC is on offer")
+    func onlyAudioIsCompressed() async throws {
+        let bundle = Data(repeating: 7, count: 5000)
+        let server = FakeSource(
+            manifest: SyncMessage.Manifest(books: [bookManifest()]),
+            files: [WantItem.bookBundle(contentId: "book").key: bundle]
+        )
+        let client = FakeSource()
+        _ = try await runSession(client: client, server: server)
+        #expect(await client.delivered[WantItem.bookBundle(contentId: "book").key] == bundle)
+    }
+
+    /// A single short chunk compresses to more than it started as, because an
+    /// MPEG-4 container costs about 33 kB whatever is in it. The sender sends
+    /// whichever is smaller.
+    @Test("a transfer too small to be worth compressing crosses as WAV")
+    func tinyTransferStaysWav() async throws {
+        let item = WantItem.audio(
+            contentId: "book", chapterIndex: 0, voiceId: "ruth", chunks: [0]
+        )
+        let original = audioPack(chunks: 1, samplesEach: 2400)
+        let server = FakeSource(
+            manifest: SyncMessage.Manifest(books: [bookManifest(chapters: 1, audioChunks: 1)]),
+            files: [item.key: original]
+        )
+        let client = FakeSource(
+            manifest: SyncMessage.Manifest(books: [bookManifest(chapters: 1)])
+        )
+
+        _ = try await runSession(client: client, server: server)
+        #expect(await client.delivered[item.key] == original)
     }
 }

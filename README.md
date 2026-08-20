@@ -46,7 +46,7 @@ so day-to-day use is unchanged. Runtime state now lives in `apps/web/data/`; set
 Cloned voices are optional and installed separately:
 
 ```bash
-bun run setup:chatterbox   # creates apps/web/.venv-chatterbox (~3 GB)
+bun run setup:chatterbox   # creates tools/export/.venv-chatterbox (~3 GB)
 bun run voices             # cuts 10 reference clips from LibriVox (~6 MB)
 ```
 
@@ -163,8 +163,12 @@ Then pick **Chatterbox Nano (local, cloned voices)** as the engine in Settings.
 
 `chatterbox-tts` pins `torch==2.6.0`, `transformers==5.2.0` and `numpy<2`. Kokoro here runs
 against torch 2.13 / transformers 5.14 / numpy 2.4. Installing both into one environment
-downgrades torch and breaks Kokoro, so Chatterbox gets `apps/web/.venv-chatterbox` to itself
-and the provider spawns its worker with that interpreter.
+downgrades torch and breaks Kokoro, so Chatterbox gets `tools/export/.venv-chatterbox` to
+itself and the provider spawns its worker with that interpreter.
+
+It sits under `tools/export` rather than here because the export scripts are what need it now
+— the Mac app converts, this app is headed for `legacy/`, and a venv inside a workspace that
+is about to move would have gone with it. `HUIVER_CHATTERBOX_VENV` still overrides the path.
 
 It is installed from a pinned git commit rather than from PyPI: Nano landed after the last
 release, so `pip install chatterbox-tts` gets 0.1.7, which has no `nano=True` and would

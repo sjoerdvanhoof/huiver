@@ -1,4 +1,12 @@
-# Chatterbox Nano, installed into .venv-chatterbox rather than .venv.
+# Chatterbox — Nano for the phone's models, Multilingual for the Mac's — in
+# tools/export/.venv-chatterbox.
+#
+# It lived in apps/web until the Mac app took over converting. The export
+# scripts are what need it now, and apps/web is headed for legacy/, so it moved
+# to the tooling that owns it rather than waiting to be orphaned. The web app
+# borrows the same venv through HUIVER_CHATTERBOX_VENV.
+#
+# Installed into .venv-chatterbox rather than .venv.
 #
 # chatterbox-tts pins torch, torchaudio, transformers and numpy to exact
 # versions several majors below the ones Kokoro runs against, so the two engines

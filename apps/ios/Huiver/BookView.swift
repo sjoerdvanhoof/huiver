@@ -188,9 +188,12 @@ private struct ChapterRow: View {
     let opened: () -> Void
 
     @Environment(AppModel.self) private var model
+    @Environment(SyncModel.self) private var sync
     @Environment(\.theme) private var theme
 
     private var narrator: Narrator? { model.narrator }
+    /// The ask outstanding for this chapter, if one was made.
+    private var offloaded: AppModel.OffloadState? { model.offloaded[chapter.id] }
     private var isCurrent: Bool { narrator?.chapterId == chapter.id }
     private var isConverting: Bool { model.converter?.isQueued(chapter.id) ?? false }
     private var isFinished: Bool { model.isFinished(chapter) }
@@ -244,6 +247,19 @@ private struct ChapterRow: View {
                     Task { await model.rerender(chapter: chapter, in: book) }
                 }
             }
+            // Only worth offering with a Mac to offer it to: an ask with
+            // nowhere to go would sit in the list for ever looking ignored.
+            if sync.isPaired, !chapter.isComplete {
+                if offloaded == nil {
+                    Button("Convert on the Mac", systemImage: "desktopcomputer") {
+                        Task { await model.requestConversionOnMac(chapter: chapter, in: book) }
+                    }
+                } else {
+                    Button("Stop asking the Mac", systemImage: "desktopcomputer.trianglebadge.exclamationmark") {
+                        Task { await model.cancelMacRequest(chapter: chapter) }
+                    }
+                }
+            }
         }
     }
 
@@ -274,6 +290,9 @@ private struct ChapterRow: View {
             return "converting \(converter.renderedChunks)/\(max(converter.chunkCount, 1)) · \(Format.estimate(estimate))"
         }
         if isConverting { return "queued · \(Format.estimate(estimate))" }
+        // Then the Mac, which is work in flight even though nothing is
+        // happening on this device.
+        if let offloaded { return macDetail(offloaded, estimate: estimate) }
         if let error = chapter.lastRenderError { return error }
         if let listened {
             // Then where the listener is, which beats how much of it has been
@@ -292,6 +311,29 @@ private struct ChapterRow: View {
             return "\(chapter.renderedChunks)/\(chapter.chunkCount) rendered · \(Format.estimate(estimate))"
         }
         return Format.estimate(estimate)
+    }
+
+    /// What the Mac last said about this chapter, in a row's worth of words.
+    ///
+    /// An ask with no status is not stalled — it is waiting for the two devices
+    /// to be in the same room, which may be tonight. Saying so is the whole
+    /// point: the alternative is a row that looks like nothing happened.
+    private func macDetail(_ state: AppModel.OffloadState, estimate: Double) -> String {
+        guard let status = state.status else {
+            return "asked of the Mac · \(Format.estimate(estimate))"
+        }
+        switch status.state {
+        case .queued:
+            return "waiting on the Mac · \(Format.estimate(estimate))"
+        case .rendering:
+            return "on the Mac · \(status.renderedChunks)/\(max(status.chunkCount, 1))"
+        case .done:
+            // The audio comes with the next sync; the Mac has already done its
+            // part, and this row is what it looks like in between.
+            return "done on the Mac · sync to fetch it"
+        case .failed:
+            return "the Mac could not render this"
+        }
     }
 
     private func play() {

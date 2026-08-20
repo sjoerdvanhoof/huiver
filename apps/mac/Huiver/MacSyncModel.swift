@@ -132,7 +132,13 @@ final class MacSyncModel {
                 library: library,
                 progress: progress,
                 deviceId: deviceId,
-                voiceDirectory: Bundle.main.resourceURL?.appendingPathComponent("Voices")
+                voiceDirectory: Bundle.main.resourceURL?.appendingPathComponent("Voices"),
+                // The Mac asks for nothing and renders for the phone, so it has
+                // the accepting half of offload and not the asking one.
+                acceptRequests: { [weak model] requests in
+                    guard let model else { return [] }
+                    return await model.acceptConvertRequests(requests)
+                }
             )
             let session = SyncSession(
                 transport: transport,
@@ -152,6 +158,10 @@ final class MacSyncModel {
             lastSyncedAt = Date()
             await transport.close()
             await model.refresh()
+            // Now the books that arrived in this session are in the library,
+            // the asks that were waiting for them can be queued. The phone
+            // hears the real state of those next time it connects.
+            model.placeDeferredRequests()
         } catch {
             // A dropped connection mid-sync is ordinary — the phone left the
             // room. The next session's diff picks up the remainder.
