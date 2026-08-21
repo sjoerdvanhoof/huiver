@@ -159,6 +159,11 @@ public final class Narrator {
     private var currentVoice: Voice?
     private var currentOptions = SamplingOptions()
 
+    /// Called whenever a render pass ends, for any reason. The Mac app hangs
+    /// its memory housekeeping on this — MLX holds a buffer pool worth giving
+    /// back once nothing is synthesizing — and playback itself never needs it.
+    public var renderPassDidEnd: (() -> Void)?
+
     /// The stop flag is read from inside the engine's token loop, which runs
     /// off the main actor, so it cannot be main-actor state.
     private final class Flag: @unchecked Sendable {
@@ -270,6 +275,11 @@ public final class Narrator {
 
         work = Task { [weak self] in
             guard let self else { return }
+            // However this pass ends — finished, superseded, stopped or
+            // failed — say so, so the app can give back what synthesis was
+            // holding. Whether anything is actually idle is the app's call:
+            // a superseded pass ends while its replacement runs.
+            defer { renderPassDidEnd?() }
             do {
                 if stale {
                     try await library.discardAudio(chapterId: chapter.id, bookId: book.id)

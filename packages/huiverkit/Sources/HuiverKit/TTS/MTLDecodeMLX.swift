@@ -137,6 +137,10 @@ final class MTLDecodeMLX {
     private let compiledStep: @Sendable ([MLXArray]) -> [MLXArray]
 
     init(weights url: URL) throws {
+        // Before the first allocation: everything below goes through the pool
+        // this bounds.
+        EngineMemory.capCache()
+
         let configURL = url.deletingPathExtension().appendingPathExtension("json")
         guard let data = try? Data(contentsOf: configURL) else {
             throw LoadError.missingConfig(configURL)

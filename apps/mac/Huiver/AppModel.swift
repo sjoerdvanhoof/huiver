@@ -181,6 +181,7 @@ final class AppModel {
             }
             let narrator = Narrator(engine: engine, library: library!, progress: progressStore)
             self.narrator = narrator
+            narrator.renderPassDidEnd = { [weak self] in self?.trimEngineMemoryIfIdle() }
             sleepTimer.attach(
                 fade: { [weak narrator] seconds in narrator?.fadeOutAndPause(over: seconds) },
                 stopAtChapterEnd: { [weak narrator] stop in
@@ -315,6 +316,22 @@ final class AppModel {
         books = await library.all()
         bytesOnDisk = await library.bytesOnDisk()
         await refreshProgress()
+        // The converter announces every queue change through here, so the
+        // queue draining is one of the two moments synthesis can go quiet.
+        trimEngineMemoryIfIdle()
+    }
+
+    /// Give MLX's buffer pool back once nothing is synthesizing.
+    ///
+    /// The pool exists to be reused within a render; between renders it is
+    /// gigabytes of stale transients that Activity Monitor charges to the app.
+    /// Playing already-rendered audio never touches MLX, so a fully rendered
+    /// chapter still counts as idle here — only a stream mid-write, or a
+    /// converter job, is work worth keeping the pool warm for.
+    func trimEngineMemoryIfIdle() {
+        if let converter, converter.isBusy { return }
+        if let narrator, narrator.chapterId != nil, !narrator.isFullyRendered { return }
+        EngineMemory.trim()
     }
 
     func refreshProgress() async {

@@ -21,8 +21,13 @@ struct HuiverApp: App {
                 .onChange(of: phase) { _, new in
                     // The position ticker writes lazily, and quitting from the
                     // Dock is the usual way this app ends. Write it down while
-                    // there is still a process to write it from.
-                    if new == .background { model.narrator?.checkpoint() }
+                    // there is still a process to write it from. Receding is
+                    // also the moment to hand back idle GPU memory — the check
+                    // inside leaves a render still running alone.
+                    if new == .background {
+                        model.narrator?.checkpoint()
+                        model.trimEngineMemoryIfIdle()
+                    }
                 }
                 .frame(minWidth: 900, minHeight: 600)
         }
