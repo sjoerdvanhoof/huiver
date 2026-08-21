@@ -4,12 +4,13 @@ import SwiftUI
 /// and the audition bar pinned under whichever detail is showing.
 struct ContentView: View {
     enum Destination: String, CaseIterable, Identifiable {
-        case library, voices, queue, sync, settings
+        case library, player, voices, queue, sync, settings
         var id: String { rawValue }
 
         var label: String {
             switch self {
             case .library: "Library"
+            case .player: "Now Playing"
             case .voices: "Voices"
             case .queue: "Queue"
             case .sync: "Sync"
@@ -20,6 +21,7 @@ struct ContentView: View {
         var icon: String {
             switch self {
             case .library: "books.vertical"
+            case .player: "play.circle"
             case .voices: "waveform"
             case .queue: "tray.full"
             case .sync: "iphone"
@@ -45,8 +47,9 @@ struct ContentView: View {
         } detail: {
             detail
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    if model.narrator?.chapterId != nil {
-                        MiniPlayerBar()
+                    // Everywhere except the full player, which it would repeat.
+                    if model.narrator?.chapterId != nil, selection != .player {
+                        MiniPlayerBar { selection = .player }
                             .background(.bar)
                             .overlay(alignment: .top) { Divider().overlay(theme.colors.border) }
                     }
@@ -69,6 +72,7 @@ struct ContentView: View {
     private var detail: some View {
         switch selection ?? .library {
         case .library: LibraryView()
+        case .player: PlayerView()
         case .voices: VoicesView()
         case .queue: QueueView()
         case .sync: SyncView()

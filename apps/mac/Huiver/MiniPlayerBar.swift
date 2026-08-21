@@ -2,35 +2,53 @@ import SwiftUI
 
 /// The thin bar under the detail pane: what is being read, transport, speed.
 ///
-/// This is an audition bar, not a full player — the Mac's job is to render and
-/// to sync, and listening here is mostly checking a voice against a chapter.
-/// The progress hairline has two fills: the dim one is how far synthesis has
-/// got, the ember one how far playback has. The part not yet rendered is not
-/// merely unbuffered — it does not exist, and cannot be seeked into.
+/// Clicking the cover or the title opens the full player, exactly as on the
+/// phone; the transport stays here so listening never requires leaving the
+/// screen you are on. The progress track has two fills: the dim one is how far
+/// synthesis has got, the ember one how far playback has. The part not yet
+/// rendered is not merely unbuffered — it does not exist, and cannot be
+/// seeked into.
 struct MiniPlayerBar: View {
+    let open: () -> Void
+
     @Environment(AppModel.self) private var model
     @Environment(\.theme) private var theme
+
+    @State private var dragging: Double?
 
     var body: some View {
         if let narrator = model.narrator, narrator.chapterId != nil {
             VStack(spacing: 0) {
-                TwoStageBar(
-                    played: fraction(narrator.position, of: narrator),
-                    rendered: fraction(narrator.renderedSeconds, of: narrator),
-                    height: 2
-                )
+                scrubber(narrator)
 
                 HStack(spacing: Palette.Space.md) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(narrator.chapterTitle)
-                            .font(.huiverLabel)
-                            .foregroundStyle(theme.colors.foreground)
-                            .lineLimit(1)
-                        Text(status(narrator))
-                            .font(.huiverCaption)
-                            .foregroundStyle(theme.colors.mutedForeground)
-                            .lineLimit(1)
+                    Button(action: open) {
+                        HStack(spacing: Palette.Space.md) {
+                            if let book = narrator.book {
+                                BookCover(
+                                    bookId: book.id,
+                                    title: book.title,
+                                    url: model.coverURL(for: book),
+                                    width: 34,
+                                    radius: Palette.Radius.sm
+                                )
+                            }
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(narrator.chapterTitle)
+                                    .font(.huiverLabel)
+                                    .foregroundStyle(theme.colors.foreground)
+                                    .lineLimit(1)
+                                Text(status(narrator))
+                                    .font(.huiverCaption)
+                                    .foregroundStyle(theme.colors.mutedForeground)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .contentShape(.rect)
                     }
+                    .buttonStyle(.plain)
+                    .help("Open the player")
 
                     Spacer(minLength: 0)
 
@@ -71,6 +89,34 @@ struct MiniPlayerBar: View {
                 .padding(.vertical, Palette.Space.sm)
             }
         }
+    }
+
+    /// A draggable track rather than a hairline: thin enough to stay a border,
+    /// with the drag target inset outward so it can actually be grabbed. The
+    /// drag is clamped to the rendered edge, same as the full player.
+    private func scrubber(_ narrator: Narrator) -> some View {
+        let total = max(narrator.estimatedDuration, 1)
+
+        return GeometryReader { geometry in
+            TwoStageBar(
+                played: (dragging ?? narrator.position) / total,
+                rendered: narrator.renderedSeconds / total,
+                height: 3
+            )
+            .contentShape(.rect.inset(by: -8))
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let fraction = min(1, max(0, value.location.x / geometry.size.width))
+                        dragging = min(fraction * total, narrator.renderedSeconds)
+                    }
+                    .onEnded { _ in
+                        if let target = dragging { narrator.seek(to: target) }
+                        dragging = nil
+                    }
+            )
+        }
+        .frame(height: 3)
     }
 
     /// Speed. The model has no speed control of its own, so this is the player

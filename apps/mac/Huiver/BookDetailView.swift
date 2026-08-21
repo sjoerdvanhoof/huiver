@@ -245,6 +245,10 @@ private struct ChapterRow: View {
                     Text(detail)
                         .font(.huiverCaption)
                         .foregroundStyle(theme.colors.mutedForeground)
+                    if let listened, chapter.chunkCount > 0 {
+                        ListenedBar(fraction: listened / max(estimatedLength, 1))
+                            .padding(.top, 2)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(.rect)
@@ -302,6 +306,12 @@ private struct ChapterRow: View {
             return "\(Format.duration(listened)) in · \(Format.estimate(estimate))"
         }
         if isFinished { return "finished · \(Format.approximate(estimate))" }
+        if isCurrent, let seconds = narrator?.renderedSeconds, seconds > 0 {
+            // What exists, which is what the scrubber can reach.
+            return chapter.isComplete
+                ? Format.duration(seconds)
+                : "\(Format.duration(seconds)) rendered · \(Format.estimate(estimate))"
+        }
         if chapter.isComplete { return Format.approximate(estimate) }
         if chapter.renderedChunks > 0, chapter.chunkCount > 0 {
             return "\(chapter.renderedChunks)/\(chapter.chunkCount) rendered · \(Format.estimate(estimate))"
@@ -324,6 +334,29 @@ private struct ChapterRow: View {
             narrator.play(
                 book: book, chapter: chapter, voice: voice, options: model.options, from: from
             )
+        }
+    }
+
+    /// How far through a chapter the listener is.
+    ///
+    /// Thinner and quieter than the player's `TwoStageBar`, and only about
+    /// listening: how much has been rendered is already in the row's detail
+    /// line and on the action button.
+    private struct ListenedBar: View {
+        let fraction: Double
+
+        @Environment(\.theme) private var theme
+
+        var body: some View {
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    theme.colors.border
+                    theme.colors.primary.opacity(0.7)
+                        .frame(width: geometry.size.width * min(1, max(0, fraction)))
+                }
+                .clipShape(.capsule)
+            }
+            .frame(height: 2)
         }
     }
 
