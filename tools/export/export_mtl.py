@@ -29,6 +29,7 @@ import coremltools as ct
 
 import mil_ops  # noqa: F401 — registers the torch ops coremltools is missing
 from common import (
+    DEFAULT_GEN_TOKENS,
     MEL_HOP,
     MEL_DIM,
     S3GEN_SIL,
@@ -293,7 +294,7 @@ def export_flow(
     save(
         quantize(converted, quant),
         out,
-        "MTLS3Flow",
+        "MTLS3Flow" if gen_tokens == DEFAULT_GEN_TOKENS else f"MTLS3Flow{gen_tokens}",
         dict(
             genTokens=gen_tokens,
             promptTokenLen=prompt_tokens,
@@ -347,7 +348,7 @@ def export_vocoder(model, out: Path, gen_tokens: int, quant: str = "int8"):
     save(
         quantize(converted, quant),
         out,
-        "MTLS3Vocoder",
+        "MTLS3Vocoder" if gen_tokens == DEFAULT_GEN_TOKENS else f"MTLS3Vocoder{gen_tokens}",
         dict(
             melFrames=frames,
             hop=MEL_HOP,
@@ -366,7 +367,12 @@ def main():
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--only", choices=["prefill", "decode", "flow", "vocoder"])
     ap.add_argument(
-        "--gen-tokens", type=int, default=768, help="speech tokens the flow converts in one pass"
+        "--gen-tokens", type=int, nargs="+", default=[768],
+        help="speech tokens the flow converts in one pass; several sizes mean "
+        "several traced flow+vocoder pairs, because the conformer bakes its "
+        "padding masks in at trace time and a graph traced at one length is "
+        "quietly wrong at another. The engine picks the smallest installed "
+        "window that fits each run of tokens.",
     )
     ap.add_argument(
         "--quantize", choices=["none", "int8", "int4"], default="int8",
@@ -408,13 +414,14 @@ def main():
             )
         if args.only in (None, "decode"):
             export_decode(model, modules, args.out, quant=args.quantize)
-        if args.only in (None, "flow"):
-            export_flow(
-                model, args.out, args.gen_tokens, args.prompt_tokens,
-                units=args.flow_units, quant=args.quantize,
-            )
-        if args.only in (None, "vocoder"):
-            export_vocoder(model, args.out, args.gen_tokens, quant=args.quantize)
+        for size in args.gen_tokens:
+            if args.only in (None, "flow"):
+                export_flow(
+                    model, args.out, size, args.prompt_tokens,
+                    units=args.flow_units, quant=args.quantize,
+                )
+            if args.only in (None, "vocoder"):
+                export_vocoder(model, args.out, size, quant=args.quantize)
 
 
 if __name__ == "__main__":

@@ -356,11 +356,25 @@ quantisation the Core ML decode shipped with); `verify` is
 and walks them greedily — 47/48 argmax agreement, 0.09 worst top-band logit
 drift, which is fp16 rounding.
 
-The measured chunk (363 chars, 15.5 s of audio) went from 29.4 s to ~12 s of
-compute; the remaining big block is the mel decoder's fixed 768-token window
-(~5.9 s per window however little of it is used), which is the next thing
-worth taking — window right-sizing needs one traced graph per size, see the
-`DEFAULT_GEN_TOKENS` comment in common.py.
+**The mel decoder's window is right-sized too.** A window's cost is paid in
+full however little of it is used — twenty estimator passes over every mel
+frame, rendered silence included — and a typical ~390-token chunk was paying
+for 768. `bun run mac:models` now traces the flow+vocoder pair at 768, 512 and
+256 (one traced graph per size; the conformer bakes its padding masks in at
+trace time, so a single flexible package cannot exist), the install ships all
+of them, and `decodeWindow` picks the smallest installed window that fits.
+Fixed shapes mean each size pays Core ML's specialisation once per process,
+not per length. Measured: the S3 half of the typical chunk fell from 5.9 s to
+3.6 s.
+
+Where that leaves the measured chunk (363 chars, 15.5 s of audio): 29.4 s of
+compute before any of this, **11.3 s now — 1.35× realtime**, or 0.7 h of
+compute per hour of audio against the original 1.9 h. The two blocks left are
+roughly equal now: ~7.5 s of token loop (of which ~1.5 s is the debug-build
+sampler; Release is thinner) and ~3.6 s of mel decoding, so the next levers,
+if ever wanted, are int4 decode weights (measured 12.9 ms/step against int8's
+15.4, at a real quality cost that wants listening first) and overlapping chunk
+N's mel decode under chunk N+1's token loop.
 
 ## Deliberately not planned
 

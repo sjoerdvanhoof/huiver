@@ -39,10 +39,12 @@ struct MultilingualSpeedTests {
         options.maxTokens = 1200
 
         // Once to warm the models, then measured: the first call after a load
-        // pays for Core ML's lazy specialisation and would flatter nothing.
+        // pays for Core ML's lazy specialisation and MLX's kernel JIT, and
+        // would flatter nothing. Warmed with the *same* text so the mel
+        // decoder window the measurement picks is the one that got warmed —
+        // each fixed-size window specialises separately, once per process.
         _ = try await engine.speak(
-            "Een korte zin om te beginnen.", voice: voice, options: options,
-            language: .named("nl")
+            text, voice: voice, options: options, language: .named("nl")
         )
 
         func seconds(_ duration: Duration) -> Double {

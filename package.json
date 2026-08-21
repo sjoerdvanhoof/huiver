@@ -35,7 +35,7 @@
     "mtl:probe": "cd tools/export && ./.venv-chatterbox/bin/python probe_mtl.py",
     "mtl:verify": "cd tools/export && ./.venv-chatterbox/bin/python verify_mtl.py",
     "mtl:export": "cd tools/export && ./.venv-chatterbox/bin/python export_mtl.py --out ../../apps/mac/build",
-    "mac:models": "cd tools/export && ./.venv-chatterbox/bin/python export_mtl.py --out ../../apps/mac/build-mtl --gen-tokens 768 --prompt-tokens 250",
+    "mac:models": "cd tools/export && ./.venv-chatterbox/bin/python export_mtl.py --out ../../apps/mac/build-mtl --gen-tokens 768 512 256 --prompt-tokens 250",
     "mac:backbone": "cd tools/export && ./.venv-chatterbox/bin/python mtl_mlx_export.py --out ../../apps/mac/build-mtl --quantize int8",
     "mac:voices": "cd tools/export && ./.venv-chatterbox/bin/python export_voices.py --multilingual --out ../../apps/mac/build-voices-mtl",
     "mac:verify": "cd tools/export && ./.venv-chatterbox/bin/python verify_mtl.py --models ../../apps/mac/build-mtl",

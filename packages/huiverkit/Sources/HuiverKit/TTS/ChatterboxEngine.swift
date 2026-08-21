@@ -55,6 +55,9 @@ public actor ChatterboxEngine {
         /// of the prefill that is not backbone weights, kept in Core ML
         /// because its shapes are fixed.
         public var cond: URL
+        /// Smaller mel-decoder windows installed beside `flow`/`vocoder`,
+        /// smallest first — see the discovery in `init(directory:)`.
+        public var s3Variants: [(flow: URL, vocoder: URL)] = []
 
         /// The layout `bun run ios:install` and `bun run mac:install` write.
         ///
@@ -75,6 +78,30 @@ public actor ChatterboxEngine {
             backbone = isMultilingual
                 ? directory.appendingPathComponent("MTLT3Backbone.safetensors") : nil
             cond = directory.appendingPathComponent("MTLCond.mlmodelc")
+
+            // Smaller mel-decoder windows beside the canonical one, named
+            // MTLS3Flow<N>.mlmodelc with a matching vocoder. Each is its own
+            // traced graph — the conformer bakes its padding masks in at trace
+            // time, so one flexible package cannot exist — and the engine
+            // picks the smallest installed window that fits each run of
+            // tokens, because a window's cost is paid in full however little
+            // of it is used.
+            let contents = (try? FileManager.default.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: nil
+            )) ?? []
+            s3Variants = contents
+                .filter { $0.pathExtension == "mlmodelc" }
+                .compactMap { url -> (Int, flow: URL, vocoder: URL)? in
+                    let name = url.deletingPathExtension().lastPathComponent
+                    guard name.hasPrefix("\(prefix)S3Flow"),
+                          let size = Int(name.dropFirst("\(prefix)S3Flow".count))
+                    else { return nil }
+                    let vocoder = directory.appendingPathComponent("\(prefix)S3Vocoder\(size).mlmodelc")
+                    guard FileManager.default.fileExists(atPath: vocoder.path) else { return nil }
+                    return (size, url, vocoder)
+                }
+                .sorted { $0.0 < $1.0 }
+                .map { (flow: $0.flow, vocoder: $0.vocoder) }
         }
 
         /// Whether the token loop will run on MLX rather than Core ML: the
@@ -171,6 +198,15 @@ public actor ChatterboxEngine {
     private var cond: MLModel?
     private var flow: MLModel
     private var vocoder: MLModel
+    /// One smaller mel-decoder window, loaded beside the canonical pair.
+    private struct S3Window {
+        var flow: MLModel
+        var vocoder: MLModel
+        let genTokens: Int
+    }
+    /// Aligned with `source.s3Variants`, so `performReload` can pair each
+    /// loaded model back to its files. `decodeWindow` picks by `genTokens`.
+    private var s3Windows: [S3Window]
     #if canImport(MLX)
     /// The multilingual T3 on MLX, several times faster per token than the
     /// Core ML pair — which is not loaded at all while this is present.
@@ -290,13 +326,24 @@ public actor ChatterboxEngine {
         case .nano: .nano(try BPETokenizer(directory: models.tokenizer))
         case .multilingual: .multilingual(try MTLTokenizer(directory: models.tokenizer))
         }
+        func model(_ url: URL) throws -> MLModel {
+            guard let found = loaded[url.deletingPathExtension().lastPathComponent] else {
+                throw EngineError.missingModel(url)
+            }
+            return found
+        }
+        var variants: [(flow: MLModel, vocoder: MLModel)] = []
+        for pair in models.s3Variants {
+            variants.append((try model(pair.flow), try model(pair.vocoder)))
+        }
         return try ChatterboxEngine(
             source: models,
-            prefill: mlx ? nil : loaded[0],
-            decode: mlx ? nil : loaded[1],
-            cond: mlx ? loaded[0] : nil,
-            flow: loaded[mlx ? 1 : 2],
-            vocoder: loaded[mlx ? 2 : 3],
+            prefill: mlx ? nil : try model(models.prefill),
+            decode: mlx ? nil : try model(models.decode),
+            cond: mlx ? try model(models.cond) : nil,
+            flow: try model(models.flow),
+            vocoder: try model(models.vocoder),
+            s3Variants: variants,
             tokenizer: tokenizer,
             placement: placement
         )
@@ -370,6 +417,16 @@ public actor ChatterboxEngine {
         placement[name(source.flow)] = label
         (vocoder, label) = try await Self.load(name(source.vocoder), source.vocoder, using: ladder(source.vocoder))
         placement[name(source.vocoder)] = label
+        for (index, pair) in source.s3Variants.enumerated() where index < s3Windows.count {
+            (s3Windows[index].flow, label) = try await Self.load(
+                name(pair.flow), pair.flow, using: ladder(pair.flow)
+            )
+            placement[name(pair.flow)] = label
+            (s3Windows[index].vocoder, label) = try await Self.load(
+                name(pair.vocoder), pair.vocoder, using: ladder(pair.vocoder)
+            )
+            placement[name(pair.vocoder)] = label
+        }
     }
 
     private static func loadModels(
@@ -377,13 +434,14 @@ public actor ChatterboxEngine {
         using ladder: [(String, MLComputeUnits)],
         mlx: Bool = false,
         progress: @escaping @Sendable (LoadProgress) -> Void = { _ in }
-    ) async throws -> ([MLModel], [String: String]) {
+    ) async throws -> ([String: MLModel], [String: String]) {
         // The MLX path replaces the prefill and decode models outright, and
         // brings the small conditioning model instead; loading a gigabyte of
         // Core ML weights that would never predict is not a fallback, it is a
         // leak.
         let urls = (mlx ? [models.cond] : [models.prefill, models.decode])
             + [models.flow, models.vocoder]
+            + models.s3Variants.flatMap { [$0.flow, $0.vocoder] }
         let stages = urls.map { ($0.deletingPathExtension().lastPathComponent, $0) }
         for (_, url) in stages where !FileManager.default.fileExists(atPath: url.path) {
             throw EngineError.missingModel(url)
@@ -392,7 +450,7 @@ public actor ChatterboxEngine {
         let sizes = stages.map { Double(directorySize($0.1)) }
         let total = max(sizes.reduce(0, +), 1)
 
-        var loaded: [MLModel] = []
+        var loaded: [String: MLModel] = [:]
         var placement: [String: String] = [:]
         var base = 0.0
         for (index, stage) in stages.enumerated() {
@@ -435,7 +493,7 @@ public actor ChatterboxEngine {
                 throw error
             }
             ticker.cancel()
-            loaded.append(model)
+            loaded[stage.0] = model
             base = start + share
             progress(
                 LoadProgress(
@@ -493,6 +551,7 @@ public actor ChatterboxEngine {
         cond: MLModel?,
         flow: MLModel,
         vocoder: MLModel,
+        s3Variants: [(flow: MLModel, vocoder: MLModel)],
         tokenizer: Tokenizing,
         placement: [String: String]
     ) throws {
@@ -552,6 +611,17 @@ public actor ChatterboxEngine {
             flow: source.flow.deletingPathExtension().lastPathComponent,
             vocoder: source.vocoder.deletingPathExtension().lastPathComponent
         )
+
+        // Each smaller window says how many tokens it holds in its own
+        // metadata; the file name's number is only used to pair flow with
+        // vocoder.
+        s3Windows = try s3Variants.map { pair in
+            S3Window(
+                flow: pair.flow,
+                vocoder: pair.vocoder,
+                genTokens: try meta(pair.flow, "\(names.flow) variant", "genTokens")
+            )
+        }
 
         if let prefill {
             condPrefixLength = try meta(prefill, names.prefill, "condPrefixLen")
@@ -1181,18 +1251,29 @@ public actor ChatterboxEngine {
     }
 
     private func decodeWindow(_ window: [Int32], voice: Voice) throws -> [Float] {
+        // The smallest installed window that holds the tokens plus the three
+        // silence tokens below. A window's cost is paid in full however little
+        // of it is used — twenty estimator passes over every mel frame,
+        // rendered silence included — so a typical 400-token chunk through a
+        // fitted window is the single cheapest speedup S3 has.
+        let fitted = s3Windows
+            .filter { $0.genTokens >= window.count + 3 }
+            .min { $0.genTokens < $1.genTokens }
+        let (flow, vocoder, capacity) = fitted.map { ($0.flow, $0.vocoder, $0.genTokens) }
+            ?? (self.flow, self.vocoder, genTokens)
+
         var padded = window
         // Three tokens of silence before the padding, as the desktop pipeline
         // appends, so the last word is not clipped by the window edge.
         padded += [silenceToken, silenceToken, silenceToken]
-        let spoken = min(padded.count, genTokens)
-        padded += Array(repeating: silenceToken, count: max(0, genTokens - padded.count))
-        padded = Array(padded.prefix(genTokens))
+        let spoken = min(padded.count, capacity)
+        padded += Array(repeating: silenceToken, count: max(0, capacity - padded.count))
+        padded = Array(padded.prefix(capacity))
 
-        let melLength = (promptTokenLength + genTokens) * tokenMelRatio
+        let melLength = (promptTokenLength + capacity) * tokenMelRatio
         let melOut = try flow.prediction(from: try MLDictionaryFeatureProvider(dictionary: [
             "prompt_tokens": try array(voice.promptTokens, shape: [1, promptTokenLength]),
-            "gen_tokens": try array(padded, shape: [1, genTokens]),
+            "gen_tokens": try array(padded, shape: [1, capacity]),
             "prompt_feat": try array(
                 voice.promptFeatures, shape: [1, promptFeatureLength, melDimension]
             ),
