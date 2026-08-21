@@ -346,15 +346,18 @@ conditioning encoder — the perceiver, the one piece that is not backbone
 weights — stays in Core ML as `MTLCond`, fixed shapes, once per chunk. So do
 the mel decoder and the vocoder. The sampler stays in Swift, unchanged.
 
-The engine picks the loop the same way it picks everything: by what is
-installed. `MTLT3Backbone.safetensors` + `MTLCond.mlmodelc` present → MLX, and
-the Core ML prefill/decode packages are not even loaded; absent (or on iOS,
-which does not link MLX) → the Core ML pair, exactly as before.
-`bun run mac:backbone` exports the weights (int8 by default, the same
-quantisation the Core ML decode shipped with); `verify` is
-`MTLMLXParityTests`, which seeds both decoders from the same prefill output
-and walks them greedily — 47/48 argmax agreement, 0.09 worst top-band logit
-drift, which is fp16 rounding.
+The MLX loop is the *only* multilingual T3 now. The Core ML prefill/decode
+pair it replaced is no longer installed at all — a gigabyte the engine would
+never load — and a missing backbone is a broken install said out loud
+(`EngineError.backboneRequired`), not something to fall back from. The pair
+still exists as verification tooling: `bun run mac:models` exports it to
+build-mtl, and `MTLMLXParityTests` — which seeds both decoders from the same
+prefill output and walks them greedily; 47/48 argmax agreement, 0.09 worst
+top-band logit drift, fp16 rounding — runs whenever the two are compiled
+beside the backbone, and is disabled rather than failed when they are not.
+`bun run mac:backbone` exports the MLX weights (int8 by default, the same
+quantisation the Core ML decode shipped with). Nano's Core ML prefill/decode
+path is untouched; the phone knows nothing of any of this.
 
 **The mel decoder's window is right-sized too.** A window's cost is paid in
 full however little of it is used — twenty estimator passes over every mel

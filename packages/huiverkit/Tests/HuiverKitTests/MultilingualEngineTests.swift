@@ -25,8 +25,10 @@ struct MultilingualEngineTests {
     }
 
     static var installed: Bool {
+        // The MLX backbone is the multilingual install now; the Core ML T3
+        // pair it replaced is no longer shipped.
         FileManager.default.fileExists(
-            atPath: root.appendingPathComponent("Models/MTLT3Decode.mlmodelc").path
+            atPath: root.appendingPathComponent("Models/MTLT3Backbone.safetensors").path
         )
     }
 

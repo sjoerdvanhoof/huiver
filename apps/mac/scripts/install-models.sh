@@ -59,6 +59,10 @@ for source_dir in "${sources[@]}"; do
   for package in "$source_dir"/*.mlpackage; do
     [ -e "$package" ] || continue
     name="$(basename "$package" .mlpackage)"
+    # The multilingual T3 runs on MLX (MTLT3Backbone.safetensors below); its
+    # Core ML pair is verification tooling, not something to ship — the two of
+    # them are a gigabyte the engine would never load.
+    case "$name" in MTLT3Prefill|MTLT3Decode) continue ;; esac
     echo "compiling $name"
     rm -rf "$models/$name.mlmodelc"
     xcrun coremlcompiler compile "$package" "$models" >/dev/null
@@ -85,6 +89,10 @@ for extra in MTLT3Backbone.safetensors MTLT3Backbone.json; do
     fi
   done
 done
+if [ "$multilingual" -eq 1 ] && [ ! -f "$models/MTLT3Backbone.safetensors" ]; then
+  echo "error: multilingual needs MTLT3Backbone.safetensors and there is no Core ML fallback — run: bun run mac:backbone" >&2
+  exit 1
+fi
 metallib="$repo/tools/export/.venv-chatterbox/lib/python3.11/site-packages/mlx/lib/mlx.metallib"
 if [ -f "$metallib" ]; then
   cp "$metallib" "$here/mlx.metallib"

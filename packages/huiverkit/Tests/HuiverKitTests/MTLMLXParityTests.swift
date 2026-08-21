@@ -16,17 +16,37 @@ import Testing
 ///
 /// Both run in float16, each with its own rounding, so the logits are compared
 /// with a tolerance and the *choice* — the greedy argmax — is what must agree.
+///
+/// The Core ML pair is verification tooling now, not something the install
+/// ships — the engine has no Core ML fallback for this model. To run this,
+/// compile the reference next to the backbone once:
+///
+///     xcrun coremlcompiler compile apps/mac/build-mtl/MTLT3Prefill.mlpackage apps/mac/Models
+///     xcrun coremlcompiler compile apps/mac/build-mtl/MTLT3Decode.mlpackage apps/mac/Models
 struct MTLMLXParityTests {
-    @Test("MLX decode matches Core ML decode", .timeLimit(.minutes(10)))
+    /// Whether the Core ML reference happens to be compiled beside the
+    /// backbone. Disabled rather than failed when it is not: its absence is
+    /// the shipping state, not a broken install.
+    static var referenceInstalled: Bool {
+        let models = MultilingualEngineTests.root.appendingPathComponent("Models")
+        return MultilingualEngineTests.installed
+            && FileManager.default.fileExists(
+                atPath: models.appendingPathComponent("MTLT3Prefill.mlmodelc").path
+            )
+            && FileManager.default.fileExists(
+                atPath: models.appendingPathComponent("MTLT3Decode.mlmodelc").path
+            )
+    }
+
+    @Test(
+        "MLX decode matches Core ML decode",
+        .enabled(if: MTLMLXParityTests.referenceInstalled),
+        .timeLimit(.minutes(10))
+    )
     func parity() async throws {
-        try #require(MultilingualEngineTests.installed, "multilingual models not installed")
         let root = MultilingualEngineTests.root
         let models = root.appendingPathComponent("Models")
         let backbone = models.appendingPathComponent("MTLT3Backbone.safetensors")
-        try #require(
-            FileManager.default.fileExists(atPath: backbone.path),
-            "MLX backbone not installed — run: bun run mac:backbone && bun run mac:install"
-        )
 
         let voices = try VoicePack.load(from: root.appendingPathComponent("Voices"))
         let voice = try #require(voices.first { $0.id == "mtl_default" } ?? voices.first)

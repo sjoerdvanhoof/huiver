@@ -4,13 +4,15 @@ import Foundation
 
 /// Chatterbox, in either of the two sizes this project ships.
 ///
-/// Four Core ML models, in two stages. T3 reads the text and emits speech
-/// tokens at 25 Hz, one at a time; S3Gen turns a whole run of those tokens into
-/// 24 kHz audio in one shot. So the cost of a chunk is dominated by the token
-/// loop, which is why that half is split into a flexible-shape prefill and a
-/// fixed-shape, stateful decode step — the decode model is the only one that
-/// runs hundreds of times, and fixed shapes are what let it stay on the Neural
-/// Engine.
+/// Two stages. T3 reads the text and emits speech tokens at 25 Hz, one at a
+/// time; S3Gen turns a whole run of those tokens into 24 kHz audio in one
+/// shot. So the cost of a chunk is dominated by the token loop — which is why
+/// Nano splits it into a flexible-shape Core ML prefill and a fixed-shape,
+/// stateful decode step (fixed shapes are what let it stay on the phone's
+/// Neural Engine), and why the multilingual model runs the whole loop on MLX
+/// instead (see `MTLDecodeMLX`), keeping Core ML only for the fixed-shape
+/// conditioning encoder and for S3Gen. The multilingual T3 has no Core ML
+/// path at all anymore.
 ///
 /// ## Two models, one loop
 ///
@@ -66,7 +68,10 @@ public actor ChatterboxEngine {
         /// is the whole switch: install the models you want and the engine
         /// follows, rather than a build flag deciding it.
         public init(directory: URL) {
-            let multilingual = directory.appendingPathComponent("MTLT3Prefill.mlmodelc")
+            // The mel decoder is the marker for which set is installed: the
+            // multilingual T3 runs on MLX and its Core ML pair is no longer
+            // shipped at all, so the old MTLT3Prefill marker may not exist.
+            let multilingual = directory.appendingPathComponent("MTLS3Flow.mlmodelc")
             let isMultilingual = FileManager.default.fileExists(atPath: multilingual.path)
             variant = isMultilingual ? .multilingual : .nano
             let prefix = isMultilingual ? "MTL" : ""
@@ -153,6 +158,7 @@ public actor ChatterboxEngine {
 
     public enum EngineError: Error, LocalizedError {
         case missingModel(URL)
+        case backboneRequired(String)
         case missingMetadata(String, String)
         case textTooLong(Int, Int)
         case badOutput(String)
@@ -164,6 +170,12 @@ public actor ChatterboxEngine {
             switch self {
             case .missingModel(let url):
                 "Model not found: \(url.lastPathComponent). Run: bun run ios:models"
+            case .backboneRequired(let missing):
+                """
+                The multilingual engine runs its token loop on MLX and has no \
+                Core ML fallback. Missing: \(missing). \
+                Run: bun run mac:backbone && bun run mac:install
+                """
             case .missingMetadata(let model, let key):
                 "\(model) was exported without '\(key)'; re-export with the current scripts"
             case .textTooLong(let got, let max):
@@ -319,6 +331,21 @@ public actor ChatterboxEngine {
         progress: @escaping @Sendable (LoadProgress) -> Void = { _ in }
     ) async throws -> ChatterboxEngine {
         let mlx = models.usesMLXDecode
+        // The multilingual T3 has exactly one implementation now. The Core ML
+        // pair it replaced is not shipped, so a missing backbone is a broken
+        // install to say out loud, not something to fall back from.
+        if models.variant == .multilingual, !mlx {
+            #if canImport(MLX)
+            let missing = [models.backbone, models.cond]
+                .compactMap { $0 }
+                .filter { !FileManager.default.fileExists(atPath: $0.path) }
+                .map(\.lastPathComponent)
+                .joined(separator: ", ")
+            throw EngineError.backboneRequired(missing.isEmpty ? "MLX weights" : missing)
+            #else
+            throw EngineError.backboneRequired("an MLX build (this app was built without MLX)")
+            #endif
+        }
         let (loaded, placement) = try await loadModels(
             models, using: ladder, mlx: mlx, progress: progress
         )
