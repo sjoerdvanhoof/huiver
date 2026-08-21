@@ -21,16 +21,9 @@ final class AppModel {
     private(set) var placement: [String: String] = [:]
     /// Languages the loaded models can actually read.
     private(set) var engineLanguages: [Language] = [.english]
-    /// Which checkpoint is loaded, for Settings to name and for the sampling
-    /// defaults to follow.
-    private(set) var engineVariant: ChatterboxEngine.Models.Variant = .nano
 
-    var engineName: String {
-        switch engineVariant {
-        case .nano: "Chatterbox Nano — English only"
-        case .multilingual: "Chatterbox Multilingual 500M"
-        }
-    }
+    /// The one checkpoint this app runs. Nano stayed on the phone.
+    let engineName = "Chatterbox Multilingual 500M"
     /// What the engine is doing while it loads, for the preparing state.
     private(set) var preparing: ChatterboxEngine.LoadProgress?
     private(set) var preparingSince: Date?
@@ -39,7 +32,9 @@ final class AppModel {
     /// await an actor.
     private(set) var progress: [String: ChapterProgress] = [:]
 
-    var options = SamplingOptions()
+    /// The multilingual model's numbers from the start: it filters in a
+    /// different order and uses a relative floor where Nano used top-k.
+    var options = SamplingOptions.multilingual
 
     /// Stop reading after a while. Owned here so it outlives any one screen.
     let sleepTimer = SleepTimer()
@@ -91,8 +86,7 @@ final class AppModel {
 
     private(set) var library: Library?
     private(set) var progressStore: ProgressStore?
-    /// Turns a recording into a voice, when the installed models can. Nano's
-    /// export cannot; the multilingual one ships `MTLVoiceCloner`.
+    /// Turns a recording into a voice, when the export shipped `MTLVoiceCloner`.
     private(set) var cloner: VoiceCloner?
     /// Where voices cloned on this Mac live. The bundle's pack is read-only, so
     /// a recorded voice goes beside the library instead.
@@ -108,7 +102,7 @@ final class AppModel {
     private var deferredRequests: [ConvertRequest] = []
 
     init() {
-        selectedVoiceId = UserDefaults.standard.string(forKey: "voice") ?? "nano_default"
+        selectedVoiceId = UserDefaults.standard.string(forKey: "voice") ?? "mtl_default"
     }
 
     /// The models and voices are bundled with the app; the library lives in
@@ -172,6 +166,19 @@ final class AppModel {
             ) { [weak self] progress in
                 Task { @MainActor in self?.preparing = progress }
             }
+            // Multilingual only. A Nano export in the bundle is a packaging
+            // mistake, and reading books with the wrong sampling defaults
+            // would be worse than saying so.
+            guard engine.variant == .multilingual else {
+                throw NSError(
+                    domain: "Huiver", code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "The bundled models are not the multilingual checkpoint. "
+                            + "Export them with bun run mac:models && bun run mac:install."
+                    ]
+                )
+            }
             let narrator = Narrator(engine: engine, library: library!, progress: progressStore)
             self.narrator = narrator
             sleepTimer.attach(
@@ -182,14 +189,6 @@ final class AppModel {
                 },
                 cancelFade: { [weak narrator] in narrator?.cancelFade() }
             )
-            // The sampling defaults belong to the checkpoint rather than to
-            // the app: the multilingual model filters in a different order and
-            // uses a relative floor where Nano uses top-k, so handing it Nano's
-            // numbers would read the book in a voice the weights were not tuned
-            // for. Set before the converter picks up a restored queue.
-            engineVariant = engine.variant
-            options = engineVariant == .multilingual ? .multilingual : .nano
-
             let converter = Converter(engine: engine, library: library!)
             converter.voices = voices
             converter.didChange = { [weak self] in

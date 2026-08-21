@@ -1,5 +1,18 @@
 import SwiftUI
 
+/// Which pane the window is showing, held where every screen can reach it.
+///
+/// The sidebar owns a selection either way; making it observable is what lets
+/// a chapter row open the player when playback starts — the alternative is
+/// threading a closure through every list that can play something.
+@MainActor
+@Observable
+final class AppNavigation {
+    var selection: ContentView.Destination? = .library
+
+    func showPlayer() { selection = .player }
+}
+
 /// The window: a sidebar of destinations, the chosen one filling the rest,
 /// and the audition bar pinned under whichever detail is showing.
 struct ContentView: View {
@@ -33,11 +46,13 @@ struct ContentView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.theme) private var theme
 
-    @State private var selection: Destination? = .library
+    @State private var navigation = AppNavigation()
 
     var body: some View {
+        @Bindable var navigation = navigation
+
         NavigationSplitView {
-            List(selection: $selection) {
+            List(selection: $navigation.selection) {
                 ForEach(Destination.allCases) { destination in
                     Label(destination.label, systemImage: destination.icon)
                         .tag(destination)
@@ -48,13 +63,14 @@ struct ContentView: View {
             detail
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     // Everywhere except the full player, which it would repeat.
-                    if model.narrator?.chapterId != nil, selection != .player {
-                        MiniPlayerBar { selection = .player }
+                    if model.narrator?.chapterId != nil, navigation.selection != .player {
+                        MiniPlayerBar { navigation.showPlayer() }
                             .background(.bar)
                             .overlay(alignment: .top) { Divider().overlay(theme.colors.border) }
                     }
                 }
         }
+        .environment(navigation)
         .alert(
             "Something went wrong",
             isPresented: .init(
@@ -70,7 +86,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var detail: some View {
-        switch selection ?? .library {
+        switch navigation.selection ?? .library {
         case .library: LibraryView()
         case .player: PlayerView()
         case .voices: VoicesView()

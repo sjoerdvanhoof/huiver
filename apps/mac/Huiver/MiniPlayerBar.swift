@@ -83,7 +83,8 @@ struct MiniPlayerBar: View {
                             .foregroundStyle(theme.colors.mutedForeground)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Stop")
+                    .accessibilityLabel(narrator.isFullyRendered ? "Stop" : "Stop conversion")
+                    .help(narrator.isFullyRendered ? "Stop" : "Stop conversion")
                 }
                 .padding(.horizontal, Palette.Space.lg)
                 .padding(.vertical, Palette.Space.sm)

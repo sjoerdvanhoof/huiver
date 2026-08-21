@@ -261,7 +261,9 @@ struct PlayerView: View {
 
             Spacer()
 
-            Button("Stop", role: .destructive) {
+            // Playing an unrendered chapter is also converting it, so while
+            // synthesis is still writing, this stops that too — and says so.
+            Button(narrator.isFullyRendered ? "Stop" : "Stop conversion", role: .destructive) {
                 narrator.stop()
             }
             .buttonStyle(.plain)

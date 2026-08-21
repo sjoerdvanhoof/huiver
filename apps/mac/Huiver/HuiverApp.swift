@@ -4,7 +4,6 @@ import SwiftUI
 struct HuiverApp: App {
     @State private var model = AppModel()
     @State private var sync = MacSyncModel()
-    @Environment(\.colorScheme) private var scheme
     @Environment(\.scenePhase) private var phase
 
     var body: some Scene {
@@ -12,7 +11,7 @@ struct HuiverApp: App {
             ContentView()
                 .environment(model)
                 .environment(sync)
-                .huiverTheme(scheme)
+                .huiverTheme()
                 .task {
                     await model.load()
                     // After the library exists: an inbound sync session reads

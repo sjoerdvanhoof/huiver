@@ -7,6 +7,7 @@ struct BookDetailView: View {
     let book: Book
 
     @Environment(AppModel.self) private var model
+    @Environment(AppNavigation.self) private var navigation
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
 
@@ -39,12 +40,16 @@ struct BookDetailView: View {
             }
         }
         .navigationTitle(current.title)
+        // Streaming renders as it plays, so the rows' rings and chunk counts
+        // move with the narrator; the library only announces converter work,
+        // so what the narrator writes is picked up here.
+        .task(id: model.narrator?.renderedChunks) { await model.refresh() }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     convertAll()
                 } label: {
-                    Label("Convert all", systemImage: "square.and.arrow.down.on.square")
+                    Label("Convert book", systemImage: "square.and.arrow.down.on.square")
                 }
                 .disabled(model.converter == nil || incomplete.isEmpty)
                 .help("Queue every chapter that has not been rendered yet")
@@ -208,6 +213,7 @@ struct BookDetailView: View {
                 options: model.options, from: position
             )
         }
+        navigation.showPlayer()
     }
 }
 
@@ -217,18 +223,26 @@ private struct ChapterRow: View {
     let number: Int
 
     @Environment(AppModel.self) private var model
+    @Environment(AppNavigation.self) private var navigation
     @Environment(\.theme) private var theme
 
     private var narrator: Narrator? { model.narrator }
     private var isCurrent: Bool { narrator?.chapterId == chapter.id }
     private var isConverting: Bool { model.converter?.isQueued(chapter.id) ?? false }
     private var isFinished: Bool { model.isFinished(chapter) }
+    /// Playing this chapter is also rendering it: the narrator writes every
+    /// chunk it speaks, so a stream in progress is a conversion in progress.
+    private var isStreaming: Bool {
+        isCurrent && !(narrator?.isFullyRendered ?? true)
+    }
     /// Where the listener got to, when they got somewhere and are not done.
     private var listened: Double? { model.position(in: chapter) }
 
     var body: some View {
         HStack(spacing: Palette.Space.md) {
-            Button(action: play) {
+            playButton
+
+            Button(action: open) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: Palette.Space.xs) {
                         if isFinished {
@@ -276,6 +290,34 @@ private struct ChapterRow: View {
         }
     }
 
+    /// The one control that unambiguously means "listen to this": a filled
+    /// circle with a play glyph, which pauses in place once it is the chapter
+    /// being read. The row's text does the same on first click, then opens the
+    /// player — this button is what makes that discoverable.
+    private var playButton: some View {
+        Button {
+            if isCurrent {
+                narrator?.toggle()
+            } else {
+                play()
+            }
+        } label: {
+            Image(systemName: isCurrent && narrator?.state == .speaking ? "pause.fill" : "play.fill")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(isCurrent ? theme.colors.primaryForeground : theme.colors.primary)
+                .frame(width: 28, height: 28)
+                .background(
+                    isCurrent ? AnyShapeStyle(theme.colors.primary) : AnyShapeStyle(theme.colors.muted),
+                    in: .circle
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(narrator == nil)
+        .help(isCurrent
+            ? (narrator?.state == .speaking ? "Pause" : "Resume")
+            : "Play this chapter")
+    }
+
     private var titleColor: Color {
         if isCurrent { return theme.colors.primary }
         return isFinished ? theme.colors.mutedForeground : theme.colors.foreground
@@ -289,9 +331,23 @@ private struct ChapterRow: View {
     private var actionState: ChapterActionButton.State {
         if chapter.isComplete { return .done }
         if isConverting { return .rendering(model.converter?.progress(for: chapter.id)) }
+        // A stream is a render: playing an unrendered chapter writes it to
+        // disk chunk by chunk, and the ring should say so.
+        if isStreaming, let narrator {
+            return .rendering(
+                narrator.chunkCount > 0
+                    ? Double(narrator.renderedChunks) / Double(narrator.chunkCount)
+                    : nil
+            )
+        }
         // After the queue, so retrying a failed chapter shows it working again
         // rather than still showing the old complaint.
         if chapter.lastRenderError != nil { return .failed }
+        // Part of it is already on disk: show how much, and offer to carry on
+        // from there — resuming picks up after the last written chunk.
+        if chapter.renderedChunks > 0, chapter.chunkCount > 0 {
+            return .partial(Double(chapter.renderedChunks) / Double(chapter.chunkCount))
+        }
         return .none
     }
 
@@ -301,6 +357,9 @@ private struct ChapterRow: View {
             return "converting \(converter.renderedChunks)/\(max(converter.chunkCount, 1)) · \(Format.estimate(estimate))"
         }
         if isConverting { return "queued · \(Format.estimate(estimate))" }
+        if isStreaming, let narrator {
+            return "converting \(narrator.renderedChunks)/\(max(narrator.chunkCount, 1)) · \(Format.estimate(estimate))"
+        }
         if let error = chapter.lastRenderError { return error }
         if let listened {
             return "\(Format.duration(listened)) in · \(Format.estimate(estimate))"
@@ -319,12 +378,18 @@ private struct ChapterRow: View {
         return Format.estimate(estimate)
     }
 
-    private func play() {
-        guard let narrator, let voice = model.voice(for: book) else { return }
+    /// The row's text: the chapter being read opens the player, any other
+    /// starts playing — and lands in the player, where the reading is.
+    private func open() {
         if isCurrent {
-            narrator.toggle()
+            navigation.showPlayer()
             return
         }
+        play()
+    }
+
+    private func play() {
+        guard let narrator, let voice = model.voice(for: book) else { return }
         // A chapter that was left part-way through picks up there. A finished
         // one starts again from the top — clicking it is how you re-listen.
         let from = listened ?? 0
@@ -335,6 +400,7 @@ private struct ChapterRow: View {
                 book: book, chapter: chapter, voice: voice, options: model.options, from: from
             )
         }
+        navigation.showPlayer()
     }
 
     /// How far through a chapter the listener is.
@@ -362,11 +428,15 @@ private struct ChapterRow: View {
 
     /// Convert, which means render to disk and nothing else. Pressing it again
     /// stops — a pause, not a discard: the chunks written so far are kept and
-    /// picked up next time.
+    /// picked up next time. When the render in progress is the narrator's own
+    /// stream, stopping the conversion is stopping the stream — they are the
+    /// same work.
     private func toggleRender() {
         guard let converter = model.converter, let voice = model.voice(for: book) else { return }
         if isConverting {
             converter.cancel(chapter.id)
+        } else if isStreaming {
+            narrator?.stop()
         } else if !chapter.isComplete {
             converter.convert(book: book, chapter: chapter, voice: voice, options: model.options)
         }
