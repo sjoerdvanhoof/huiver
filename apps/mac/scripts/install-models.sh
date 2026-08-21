@@ -71,6 +71,28 @@ if [ "$found" -eq 0 ]; then
   exit 1
 fi
 
+# The MLX backbone rides along when the export produced one: the engine runs
+# the multilingual token loop on MLX when these files are present, and falls
+# back to the Core ML pair when they are not. The metallib is MLX's Metal
+# kernel library from the mlx python wheel — the app does not need it (Xcode
+# compiles the kernels into mlx-swift_Cmlx.bundle), but `swift test` cannot
+# compile Metal, so `bun run kit:test` copies this one into the test bundle.
+for extra in MTLT3Backbone.safetensors MTLT3Backbone.json; do
+  for source_dir in "${sources[@]}"; do
+    if [ -f "$source_dir/$extra" ]; then
+      cp "$source_dir/$extra" "$models/$extra"
+      echo "copied $extra"
+    fi
+  done
+done
+metallib="$repo/tools/export/.venv-chatterbox/lib/python3.11/site-packages/mlx/lib/mlx.metallib"
+if [ -f "$metallib" ]; then
+  cp "$metallib" "$here/mlx.metallib"
+  echo "copied mlx.metallib"
+elif [ ! -f "$here/mlx.metallib" ]; then
+  echo "warning: no mlx.metallib — pip install mlx into the chatterbox venv, or the MLX path will not start" >&2
+fi
+
 # The tokenizer lives beside the models, and which one depends on which model:
 # Nano reads GPT-2's three files, Multilingual one grapheme vocabulary.
 if [ "$multilingual" -eq 1 ]; then

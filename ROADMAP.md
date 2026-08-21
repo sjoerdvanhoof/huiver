@@ -331,6 +331,37 @@ the other end.
   so `-allowProvisioningUpdates` has no team to provision with. `bun run
   ios:device` is the last step and it has not run.
 
+## Done since: the token loop on MLX
+
+The multilingual T3 no longer runs through Core ML on the Mac. Measured on the
+M4 mini, the Core ML loop had two costs that no export flag was going to fix:
+each decode `prediction()` was ~56 ms for 40 ms of audio, and the prefill's
+flexible text dimension made Core ML re-specialize for *every text length it
+had not seen* — 5.6 s for a 265-token chunk, and every chunk's length is novel.
+
+So `MTLDecodeMLX` runs the thirty layers on MLX instead: the decode step as a
+single compiled graph against a preallocated KV cache (~15 ms/token at int8),
+and the prefill as one flexible-length pass (~0.25 s, any length). The
+conditioning encoder — the perceiver, the one piece that is not backbone
+weights — stays in Core ML as `MTLCond`, fixed shapes, once per chunk. So do
+the mel decoder and the vocoder. The sampler stays in Swift, unchanged.
+
+The engine picks the loop the same way it picks everything: by what is
+installed. `MTLT3Backbone.safetensors` + `MTLCond.mlmodelc` present → MLX, and
+the Core ML prefill/decode packages are not even loaded; absent (or on iOS,
+which does not link MLX) → the Core ML pair, exactly as before.
+`bun run mac:backbone` exports the weights (int8 by default, the same
+quantisation the Core ML decode shipped with); `verify` is
+`MTLMLXParityTests`, which seeds both decoders from the same prefill output
+and walks them greedily — 47/48 argmax agreement, 0.09 worst top-band logit
+drift, which is fp16 rounding.
+
+The measured chunk (363 chars, 15.5 s of audio) went from 29.4 s to ~12 s of
+compute; the remaining big block is the mel decoder's fixed 768-token window
+(~5.9 s per window however little of it is used), which is the next thing
+worth taking — window right-sizing needs one traced graph per size, see the
+`DEFAULT_GEN_TOKENS` comment in common.py.
+
 ## Deliberately not planned
 
 - **A server, an account, or a cloud anything.** The whole shape of sync —

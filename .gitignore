@@ -106,6 +106,7 @@ apps/mac/Models/
 apps/mac/Voices/
 apps/mac/build/
 apps/mac/build-mtl/
+apps/mac/mlx.metallib
 apps/mac/DerivedData/
 apps/mac/Huiver.xcodeproj/xcuserdata/
 apps/mac/Huiver.xcodeproj/project.xcworkspace/xcuserdata/

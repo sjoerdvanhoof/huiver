@@ -10,8 +10,20 @@ let package = Package(
     products: [
         .library(name: "HuiverKit", targets: ["HuiverKit"])
     ],
+    dependencies: [
+        // The multilingual decode loop. Only the Mac app links MLX — the iOS
+        // project compiles these same sources without it, and every use is
+        // behind `#if canImport(MLX)`.
+        .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.31.6")
+    ],
     targets: [
-        .target(name: "HuiverKit"),
+        .target(
+            name: "HuiverKit",
+            dependencies: [
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXFast", package: "mlx-swift"),
+            ]
+        ),
         .testTarget(
             name: "HuiverKitTests",
             dependencies: ["HuiverKit"],

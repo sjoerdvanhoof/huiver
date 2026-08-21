@@ -46,6 +46,15 @@ public actor ChatterboxEngine {
         public var flow: URL
         public var vocoder: URL
         public var tokenizer: URL
+        /// The T3's weights for MLX, when the install put them beside the
+        /// Core ML packages. Only the multilingual variant has them — see
+        /// `MTLDecodeMLX` for why the Mac runs the token loop there instead
+        /// of in Core ML.
+        public var backbone: URL?
+        /// The conditioning encoder that goes with `backbone`: the one piece
+        /// of the prefill that is not backbone weights, kept in Core ML
+        /// because its shapes are fixed.
+        public var cond: URL
 
         /// The layout `bun run ios:install` and `bun run mac:install` write.
         ///
@@ -63,6 +72,23 @@ public actor ChatterboxEngine {
             flow = directory.appendingPathComponent("\(prefix)S3Flow.mlmodelc")
             vocoder = directory.appendingPathComponent("\(prefix)S3Vocoder.mlmodelc")
             tokenizer = directory
+            backbone = isMultilingual
+                ? directory.appendingPathComponent("MTLT3Backbone.safetensors") : nil
+            cond = directory.appendingPathComponent("MTLCond.mlmodelc")
+        }
+
+        /// Whether the token loop will run on MLX rather than Core ML: the
+        /// weights and the conditioning model are installed and this build
+        /// links MLX (the iOS app does not). When true, the Core ML prefill
+        /// and decode models are not even loaded.
+        var usesMLXDecode: Bool {
+            #if canImport(MLX)
+            guard variant == .multilingual, let backbone else { return false }
+            return FileManager.default.fileExists(atPath: backbone.path)
+                && FileManager.default.fileExists(atPath: cond.path)
+            #else
+            return false
+            #endif
         }
     }
 
@@ -137,10 +163,19 @@ public actor ChatterboxEngine {
     /// Replaceable — see `reload`, which swaps each one for a freshly loaded
     /// copy. Never nil: the actor suspends inside `reload`, and a `speak`
     /// queued behind that suspension must find a working model, old or new.
-    private var prefill: MLModel
-    private var decode: MLModel
+    /// `prefill` and `decode` are nil exactly when the token loop runs on MLX
+    /// instead — see `Models.usesMLXDecode`; `cond` is non-nil exactly then.
+    /// For Nano, `prefill` and `decode` are never nil.
+    private var prefill: MLModel?
+    private var decode: MLModel?
+    private var cond: MLModel?
     private var flow: MLModel
     private var vocoder: MLModel
+    #if canImport(MLX)
+    /// The multilingual T3 on MLX, several times faster per token than the
+    /// Core ML pair — which is not loaded at all while this is present.
+    private let mlxDecode: MTLDecodeMLX?
+    #endif
     /// The decode model's KV cache, kept between chunks rather than allocated
     /// per chunk (~62 MB a time). Belongs to exactly one `MLModel`, so it is
     /// dropped when `reload` replaces `decode`.
@@ -247,17 +282,21 @@ public actor ChatterboxEngine {
         models: Models,
         progress: @escaping @Sendable (LoadProgress) -> Void = { _ in }
     ) async throws -> ChatterboxEngine {
-        let (loaded, placement) = try await loadModels(models, using: ladder, progress: progress)
+        let mlx = models.usesMLXDecode
+        let (loaded, placement) = try await loadModels(
+            models, using: ladder, mlx: mlx, progress: progress
+        )
         let tokenizer: Tokenizing = switch models.variant {
         case .nano: .nano(try BPETokenizer(directory: models.tokenizer))
         case .multilingual: .multilingual(try MTLTokenizer(directory: models.tokenizer))
         }
         return try ChatterboxEngine(
             source: models,
-            prefill: loaded[0],
-            decode: loaded[1],
-            flow: loaded[2],
-            vocoder: loaded[3],
+            prefill: mlx ? nil : loaded[0],
+            decode: mlx ? nil : loaded[1],
+            cond: mlx ? loaded[0] : nil,
+            flow: loaded[mlx ? 1 : 2],
+            vocoder: loaded[mlx ? 2 : 3],
             tokenizer: tokenizer,
             placement: placement
         )
@@ -310,12 +349,23 @@ public actor ChatterboxEngine {
         func name(_ url: URL) -> String { url.deletingPathExtension().lastPathComponent }
         var label: String
         let ladder = { (url: URL) in Self.ladder(for: url) }
-        (prefill, label) = try await Self.load(name(source.prefill), source.prefill, using: ladder(source.prefill))
-        placement[name(source.prefill)] = label
-        (decode, label) = try await Self.load(name(source.decode), source.decode, using: ladder(source.decode))
-        placement[name(source.decode)] = label
-        // The cached state belongs to the model instance just replaced.
-        decodeState = nil
+        // The MLX loop has no equivalent of Core ML's poisoned-instance
+        // failure mode, so when it is active there is no prefill or decode
+        // model to swap — only the conditioning model.
+        if prefill != nil {
+            (prefill, label) = try await Self.load(name(source.prefill), source.prefill, using: ladder(source.prefill))
+            placement[name(source.prefill)] = label
+        }
+        if decode != nil {
+            (decode, label) = try await Self.load(name(source.decode), source.decode, using: ladder(source.decode))
+            placement[name(source.decode)] = label
+            // The cached state belongs to the model instance just replaced.
+            decodeState = nil
+        }
+        if cond != nil {
+            (cond, label) = try await Self.load(name(source.cond), source.cond, using: ladder(source.cond))
+            placement[name(source.cond)] = label
+        }
         (flow, label) = try await Self.load(name(source.flow), source.flow, using: ladder(source.flow))
         placement[name(source.flow)] = label
         (vocoder, label) = try await Self.load(name(source.vocoder), source.vocoder, using: ladder(source.vocoder))
@@ -325,14 +375,16 @@ public actor ChatterboxEngine {
     private static func loadModels(
         _ models: Models,
         using ladder: [(String, MLComputeUnits)],
+        mlx: Bool = false,
         progress: @escaping @Sendable (LoadProgress) -> Void = { _ in }
     ) async throws -> ([MLModel], [String: String]) {
-        let stages = [
-            (models.prefill.deletingPathExtension().lastPathComponent, models.prefill),
-            (models.decode.deletingPathExtension().lastPathComponent, models.decode),
-            (models.flow.deletingPathExtension().lastPathComponent, models.flow),
-            (models.vocoder.deletingPathExtension().lastPathComponent, models.vocoder),
-        ]
+        // The MLX path replaces the prefill and decode models outright, and
+        // brings the small conditioning model instead; loading a gigabyte of
+        // Core ML weights that would never predict is not a fallback, it is a
+        // leak.
+        let urls = (mlx ? [models.cond] : [models.prefill, models.decode])
+            + [models.flow, models.vocoder]
+        let stages = urls.map { ($0.deletingPathExtension().lastPathComponent, $0) }
         for (_, url) in stages where !FileManager.default.fileExists(atPath: url.path) {
             throw EngineError.missingModel(url)
         }
@@ -436,27 +488,47 @@ public actor ChatterboxEngine {
 
     private init(
         source: Models,
-        prefill: MLModel,
-        decode: MLModel,
+        prefill: MLModel?,
+        decode: MLModel?,
+        cond: MLModel?,
         flow: MLModel,
         vocoder: MLModel,
         tokenizer: Tokenizing,
         placement: [String: String]
     ) throws {
+        var placement = placement
+        #if canImport(MLX)
+        // Built here, in the initializer, so `mlxDecode` can stay `let`: the
+        // actor's stored properties are only assignable before the actor is
+        // fully formed.
+        let mlxLocal: MTLDecodeMLX?
+        if decode == nil, let backbone = source.backbone {
+            mlxLocal = try MTLDecodeMLX(weights: backbone)
+            placement[source.prefill.deletingPathExtension().lastPathComponent] = "MLX (GPU)"
+            placement[source.decode.deletingPathExtension().lastPathComponent] = "MLX (GPU)"
+        } else {
+            mlxLocal = nil
+        }
+        mlxDecode = mlxLocal
+        #endif
         self.source = source
         self.variant = source.variant
         self.placement = placement
-        let declared = (prefill.modelDescription.metadata[.creatorDefinedKey] as? [String: String])?["languages"]
         // What the checkpoint speaks, minus what this app cannot prepare text
         // for. The multilingual model has 23 languages and five of them need a
         // normaliser that is not ported, so offering all 23 would be offering
         // five ways to be confidently mispronounced.
+        var declared = (prefill?.modelDescription.metadata[.creatorDefinedKey] as? [String: String])?["languages"]
+        #if canImport(MLX)
+        declared = declared ?? mlxLocal?.config.languages
+        #endif
         let advertised = (declared?.split(separator: ",").map {
             Language.named(String($0).trimmingCharacters(in: .whitespaces))
         }).flatMap { $0.isEmpty ? nil : $0 } ?? [.english]
         self.languages = advertised.filter { !tokenizer.refuses($0) }
         self.prefill = prefill
         self.decode = decode
+        self.cond = cond
         self.flow = flow
         self.vocoder = vocoder
         self.tokenizer = tokenizer
@@ -481,24 +553,61 @@ public actor ChatterboxEngine {
             vocoder: source.vocoder.deletingPathExtension().lastPathComponent
         )
 
-        condPrefixLength = try meta(prefill, names.prefill, "condPrefixLen")
-        // Nano's exports predate this key; there, the conditioning prompt is
-        // everything in the prefix except the speaker token.
-        condPromptLength = optional(prefill, "condPromptLen") ?? (condPrefixLength - 1)
-        cfgRows = optional(decode, "cfgRows") ?? 1
-        maxTextTokens = try meta(prefill, names.prefill, "maxTextTokens")
-        maxContext = try meta(decode, names.decode, "maxContext")
-        layers = try meta(decode, names.decode, "nLayer")
-        heads = try meta(decode, names.decode, "nHead")
-        headDim = try meta(decode, names.decode, "headDim")
-        vocabulary = try meta(decode, names.decode, "speechVocab")
-        startSpeechToken = Int32(try meta(decode, names.decode, "startSpeechToken"))
-        stopSpeechToken = Int32(try meta(decode, names.decode, "stopSpeechToken"))
-        if let start = optional(prefill, "startTextToken"),
-           let stop = optional(prefill, "stopTextToken") {
-            textBrackets = (Int32(start), Int32(stop))
+        if let prefill {
+            condPrefixLength = try meta(prefill, names.prefill, "condPrefixLen")
+            // Nano's exports predate this key; there, the conditioning prompt
+            // is everything in the prefix except the speaker token.
+            condPromptLength = optional(prefill, "condPromptLen") ?? (condPrefixLength - 1)
+            maxTextTokens = try meta(prefill, names.prefill, "maxTextTokens")
+            if let start = optional(prefill, "startTextToken"),
+               let stop = optional(prefill, "stopTextToken") {
+                textBrackets = (Int32(start), Int32(stop))
+            } else {
+                textBrackets = nil
+            }
+            speakerEmbeddingSize = try Self.lastDimension(prefill, names.prefill, "speaker_emb")
         } else {
-            textBrackets = nil
+            #if canImport(MLX)
+            guard let mlx = mlxLocal else { throw EngineError.missingModel(source.prefill) }
+            condPrefixLength = mlx.config.condPrefixLen
+            condPromptLength = mlx.config.condPromptLen
+            maxTextTokens = mlx.config.maxTextTokens
+            textBrackets = (
+                Int32(mlx.config.startTextToken), Int32(mlx.config.stopTextToken)
+            )
+            speakerEmbeddingSize = mlx.config.speakerEmbeddingSize
+            #else
+            throw EngineError.missingModel(source.prefill)
+            #endif
+        }
+        if let decode {
+            cfgRows = optional(decode, "cfgRows") ?? 1
+            maxContext = try meta(decode, names.decode, "maxContext")
+            layers = try meta(decode, names.decode, "nLayer")
+            heads = try meta(decode, names.decode, "nHead")
+            headDim = try meta(decode, names.decode, "headDim")
+            vocabulary = try meta(decode, names.decode, "speechVocab")
+            startSpeechToken = Int32(try meta(decode, names.decode, "startSpeechToken"))
+            stopSpeechToken = Int32(try meta(decode, names.decode, "stopSpeechToken"))
+        } else {
+            #if canImport(MLX)
+            // No decode model at all: the loop runs on MLX, and the constants
+            // that were baked into the Core ML package's metadata come out of
+            // the backbone export's config instead.
+            guard let mlx = mlxLocal else {
+                throw EngineError.missingModel(source.decode)
+            }
+            cfgRows = mlx.config.cfgRows
+            maxContext = mlx.config.maxContext
+            layers = mlx.config.nLayer
+            heads = mlx.config.nHead
+            headDim = mlx.config.headDim
+            vocabulary = mlx.config.speechVocab
+            startSpeechToken = Int32(mlx.config.startSpeechToken)
+            stopSpeechToken = Int32(mlx.config.stopSpeechToken)
+            #else
+            throw EngineError.missingModel(source.decode)
+            #endif
         }
         genTokens = try meta(flow, names.flow, "genTokens")
         promptTokenLength = try meta(flow, names.flow, "promptTokenLen")
@@ -508,16 +617,18 @@ public actor ChatterboxEngine {
         melFrames = try meta(vocoder, names.vocoder, "melFrames")
         hop = try meta(vocoder, names.vocoder, "hop")
 
-        func lastDimension(_ model: MLModel, _ modelName: String, _ input: String) throws -> Int {
-            guard let shape = model.modelDescription.inputDescriptionsByName[input]?
-                .multiArrayConstraint?.shape,
-                let last = shape.last
-            else { throw EngineError.missingMetadata(modelName, "\(input) shape") }
-            return last.intValue
-        }
-        speakerEmbeddingSize = try lastDimension(prefill, names.prefill, "speaker_emb")
-        xvectorSize = try lastDimension(flow, names.flow, "embedding")
-        melDimension = try lastDimension(flow, names.flow, "prompt_feat")
+        xvectorSize = try Self.lastDimension(flow, names.flow, "embedding")
+        melDimension = try Self.lastDimension(flow, names.flow, "prompt_feat")
+    }
+
+    private static func lastDimension(
+        _ model: MLModel, _ modelName: String, _ input: String
+    ) throws -> Int {
+        guard let shape = model.modelDescription.inputDescriptionsByName[input]?
+            .multiArrayConstraint?.shape,
+            let last = shape.last
+        else { throw EngineError.missingMetadata(modelName, "\(input) shape") }
+        return last.intValue
     }
 
     /// Speak one chunk of text. Returns mono 24 kHz float samples.
@@ -633,6 +744,35 @@ public actor ChatterboxEngine {
         // Deliberate and safe: every position still fits the cache, and the
         // headroom only matters for a chunk that would otherwise be cut off.
         let budget = min(options.maxTokens, maxContext - prefixLength)
+
+        #if canImport(MLX)
+        if let mlxDecode, let cond {
+            // The conditioning encoder is the one Core ML prediction left on
+            // this path — fixed shapes, once per chunk. Everything after it,
+            // prompt to tokens, happens on MLX.
+            let condOut = try cond.prediction(
+                from: try MLDictionaryFeatureProvider(dictionary: [
+                    "speaker_emb": try array(
+                        voice.speakerEmbedding, shape: [1, voice.speakerEmbedding.count]
+                    ),
+                    "prompt_tokens": try array(
+                        voice.condPromptTokens, shape: [1, voice.condPromptTokens.count]
+                    ),
+                    "emotion": try array([options.exaggeration], shape: [1, 1]),
+                ])
+            )
+            guard let conditioning = condOut.featureValue(for: "cond")?.multiArrayValue else {
+                throw EngineError.badOutput("cond")
+            }
+            let prefixRows = mlxDecode.prefill(cond: conditioning, textTokens: textTokens)
+            return try generateTokensMLX(
+                mlxDecode, prefixRows: prefixRows,
+                prefixLength: prefixLength, budget: budget, options: options,
+                textTokenCount: textTokens.count, cancelled: cancelled
+            )
+        }
+        #endif
+        guard let prefill, let decode else { throw EngineError.missingModel(source.prefill) }
 
         // Where the two models genuinely differ, one of three places. Nano is
         // handed its learned positions; the multilingual model computes them
@@ -766,6 +906,69 @@ public actor ChatterboxEngine {
         return generated.filter { $0 < startSpeechToken }
     }
 
+    #if canImport(MLX)
+    /// The same loop as below, driving MLX instead of a Core ML prediction per
+    /// token. Everything that decides what the audio *says* — the sampler, the
+    /// penalty history, the budget bookkeeping, the control-token filter — is
+    /// deliberately identical; only what computes the logits differs.
+    private func generateTokensMLX(
+        _ mlx: MTLDecodeMLX,
+        prefixRows: [Float],
+        prefixLength: Int,
+        budget: Int,
+        options: SamplingOptions,
+        textTokenCount: Int,
+        cancelled: () -> Bool
+    ) throws -> [Int32] {
+        var sampler = Sampler(options: options, order: .multilingual)
+        var generated: [Int32] = []
+        var penalized: Set<Int32> = [startSpeechToken]
+
+        // The first token comes from the prefill's logits, which are both rows
+        // unguided — same as the Core ML path.
+        var first = guide(rows: prefixRows, weight: options.cfgWeight)
+        var current = sample(&sampler, floats: &first, history: penalized)
+        for step in 0..<budget {
+            if current == stopSpeechToken || cancelled() { break }
+            generated.append(current)
+            if generated.count == 1 { penalized.remove(startSpeechToken) }
+            penalized.insert(current)
+
+            // Position 0 belongs to the start-of-speech token, so the token
+            // generated at step 0 sits at learned position 1.
+            var logits = mlx.step(
+                token: current,
+                position: prefixLength + step,
+                speechPosition: step + 1,
+                cfgWeight: options.cfgWeight
+            )
+            current = sample(&sampler, floats: &logits, history: penalized)
+        }
+        if current != stopSpeechToken, generated.count < budget { generated.append(current) }
+        if current != stopSpeechToken, generated.count >= budget, !cancelled() {
+            PlaybackLog.note(
+                "t3: hit the \(budget)-token budget mid-sentence; "
+                    + "the tail of a \(textTokenCount)-text-token chunk was dropped"
+            )
+        }
+        return generated.filter { $0 < startSpeechToken }
+    }
+    #endif
+
+    /// As below, for prefill logits already in Swift memory — the MLX path.
+    private func guide(rows: [Float], weight: Float) -> [Float] {
+        guard rows.count == cfgRows * vocabulary, cfgRows == 2 else {
+            return rows
+        }
+        var out = [Float](repeating: 0, count: vocabulary)
+        for index in 0..<vocabulary {
+            let cond = rows[index]
+            let uncond = rows[vocabulary + index]
+            out[index] = cond + weight * (cond - uncond)
+        }
+        return out
+    }
+
     /// One row of logits out of however many the model returned.
     ///
     /// `cond + w · (cond − uncond)` when there are two, which is what the
@@ -786,6 +989,14 @@ public actor ChatterboxEngine {
                 let unconditional = buffer[vocabulary + index]
                 return conditional + weight * (conditional - unconditional)
             }
+        }
+    }
+
+    /// As below, for logits already in Swift memory — the MLX loop's shape.
+    private func sample(_ sampler: inout Sampler, floats: inout [Float], history: Set<Int32>) -> Int32 {
+        floats.withUnsafeMutableBufferPointer { buffer in
+            assert(buffer.count == vocabulary, "logits are \(buffer.count) wide, not \(vocabulary)")
+            return sampler.next(logits: buffer, history: history)
         }
     }
 
