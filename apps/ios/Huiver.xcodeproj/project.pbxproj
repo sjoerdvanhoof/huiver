@@ -18,26 +18,29 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		00000000000000000000100E /* Huiver */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Huiver; sourceTree = "<group>"; };
-		00000000000000000000100F /* HuiverKit */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = ../../packages/huiverkit/Sources/HuiverKit; sourceTree = "<group>"; };
+		00000000000000000000100E /* Huiver */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Huiver;
+			sourceTree = "<group>";
+		};
+		00000000000000000000100F /* ../../packages/huiverkit/Sources/HuiverKit */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ../../packages/huiverkit/Sources/HuiverKit;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		000000000000000000001006 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		000000000000000000001006 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		000000000000000000001004 = {
-			isa = PBXGroup;
-			children = (
-				00000000000000000000100E /* Huiver */,
-				00000000000000000000100F /* HuiverKit */,
-				000000000000000000001010 /* Models */,
-				000000000000000000001011 /* Voices */,
-				000000000000000000001003 /* Products */,
-			);
-			sourceTree = "<group>";
-		};
 		000000000000000000001003 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -46,22 +49,35 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		000000000000000000001004 = {
+			isa = PBXGroup;
+			children = (
+				00000000000000000000100E /* Huiver */,
+				00000000000000000000100F /* ../../packages/huiverkit/Sources/HuiverKit */,
+				000000000000000000001010 /* Models */,
+				000000000000000000001011 /* Voices */,
+				000000000000000000001003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
 		000000000000000000001001 /* Huiver */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 000000000000000000001009;
+			buildConfigurationList = 000000000000000000001009 /* Build configuration list for PBXNativeTarget "Huiver" */;
 			buildPhases = (
-				000000000000000000001005,
-				000000000000000000001006,
-				000000000000000000001007,
+				000000000000000000001005 /* Sources */,
+				000000000000000000001006 /* Frameworks */,
+				000000000000000000001007 /* Resources */,
 			);
-			buildRules = ();
-			dependencies = ();
+			buildRules = (
+			);
+			dependencies = (
+			);
 			fileSystemSynchronizedGroups = (
 				00000000000000000000100E /* Huiver */,
-				00000000000000000000100F /* HuiverKit */,
+				00000000000000000000100F /* ../../packages/huiverkit/Sources/HuiverKit */,
 			);
 			name = Huiver;
 			productName = Huiver;
@@ -83,7 +99,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 000000000000000000001008;
+			buildConfigurationList = 000000000000000000001008 /* Build configuration list for PBXProject "Huiver" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -103,7 +119,7 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		000000000000000000001007 = {
+		000000000000000000001007 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -115,7 +131,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		000000000000000000001005 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		000000000000000000001005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
@@ -170,16 +192,18 @@
 				DEVELOPMENT_TEAM = XZ9W2G972L;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Huiver-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "huiver nano";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "The camera is used only to scan the pairing code shown on your Mac.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Huiver finds your Mac on the local network to sync books, audio and listening positions. Nothing leaves your network.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_FILE = "Huiver-Info.plist";
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = online.mo4.huiver.nano;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hoofkantoor.huiver;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
@@ -196,16 +220,18 @@
 				DEVELOPMENT_TEAM = XZ9W2G972L;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Huiver-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "huiver nano";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "The camera is used only to scan the pairing code shown on your Mac.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Huiver finds your Mac on the local network to sync books, audio and listening positions. Nothing leaves your network.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_FILE = "Huiver-Info.plist";
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = online.mo4.huiver.nano;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hoofkantoor.huiver;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
@@ -216,7 +242,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		000000000000000000001008 = {
+		000000000000000000001008 /* Build configuration list for PBXProject "Huiver" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				00000000000000000000100A /* Debug */,
@@ -225,7 +251,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		000000000000000000001009 = {
+		000000000000000000001009 /* Build configuration list for PBXNativeTarget "Huiver" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				00000000000000000000100C /* Debug */,
