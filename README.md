@@ -15,7 +15,7 @@ This is a monorepo:
 
 | Workspace | What it is |
 | --- | --- |
-| `apps/web` | The Bun server and its React frontend. Kokoro runs as a Python subprocess. |
+| `legacy/web` | The Bun server and its React frontend. Kokoro runs as a Python subprocess. |
 | `apps/ios` | A native Swift app for iPhone. Chatterbox Nano runs on the device, through Core ML. |
 | `packages/shared` | The EPUB reader, chunker, WAV layout and DTOs the TypeScript apps share. |
 | `legacy/mobile` | The retired Expo app. Not maintained, not in the workspace — see [legacy/README.md](legacy/README.md). |
@@ -36,11 +36,11 @@ Requires [Bun](https://bun.com), Python 3.11, `ffmpeg` and `espeak-ng`.
 ```bash
 brew install python@3.11 ffmpeg espeak-ng
 bun install              # installs every workspace
-bun run setup:python     # creates apps/web/.venv and installs kokoro + torch (~1 GB)
+bun run setup:python     # creates legacy/web/.venv and installs kokoro + torch (~1 GB)
 ```
 
-Every root script proxies to `apps/web` — `bun dev`, `bun run build`, `bun run e2e` —
-so day-to-day use is unchanged. Runtime state now lives in `apps/web/data/`; set
+Every root script proxies to `legacy/web` — `bun dev`, `bun run build`, `bun run e2e` —
+so day-to-day use is unchanged. Runtime state now lives in `legacy/web/data/`; set
 `HUIVER_DATA_DIR` to put it elsewhere.
 
 Cloned voices are optional and installed separately:
@@ -56,13 +56,13 @@ bun run voices             # cuts 10 reference clips from LibriVox (~6 MB)
 bun run examples
 ```
 
-Downloads 10 public-domain EPUBs from Project Gutenberg into `apps/web/examples/` (gitignored)
+Downloads 10 public-domain EPUBs from Project Gutenberg into `legacy/web/examples/` (gitignored)
 and adds them to your library. Reload the page and they're on the shelf.
 
 Start with **The Yellow Wallpaper** — at ~51k characters a full conversion takes a
-couple of minutes instead of hours. See `apps/web/examples/README.md`.
+couple of minutes instead of hours. See `legacy/web/examples/README.md`.
 
-Already have files in `apps/web/examples/`? `bun run examples:import` shelves them without
+Already have files in `legacy/web/examples/`? `bun run examples:import` shelves them without
 re-downloading. Both are safe to run while `bun dev` is up, and skip books already
 imported.
 
@@ -76,14 +76,14 @@ Then open http://localhost:3000, drop a book onto the library panel, pick a voic
 hit convert. The first conversion downloads the Kokoro model (~350 MB); after that it
 runs entirely offline.
 
-Generated audio lands in `apps/web/data/audio/<jobId>/` as `001-chapter-title.mp3`, tagged with
+Generated audio lands in `legacy/web/data/audio/<jobId>/` as `001-chapter-title.mp3`, tagged with
 title/album/artist/track so it imports cleanly into a podcast or audiobook player. You
 can also grab everything as a zip from the job panel.
 
 ### Interrupted conversions
 
 A chapter is not all-or-nothing. Every few chunks the partial audio is flushed to
-`apps/web/data/audio/<jobId>/001-chapter-title.part.wav` and the chapter's position in it is
+`legacy/web/data/audio/<jobId>/001-chapter-title.part.wav` and the chapter's position in it is
 recorded, so a crash, a `ctrl-c`, an OOM kill or a hot reload costs you seconds of
 re-rendering rather than the chapter. On the next start the job is re-queued and the
 log says where it picks up:
@@ -114,14 +114,14 @@ Parked audio nobody comes back for is deleted after `HUIVER_PARTIAL_TTL_DAYS` (d
 
 Every voice in the dropdown has a play button that speaks a sample line. The first
 preview of a voice takes a few seconds to render; after that it is cached on disk in
-`apps/web/data/previews/` and plays instantly.
+`legacy/web/data/previews/` and plays instantly.
 
 ### Listen now (live streaming)
 
 The play button on a chapter row streams it as it is being generated, so audio starts
 after the first short chunk (a second or two) instead of after the whole chapter.
 
-Audio you listen to is kept. Every chunk is written to `apps/web/data/streams/` as it plays, so
+Audio you listen to is kept. Every chunk is written to `legacy/web/data/streams/` as it plays, so
 pausing, seeking, closing the tab or losing the server does not throw it away: playing
 the chapter again replays what was already rendered straight from disk — no model load,
 no synthesis, audio in tens of milliseconds — and only renders what is missing. Because
@@ -150,7 +150,7 @@ its own if it is ever orphaned. For the lowest memory use, select the CPU with
 [Chatterbox Nano](https://github.com/resemble-ai/chatterbox) is Resemble AI's 110M-parameter
 zero-shot voice cloner, MIT licensed and — like Kokoro — running entirely on your machine.
 It has no voice roster at all: it clones whatever ten-to-fifteen second reference clip you
-hand it, so in huiver a "voice" is a short WAV in `apps/web/data/voices/`.
+hand it, so in huiver a "voice" is a short WAV in `legacy/web/data/voices/`.
 
 ```bash
 bun run setup:chatterbox
@@ -219,7 +219,7 @@ than of the words.
 
 Recordings go to the local server as whatever your browser's `MediaRecorder` produces
 (WebM/Opus, or MP4/AAC on Safari) and ffmpeg converts them to a mono 24 kHz WAV in
-`apps/web/data/voices/recorded/`. Anything under six seconds is refused with an explanation:
+`legacy/web/data/voices/recorded/`. Anything under six seconds is refused with an explanation:
 Chatterbox asserts outright on a shorter reference, so catching it at upload is the
 difference between a message and a crashed worker.
 
@@ -302,10 +302,10 @@ temporary memory footprint.
 ## What leaves your machine
 
 Nothing you feed it. Book text is never uploaded — Kokoro is local torch inference,
-and the generated audio is written straight to `apps/web/data/`.
+and the generated audio is written straight to `legacy/web/data/`.
 
 That is true of Chatterbox too, including your voice recording: it is uploaded to the
-huiver server running on your own machine and written to `apps/web/data/voices/recorded/`.
+huiver server running on your own machine and written to `legacy/web/data/voices/recorded/`.
 Nothing about it is sent anywhere else, and deleting the voice deletes the clip.
 
 The one bit of outbound traffic is `huggingface_hub` downloading model weights (~317 MB for
@@ -330,7 +330,7 @@ that is what they are — but both stay disabled unless you add an API key.
 
 ## Speech engines
 
-Engines are pluggable — see `apps/web/src/server/tts/`. Each one implements the `TTSProvider`
+Engines are pluggable — see `legacy/web/src/server/tts/`. Each one implements the `TTSProvider`
 interface in `tts/types.ts` and is registered in `tts/index.ts`.
 
 | Engine | Status | Enabled by |
@@ -359,23 +359,23 @@ upload → extract chapters → chunk to ~420 chars → TTS → concat → ffmpe
   Contents pages are detected by link density and dropped.
 - `packages/shared/src/chunk.ts` — splits chapters on paragraph/sentence boundaries, since
   Kokoro truncates past ~510 phoneme tokens
-- `apps/web/src/server/tts/python-worker.ts` — talks JSON-lines over stdin/stdout to a
+- `legacy/web/src/server/tts/python-worker.ts` — talks JSON-lines over stdin/stdout to a
   persistent Python worker, so the model loads once per job, not per chapter. Drives both
-  `apps/web/py/kokoro_worker.py` and `apps/web/py/chatterbox_worker.py`
-- `apps/web/src/server/tts/chatterbox-voices.ts` — the reference clips Chatterbox clones
+  `legacy/web/py/kokoro_worker.py` and `legacy/web/py/chatterbox_worker.py`
+- `legacy/web/src/server/tts/chatterbox-voices.ts` — the reference clips Chatterbox clones
   from: the downloaded LibriVox pack, anything you recorded, and the model's own voice
-- `apps/web/src/server/convert.ts` — serial job queue; a failed chapter doesn't sink the book,
+- `legacy/web/src/server/convert.ts` — serial job queue; a failed chapter doesn't sink the book,
   and interrupted jobs resume on restart — mid-chapter, from their last checkpoint
 - `packages/shared/src/checkpoint.ts` — decides whether a half-rendered chapter can be
   continued, and from which chunk
-- `apps/web/src/server/stream-store.ts` — audio kept from live playback, on the same
+- `legacy/web/src/server/stream-store.ts` — audio kept from live playback, on the same
   checkpoint rules, so a chapter is never rendered twice
-- `apps/web/src/server/audio-routes.ts` — voice previews (disk-cached) and live chapter
+- `legacy/web/src/server/audio-routes.ts` — voice previews (disk-cached) and live chapter
   streaming, which pipes each rendered chunk through a single ffmpeg process to
   produce one continuous MP3 stream
-- `apps/web/src/server/tts/warm.ts` — keeps one worker alive between preview/stream requests
+- `legacy/web/src/server/tts/warm.ts` — keeps one worker alive between preview/stream requests
   so they don't each pay the model-load cost
-- State lives in SQLite at `apps/web/data/huiver.db`
+- State lives in SQLite at `legacy/web/data/huiver.db`
 
 ## Mobile app (retired)
 
@@ -412,8 +412,8 @@ change to make it convertible, and what is not there yet.
 
 ## Example books
 
-Put test books in `apps/web/examples/`. Its contents are gitignored — ebooks are usually
-copyrighted and this is a public repo. See `apps/web/examples/README.md`.
+Put test books in `legacy/web/examples/`. Its contents are gitignored — ebooks are usually
+copyrighted and this is a public repo. See `legacy/web/examples/README.md`.
 
 ## Tests
 
@@ -431,4 +431,4 @@ with that workspace as the working directory, which matters as soon as anything 
 `bun test` from
 the root walks ~100k files, and the server tests that spawn ffmpeg then get a subprocess
 whose stdin is closed before it can write — they fail with `EPIPE: broken pipe` and no
-explanation. Running them from `apps/web` avoids the walk entirely.
+explanation. Running them from `legacy/web` avoids the walk entirely.

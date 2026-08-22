@@ -53,10 +53,14 @@ async function webmOfSeconds(seconds: number): Promise<Uint8Array> {
   }
 }
 
-const post = (bytes: Uint8Array, label: string) => {
+const post = (bytes: Uint8Array, label: string, trim?: { start: number; end: number }) => {
   const form = new FormData();
   form.append("audio", new File([bytes as BlobPart], "voice.webm", { type: "audio/webm" }), "voice.webm");
   form.append("label", label);
+  if (trim) {
+    form.append("trimStart", String(trim.start));
+    form.append("trimEnd", String(trim.end));
+  }
   return voiceRoutes["/api/voices"].POST(new Request("http://localhost/api/voices", { method: "POST", body: form }));
 };
 
@@ -86,6 +90,18 @@ describe.if(usable)("recording a voice", () => {
     const body = (await response.json()) as { error: string };
     // Chatterbox asserts on a short reference, so this has to be caught here.
     expect(body.error).toContain(String(VOICE_PROMPT_MIN_SECONDS));
+  });
+
+  test("an uploaded sample is trimmed before it is stored", async () => {
+    const response = await post(await webmOfSeconds(18), "Trimmed voice", { start: 3, end: 13 });
+    expect(response.status).toBe(201);
+    const profile = (await response.json()) as { seconds: number };
+    expect(profile.seconds).toBeCloseTo(10, 0);
+  });
+
+  test("invalid trim points are refused", async () => {
+    const response = await post(await webmOfSeconds(12), "Bad trim", { start: 8, end: 3 });
+    expect(response.status).toBe(400);
   });
 
   test("something that is not audio at all is refused", async () => {

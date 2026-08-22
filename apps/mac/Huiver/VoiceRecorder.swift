@@ -25,6 +25,7 @@ final class VoiceRecorder {
     private(set) var level: Double = 0
     private(set) var seconds: Double = 0
     private(set) var failure: String?
+    private(set) var sourceName: String?
 
     /// What was recorded, once stopped.
     private(set) var samples: [Float] = []
@@ -58,6 +59,7 @@ final class VoiceRecorder {
         samples = []
         seconds = 0
         level = 0
+        sourceName = nil
 
         let input = engine.inputNode
         let format = input.inputFormat(forBus: 0)
@@ -95,6 +97,51 @@ final class VoiceRecorder {
         }
     }
 
+    /// Import an audio file through AVFoundation, using the same mono 24 kHz
+    /// conversion as the microphone so trimming and cloning have one format.
+    func importAudio(from url: URL) {
+        reset()
+        failure = nil
+
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+
+        do {
+            let file = try AVAudioFile(forReading: url)
+            let format = file.processingFormat
+            guard let target = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: Double(ReferenceClip.sampleRate),
+                channels: 1,
+                interleaved: false
+            ), let converter = AVAudioConverter(from: format, to: target) else {
+                throw ImportError.unreadable
+            }
+
+            var imported: [Float] = []
+            let chunkFrames: AVAudioFrameCount = 32_768
+            while file.framePosition < file.length {
+                guard let buffer = AVAudioPCMBuffer(
+                    pcmFormat: format,
+                    frameCapacity: min(chunkFrames, AVAudioFrameCount(file.length - file.framePosition))
+                ) else { throw ImportError.unreadable }
+                try file.read(into: buffer)
+                guard buffer.frameLength > 0 else { break }
+                if let converted = Self.convert(buffer, with: converter, to: target) {
+                    imported += converted
+                }
+            }
+            guard !imported.isEmpty else { throw ImportError.empty }
+            samples = imported
+            seconds = Double(imported.count) / Double(ReferenceClip.sampleRate)
+            sourceName = url.deletingPathExtension().lastPathComponent
+            state = .finished
+        } catch {
+            failure = error.localizedDescription
+            state = .idle
+        }
+    }
+
     func stop() {
         guard state == .recording else { return }
         engine.inputNode.removeTap(onBus: 0)
@@ -112,6 +159,18 @@ final class VoiceRecorder {
         seconds = 0
         state = .idle
         failure = nil
+        sourceName = nil
+    }
+
+    private enum ImportError: LocalizedError {
+        case unreadable, empty
+
+        var errorDescription: String? {
+            switch self {
+            case .unreadable: "Huiver could not decode that audio file."
+            case .empty: "That audio file is empty."
+            }
+        }
     }
 
     /// What `ReferenceClip` makes of the take — how much speech there is, and

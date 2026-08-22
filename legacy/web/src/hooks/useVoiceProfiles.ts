@@ -40,10 +40,14 @@ export function useVoiceProfiles() {
   );
 
   const create = useCallback(
-    async (audio: Blob, label: string, filename: string) => {
+    async (audio: Blob, label: string, filename: string, trim?: { start: number; end: number }) => {
       const form = new FormData();
       form.append("audio", audio, filename);
       form.append("label", label);
+      if (trim) {
+        form.append("trimStart", String(trim.start));
+        form.append("trimEnd", String(trim.end));
+      }
       const profile = await api<VoiceProfileDTO>("/api/voices", { method: "POST", body: form });
       await refresh();
       return profile;

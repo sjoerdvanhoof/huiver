@@ -39,7 +39,10 @@ const fail = (message: string, status = 400) => Response.json({ error: message }
  * Transcode to the reference format: mono, 24 kHz, levelled, and no longer than
  * the model has any use for.
  */
-async function toReferenceWav(input: Uint8Array): Promise<{ wav: Uint8Array } | { error: string }> {
+async function toReferenceWav(
+  input: Uint8Array,
+  trim?: { start: number; end: number },
+): Promise<{ wav: Uint8Array } | { error: string }> {
   const stem = path.join(tmpdir(), `huiver-voice-${crypto.randomUUID().slice(0, 8)}`);
   const source = `${stem}.src`;
   const dest = `${stem}.wav`;
@@ -47,11 +50,16 @@ async function toReferenceWav(input: Uint8Array): Promise<{ wav: Uint8Array } | 
   try {
     await Bun.write(source, input);
 
+    const trimArgs = trim ? ["-ss", String(trim.start)] : [];
+    const outputSeconds = trim
+      ? Math.min(VOICE_PROMPT_MAX_SECONDS, trim.end - trim.start)
+      : VOICE_PROMPT_MAX_SECONDS;
     const proc = Bun.spawn(
       [
         ffmpegBinary(), "-hide_banner", "-loglevel", "error",
         "-i", source,
-        "-t", String(VOICE_PROMPT_MAX_SECONDS),
+        ...trimArgs,
+        "-t", String(outputSeconds),
         "-ac", "1", "-ar", String(REFERENCE_SAMPLE_RATE),
         // Headset and laptop mics land all over the place; match the level the
         // downloaded pack is normalised to so voices behave alike.
@@ -94,7 +102,17 @@ async function createVoice(req: Request): Promise<Response> {
 
   const label = String(form.get("label") ?? "").trim().slice(0, 60) || "My voice";
 
-  const converted = await toReferenceWav(new Uint8Array(await file.arrayBuffer()));
+  const trimStart = Number(form.get("trimStart"));
+  const trimEnd = Number(form.get("trimEnd"));
+  const hasTrim = Number.isFinite(trimStart) && Number.isFinite(trimEnd) && trimEnd > trimStart;
+  if ((form.has("trimStart") || form.has("trimEnd")) && !hasTrim) {
+    return fail("Those trim points are not valid");
+  }
+
+  const converted = await toReferenceWav(
+    new Uint8Array(await file.arrayBuffer()),
+    hasTrim ? { start: Math.max(0, trimStart), end: trimEnd } : undefined,
+  );
   if ("error" in converted) return fail(converted.error, 422);
 
   try {

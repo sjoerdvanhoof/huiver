@@ -260,7 +260,7 @@ before they did.
 - ~~Voice recording on the Mac is still a disabled placeholder~~ — **done**:
   `RecordVoiceSheet` records, `MTLVoiceCloner` clones on-device, and the voice
   lands in the roster (commit "Add on-device Mac voice recording and cloning").
-- `apps/web` is still present. Its venv is not: the Chatterbox environment now
+- `legacy/web` is still present. Its venv is not: the Chatterbox environment now
   lives in `tools/export/.venv-chatterbox`, which was the one ordering
   constraint on retiring the web app, and `HUIVER_CHATTERBOX_VENV` points the
   web app at it meanwhile.
@@ -292,10 +292,10 @@ port has something to be checked against rather than something to be inferred.
 in a non-English language, and `verify_mtl.py --models …` passes every level at
 shipping sizes.
 
-### 2. Voice recording on the Mac, then retire `apps/web`
+### 2. Voice recording on the Mac, then retire `legacy/web`
 
 Unchanged from before, minus the constraint that used to gate it: the venv has
-moved, so `apps/web` can go to `legacy/` the moment the Mac can record a
+moved, so `legacy/web` can go to `legacy/` the moment the Mac can record a
 reference clip and clone from it.
 
 ### 3. Sync, when it has something to carry

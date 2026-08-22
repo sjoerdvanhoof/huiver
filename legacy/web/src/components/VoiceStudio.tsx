@@ -1,8 +1,9 @@
-import { Circle, Loader2, Mic, Play, Square, Trash2 } from "lucide-react";
+import { Circle, Loader2, Mic, Play, Square, Trash2, Upload } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
 import { VOICE_PROMPT_TARGET_SECONDS } from "@huiver/shared";
 import { useVoiceProfiles } from "../hooks/useVoiceProfiles";
 
@@ -19,7 +20,12 @@ import { useVoiceProfiles } from "../hooks/useVoiceProfiles";
  * which makes a bad clone a property of the recording rather than of the words.
  */
 
-type Recording = { blob: Blob; url: string; seconds: number; extension: string };
+type Recording = { blob: Blob; url: string; seconds: number; filename: string; uploaded: boolean };
+
+const formatTime = (seconds: number) => {
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${(seconds % 60).toFixed(1).padStart(4, "0")}`;
+};
 
 /** Whichever container this browser will actually give us. */
 function pickMimeType(): { mimeType?: string; extension: string } {
@@ -51,6 +57,8 @@ export function VoiceStudio({
   const [elapsed, setElapsed] = useState(0);
   const [busy, setBusy] = useState(false);
   const [label, setLabel] = useState("");
+  const [trim, setTrim] = useState<[number, number] | null>(null);
+  const uploadInput = useRef<HTMLInputElement | null>(null);
 
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -77,7 +85,28 @@ export function VoiceStudio({
       if (current) URL.revokeObjectURL(current.url);
       return null;
     });
+    setTrim(null);
   }, []);
+
+  const useFile = useCallback((file: File) => {
+    discard();
+    const url = URL.createObjectURL(file);
+    const probe = new Audio(url);
+    probe.addEventListener("loadedmetadata", () => {
+      if (!Number.isFinite(probe.duration) || probe.duration <= 0) {
+        URL.revokeObjectURL(url);
+        onError("Could not read the duration of that audio file.");
+        return;
+      }
+      setRecording({ blob: file, url, seconds: probe.duration, filename: file.name, uploaded: true });
+      setTrim([0, Math.min(probe.duration, VOICE_PROMPT_TARGET_SECONDS)]);
+      if (!label) setLabel(file.name.replace(/\.[^.]+$/, "").slice(0, 60));
+    }, { once: true });
+    probe.addEventListener("error", () => {
+      URL.revokeObjectURL(url);
+      onError("That file does not appear to contain playable audio.");
+    }, { once: true });
+  }, [discard, label, onError]);
 
   const start = useCallback(async () => {
     discard();
@@ -106,7 +135,8 @@ export function VoiceStudio({
       releaseMic();
       recorder.current = null;
       setActive(false);
-      setRecording({ blob, url: URL.createObjectURL(blob), seconds, extension });
+      setRecording({ blob, url: URL.createObjectURL(blob), seconds, filename: `voice.${extension}`, uploaded: false });
+      setTrim([0, seconds]);
     });
 
     stream.current = media;
@@ -129,7 +159,12 @@ export function VoiceStudio({
     if (!recording) return;
     setBusy(true);
     try {
-      const created = await create(recording.blob, label.trim() || "My voice", `voice.${recording.extension}`);
+      const created = await create(
+        recording.blob,
+        label.trim() || "My voice",
+        recording.filename,
+        trim ? { start: trim[0], end: trim[1] } : undefined,
+      );
       discard();
       setLabel("");
       onChanged({ created: created.id });
@@ -138,7 +173,7 @@ export function VoiceStudio({
     } finally {
       setBusy(false);
     }
-  }, [recording, label, create, discard, onChanged, onError]);
+  }, [recording, label, trim, create, discard, onChanged, onError]);
 
   const deleteVoice = useCallback(
     async (id: string, name: string) => {
@@ -154,38 +189,54 @@ export function VoiceStudio({
   );
 
   const recorded = voices.filter(voice => voice.kind === "recorded");
-  const tooShort = recording !== null && recording.seconds < minSeconds;
+  const selectedSeconds = trim ? trim[1] - trim[0] : (recording?.seconds ?? 0);
+  const tooShort = recording !== null && selectedSeconds < minSeconds;
 
   return (
     <div className="space-y-4">
       <div>
         <h3 className="text-sm font-semibold">Your own voice</h3>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Read the passage once and Chatterbox will narrate in your voice. The recording stays on this machine.
+          Record the passage or upload a clear voice sample. Your audio stays on this machine.
         </p>
       </div>
 
-      {!supported ? (
-        <p className="text-xs text-muted-foreground">
-          This browser cannot record audio. Try Chrome, Firefox or Safari over https or localhost.
-        </p>
-      ) : (
-        <>
+      <>
           <blockquote className="rounded-md border-l-2 border-primary/50 bg-muted/40 py-2.5 pr-3 pl-3 font-serif text-sm leading-relaxed">
             {prompt || "…"}
           </blockquote>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {active ? (
               <Button onClick={stop} variant="destructive" size="sm">
                 <Square className="size-3.5 fill-current" />
                 Stop
               </Button>
             ) : (
-              <Button onClick={start} variant={recording ? "outline" : "default"} size="sm" disabled={busy}>
+              <Button onClick={start} variant={recording ? "outline" : "default"} size="sm" disabled={busy || !supported} title={!supported ? "Microphone recording is unavailable in this browser" : undefined}>
                 <Mic className="size-3.5" />
                 {recording ? "Record again" : "Record"}
               </Button>
+            )}
+
+            {!active && (
+              <>
+                <input
+                  ref={uploadInput}
+                  type="file"
+                  accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm"
+                  className="hidden"
+                  onChange={event => {
+                    const file = event.target.files?.[0];
+                    if (file) useFile(file);
+                    event.target.value = "";
+                  }}
+                />
+                <Button onClick={() => uploadInput.current?.click()} variant="outline" size="sm" disabled={busy}>
+                  <Upload className="size-3.5" />
+                  Upload audio
+                </Button>
+              </>
             )}
 
             {active && (
@@ -198,7 +249,7 @@ export function VoiceStudio({
 
             {recording && !active && (
               <span className={`text-xs tabular-nums ${tooShort ? "text-destructive" : "text-muted-foreground"}`}>
-                {recording.seconds.toFixed(1)}s recorded
+                {selectedSeconds.toFixed(1)}s selected
                 {tooShort && ` — needs at least ${minSeconds}s`}
               </span>
             )}
@@ -206,9 +257,7 @@ export function VoiceStudio({
 
           {recording && !active && (
             <div className="space-y-3 rounded-md border p-3">
-              {/* Hearing it back before saving catches the clipped, the mumbled
-                  and the interrupted, none of which the clone recovers from. */}
-              <audio src={recording.url} controls className="h-9 w-full" />
+              <WaveformEditor recording={recording} value={trim ?? [0, recording.seconds]} onChange={setTrim} onError={onError} />
 
               <div className="space-y-1.5">
                 <Label htmlFor="voice-label">Name this voice</Label>
@@ -233,7 +282,6 @@ export function VoiceStudio({
             </div>
           )}
         </>
-      )}
 
       {recorded.length > 0 && (
         <div className="space-y-1.5">
@@ -257,6 +305,114 @@ export function VoiceStudio({
           </ul>
         </div>
       )}
+    </div>
+  );
+}
+
+function WaveformEditor({
+  recording,
+  value,
+  onChange,
+  onError,
+}: {
+  recording: Recording;
+  value: [number, number];
+  onChange: (value: [number, number]) => void;
+  onError: (message: string) => void;
+}) {
+  const [peaks, setPeaks] = useState<number[]>([]);
+  const [playing, setPlaying] = useState(false);
+  const audio = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const context = new AudioContext();
+    void recording.blob.arrayBuffer()
+      .then(buffer => context.decodeAudioData(buffer))
+      .then(decoded => {
+        if (cancelled) return;
+        const channel = decoded.getChannelData(0);
+        const bars = 120;
+        const stride = Math.max(1, Math.floor(channel.length / bars));
+        const next = Array.from({ length: bars }, (_, index) => {
+          let peak = 0;
+          const end = Math.min(channel.length, (index + 1) * stride);
+          for (let i = index * stride; i < end; i += Math.max(1, Math.floor(stride / 80))) {
+            peak = Math.max(peak, Math.abs(channel[i] ?? 0));
+          }
+          return Math.max(0.04, peak);
+        });
+        const max = Math.max(...next, 0.01);
+        setPeaks(next.map(peak => peak / max));
+      })
+      .catch(() => onError("The waveform could not be decoded, but you can still save this audio."))
+      .finally(() => void context.close());
+    return () => {
+      cancelled = true;
+      audio.current?.pause();
+    };
+  }, [recording.blob, onError]);
+
+  const stop = useCallback(() => {
+    audio.current?.pause();
+    setPlaying(false);
+  }, []);
+
+  const toggle = useCallback(() => {
+    if (playing) return stop();
+    const element = audio.current ?? new Audio(recording.url);
+    audio.current = element;
+    element.currentTime = value[0];
+    element.ontimeupdate = () => {
+      if (element.currentTime >= value[1]) stop();
+    };
+    element.onended = stop;
+    void element.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+  }, [playing, recording.url, stop, value]);
+
+  const left = (value[0] / recording.seconds) * 100;
+  const right = 100 - (value[1] / recording.seconds) * 100;
+
+  return (
+    <div className="space-y-2" aria-label="Trim audio sample">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium">{recording.uploaded ? recording.filename : "Your recording"}</p>
+          <p className="text-xs text-muted-foreground">Drag the handles to keep the clearest part of the sample.</p>
+        </div>
+        <Button type="button" onClick={toggle} variant="outline" size="icon-sm" aria-label={playing ? "Stop preview" : "Preview selection"}>
+          {playing ? <Square className="size-3.5 fill-current" /> : <Play className="size-3.5" />}
+        </Button>
+      </div>
+
+      <div className="relative h-24 overflow-hidden rounded-md bg-muted/50 px-1" aria-hidden="true">
+        <div className="flex h-full items-center gap-px">
+          {(peaks.length ? peaks : Array.from({ length: 80 }, () => 0.12)).map((peak, index) => (
+            <span key={index} className="min-w-0 flex-1 rounded-full bg-primary/80" style={{ height: `${Math.max(5, peak * 82)}%` }} />
+          ))}
+        </div>
+        <div className="pointer-events-none absolute inset-y-0 left-0 bg-background/70" style={{ width: `${left}%` }} />
+        <div className="pointer-events-none absolute inset-y-0 right-0 bg-background/70" style={{ width: `${right}%` }} />
+        <div className="pointer-events-none absolute inset-y-0 border-x-2 border-primary" style={{ left: `${left}%`, right: `${right}%` }} />
+      </div>
+
+      <Slider
+        value={value}
+        min={0}
+        max={recording.seconds}
+        step={0.05}
+        minStepsBetweenThumbs={Math.ceil(Math.min(0.5, recording.seconds) / 0.05)}
+        onValueChange={next => {
+          stop();
+          onChange([next[0] ?? 0, next[1] ?? recording.seconds]);
+        }}
+        aria-label="Audio trim range"
+      />
+      <div className="flex justify-between text-xs tabular-nums text-muted-foreground">
+        <span>Start {formatTime(value[0])}</span>
+        <span className="font-medium text-foreground">{formatTime(value[1] - value[0])} selected</span>
+        <span>End {formatTime(value[1])}</span>
+      </div>
     </div>
   );
 }

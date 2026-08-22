@@ -693,7 +693,7 @@ final class AppModel {
     /// voice consists of, none of which can be turned back into audio — the same
     /// bargain the shipped voices make, and worth keeping when the recording is
     /// the listener's own.
-    func cloneVoice(from recording: [Float], name: String) async throws -> Voice {
+    func cloneVoice(from recording: [Float], name: String, language: Language) async throws -> Voice {
         guard let cloner, let recordedVoices else { throw VoiceCloner.CloneError.unavailable }
 
         // An id from the name, and a number if that name is taken: two voices
@@ -712,13 +712,10 @@ final class AppModel {
             recording,
             id: id,
             name: name.isEmpty ? "My voice" : name,
-            detail: "recorded on this Mac",
+            detail: "recorded in \(language.name) on this Mac",
             persona: "Your own voice, cloned from a short recording. It reads every "
                 + "language the model knows, with your accent.",
-            // Recorded voices carry no language: the app should not decide that
-            // a Dutch speaker may only read Dutch books, and `voice(for:)`
-            // leaves a voice without one alone.
-            language: nil
+            language: language.code
         )
         try VoicePack.write(voice, to: recordedVoices)
         voices = try VoicePack.load(
