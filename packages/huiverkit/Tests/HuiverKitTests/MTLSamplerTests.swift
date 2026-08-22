@@ -136,4 +136,22 @@ struct MTLSamplerTests {
         #expect(!logits[2].isFinite)
         #expect(!logits[3].isFinite)
     }
+
+    /// The multilingual preset wants only the relative floor, which the
+    /// sampler now serves with a max scan instead of sorting the whole
+    /// vocabulary per token. Same arithmetic, checked explicitly: everything
+    /// within `minP` of the peak survives, everything else goes.
+    @Test("min-p alone matches the arithmetic the sort used to compute")
+    func minPFastPath() {
+        var options = SamplingOptions.multilingual
+        options.temperature = 1
+        options.repetitionPenalty = 1
+        var sampler = Sampler(options: options, order: .multilingual)
+
+        var logits: [Float] = (0..<64).map { Float(sin(Double($0) * 1.7)) * 6 }
+        let floor = logits.max()! + logf(options.minP)
+        let expected = logits.map { $0 >= floor ? $0 : -Float.infinity }
+        logits.withUnsafeMutableBufferPointer { sampler.filter(logits: $0, history: []) }
+        #expect(logits == expected)
+    }
 }

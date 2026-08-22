@@ -9,7 +9,7 @@ import Foundation
 /// model the other's options produces a voice that is subtly not the one the
 /// weights were tuned for, which is why the presets are named rather than
 /// blended.
-public struct SamplingOptions: Sendable, Equatable {
+public struct SamplingOptions: Sendable, Equatable, Codable {
     public var temperature: Float = 0.8
     public var topP: Float = 0.95
     public var topK: Int = 1000
@@ -155,6 +155,18 @@ public struct Sampler {
         let wantsTopP = options.topP < 1
         guard wantsTopK || wantsMinP || wantsTopP else { return }
 
+        // Only the relative floor is wanted — which is the multilingual
+        // preset, so this is the hot path — and it needs the peak alone, not
+        // an order. The sort below is O(n log n) over the whole vocabulary and
+        // runs ~1200 times per chunk; a max scan is all the floor requires.
+        if wantsMinP, !wantsTopK, !wantsTopP {
+            var peak: Float = 0
+            var peakIndex: vDSP_Length = 0
+            vDSP_maxvi(logits.baseAddress!, 1, &peak, &peakIndex, vDSP_Length(count))
+            applyMinP(logits, peak: peak)
+            return
+        }
+
         if ranking.count != count {
             ranking = Array(0..<vDSP_Length(count))
         } else {
@@ -169,7 +181,7 @@ public struct Sampler {
             for i in 0..<count where logits[i] < cutoff { logits[i] = -.infinity }
         }
 
-        if wantsMinP { applyMinP(logits) }
+        if wantsMinP { applyMinP(logits, peak: logits[Int(ranking[0])]) }
         if wantsTopP { applyTopP(logits) }
     }
 
@@ -177,8 +189,9 @@ public struct Sampler {
     ///
     /// A ratio of probabilities is a difference of logits, so this needs no
     /// softmax: `p_i / p_max >= minP` is `logit_i >= logit_max + log(minP)`.
-    private func applyMinP(_ logits: UnsafeMutableBufferPointer<Float>) {
-        let peak = logits[Int(ranking[0])]
+    /// The peak comes in from whichever caller already has it — the sorted
+    /// path's rank zero, or the fast path's max scan.
+    private func applyMinP(_ logits: UnsafeMutableBufferPointer<Float>, peak: Float) {
         guard peak.isFinite else { return }
         let floor = peak + logf(options.minP)
         for i in 0..<logits.count where logits[i] < floor { logits[i] = -.infinity }
@@ -218,7 +231,13 @@ public struct Sampler {
         let count = logits.count
         var maximum = -Float.infinity
         for i in 0..<count where logits[i] > maximum { maximum = logits[i] }
-        guard maximum.isFinite else { return 0 }
+        guard maximum.isFinite else {
+            // Every token filtered out, or NaN logits: the model has gone
+            // somewhere it cannot come back from. Token 0 keeps the loop
+            // alive, but silently emitting it hid the fault — say so.
+            PlaybackLog.note("sampler: degenerate distribution, no finite logit")
+            return 0
+        }
 
         if weights.count != count { weights = [Float](repeating: 0, count: count) }
         var total: Float = 0
@@ -227,7 +246,10 @@ public struct Sampler {
             weights[i] = p
             total += p
         }
-        guard total > 0 else { return 0 }
+        guard total > 0 else {
+            PlaybackLog.note("sampler: degenerate distribution, probabilities sum to zero")
+            return 0
+        }
 
         let target = Float.random(in: 0..<total, using: &generator)
         var running: Float = 0

@@ -10,9 +10,10 @@
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
-	<!-- EPUBs come in through the open panel or a drop, both of which grant
-	     read access to exactly the file chosen. -->
-	<key>com.apple.security.files.user-selected.read-only</key>
+	<!-- EPUBs come in through the open panel or a drop, and exported
+	     audiobooks go out through the save panel — both grant access to
+	     exactly the file chosen. -->
+	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
 	<!-- Voice recording, once it arrives. -->
 	<key>com.apple.security.device.audio-input</key>

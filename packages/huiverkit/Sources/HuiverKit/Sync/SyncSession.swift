@@ -22,6 +22,10 @@ public protocol SyncDataSource: Sendable {
     func acceptConvertRequests(_ requests: [ConvertRequest]) async -> [SyncMessage.JobStatus]
     /// What the other device made of an ask this one sent.
     func receive(jobStatus: SyncMessage.JobStatus) async
+    /// The other device's whole manifest, before any transfers. What a data
+    /// source needs from it is context for the deliveries that follow — a
+    /// voice arrives as an id and a blob, and its name only ever travels here.
+    func receive(peerManifest: SyncMessage.Manifest) async
 }
 
 /// Both halves of convert-offload are optional: a device that renders for
@@ -35,6 +39,8 @@ public extension SyncDataSource {
     }
 
     func receive(jobStatus: SyncMessage.JobStatus) async {}
+
+    func receive(peerManifest: SyncMessage.Manifest) async {}
 }
 
 /// One sync, start to finish.
@@ -162,6 +168,9 @@ public actor SyncSession {
             theirs = try await expectManifest()
             try await send(.manifest(mine))
         }
+        // Before the transfers, so a delivery can be understood in the terms
+        // the manifest described it in.
+        await source.receive(peerManifest: theirs)
 
         // Positions first, and before any bytes move: they are the thing most
         // worth having if the connection drops halfway through a gigabyte of

@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 import Observation
+import UserNotifications
 
 /// Everything the screens share: the library, the engine, the voice list.
 ///
@@ -14,6 +16,15 @@ final class AppModel {
     private(set) var narrator: Narrator?
     private(set) var converter: Converter?
     private(set) var loadFailure: String?
+    /// A book that would not import. Its own channel, not `loadFailure`: a bad
+    /// EPUB is not an engine problem, and showing it under a header that says
+    /// "Engine" sent people debugging the wrong thing.
+    var importFailure: String?
+    /// Extraction in progress — unzip, XML, a regex over the whole text — so
+    /// the shelf can say so instead of the window freezing.
+    private(set) var isImporting = false
+    /// Set by File ▸ Open; the library screen watches it and opens its panel.
+    var wantsImport = false
     private(set) var isLoading = true
     private(set) var bytesOnDisk: Int64 = 0
 
@@ -34,7 +45,13 @@ final class AppModel {
 
     /// The multilingual model's numbers from the start: it filters in a
     /// different order and uses a relative floor where Nano used top-k.
-    var options = SamplingOptions.multilingual
+    /// Remembered across launches — a slider is a preference, not a session.
+    var options = SamplingOptions.multilingual {
+        didSet {
+            guard let data = try? JSONEncoder().encode(options) else { return }
+            UserDefaults.standard.set(data, forKey: "samplingOptions")
+        }
+    }
 
     /// Stop reading after a while. Owned here so it outlives any one screen.
     let sleepTimer = SleepTimer()
@@ -71,6 +88,11 @@ final class AppModel {
     /// and picking a language nobody was recorded in still reads the book rather
     /// than refusing.
     func voice(for book: Book) -> Voice? {
+        // A voice pinned to the book beats everything — pinning is the
+        // listener saying exactly this.
+        if let pinned = book.voiceId, let voice = voices.first(where: { $0.id == pinned }) {
+            return voice
+        }
         guard let selected = selectedVoice else { return nil }
         let language = book.languageCode
         if selected.language == nil || selected.language == language { return selected }
@@ -78,10 +100,20 @@ final class AppModel {
     }
 
     /// Whether `voice(for:)` would override the chosen voice, so a screen can
-    /// say so rather than surprising the listener.
+    /// say so rather than surprising the listener. A pinned voice is not a
+    /// substitution — it is the listener's own instruction.
     func substitutesVoice(for book: Book) -> Bool {
-        guard let selected = selectedVoice, let chosen = voice(for: book) else { return false }
+        guard book.voiceId == nil,
+              let selected = selectedVoice, let chosen = voice(for: book)
+        else { return false }
         return chosen.id != selected.id
+    }
+
+    /// Pin a voice to one book, or nil to follow the app-wide selection.
+    func setVoice(_ voiceId: String?, for book: Book) async {
+        guard let library else { return }
+        try? await library.setVoice(voiceId, for: book.id)
+        books = await library.all()
     }
 
     private(set) var library: Library?
@@ -103,12 +135,25 @@ final class AppModel {
 
     init() {
         selectedVoiceId = UserDefaults.standard.string(forKey: "voice") ?? "mtl_default"
+        // Observers do not fire in init, so this neither re-saves what it read
+        // nor loses the preset when nothing was stored.
+        if let data = UserDefaults.standard.data(forKey: "samplingOptions"),
+           let stored = try? JSONDecoder().decode(SamplingOptions.self, from: data) {
+            options = stored
+        }
     }
 
     /// The models and voices are bundled with the app; the library lives in
     /// Application Support rather than Documents — on the Mac, Documents is the
     /// user's own space, and a folder of app-managed audio does not belong in it.
+    /// Guards `load()` against running twice: ⌘N gives every new window a
+    /// `.task` that calls it, and a second pass would re-load a gigabyte of
+    /// models and orphan the narrator mid-sentence.
+    private var loadStarted = false
+
     func load() async {
+        guard !loadStarted else { return }
+        loadStarted = true
         isLoading = true
         defer { isLoading = false }
 
@@ -236,15 +281,30 @@ final class AppModel {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
 
+        isImporting = true
+        defer { isImporting = false }
         do {
-            let data = try Data(contentsOf: url)
             let filename = url.lastPathComponent
-            let extracted = try Extract.book(from: data, filename: filename)
+            // Extraction — unzip, XML, HTML stripping, a regex over the whole
+            // text — off the main actor, where a large EPUB froze the window.
+            let (data, extracted) = try await Task.detached(priority: .userInitiated) {
+                let data = try Data(contentsOf: url)
+                return (data, try Extract.book(from: data, filename: filename))
+            }.value
             _ = try await library.add(extracted, source: (data: data, filename: filename))
             books = await library.all()
         } catch {
-            loadFailure = error.localizedDescription
+            importFailure = error.localizedDescription
         }
+    }
+
+    /// The last chance to write anything down. `applicationShouldTerminate`
+    /// holds the quit open until this returns — the debounced library save and
+    /// the position ticker's lazy write are both exactly what ⌘Q would lose.
+    func shutdown() async {
+        await narrator?.checkpointNow()
+        await progressStore?.flush()
+        await library?.flushNow()
     }
 
     /// Where a book's cover image is, if the EPUB had one.
@@ -314,11 +374,56 @@ final class AppModel {
     func refresh() async {
         guard let library else { return }
         books = await library.all()
-        bytesOnDisk = await library.bytesOnDisk()
         await refreshProgress()
         // The converter announces every queue change through here, so the
         // queue draining is one of the two moments synthesis can go quiet.
         trimEngineMemoryIfIdle()
+        updateConversionSurface()
+    }
+
+    /// The disk total is a full walk of the audio tree, so it is refreshed
+    /// when the Settings pane asks — not on the converter's every chunk, which
+    /// used to stat thousands of files a minute during a render.
+    func refreshStorage() async {
+        guard let library else { return }
+        bytesOnDisk = await library.bytesOnDisk()
+    }
+
+    /// What the Dock and Notification Centre say about the queue: a badge
+    /// while chapters wait, and a notification when the last one lands —
+    /// multi-hour jobs deserve both.
+    private var wasConverting = false
+
+    private func updateConversionSurface() {
+        let queued = (converter?.queue.count ?? 0) + (converter?.active != nil ? 1 : 0)
+        NSApp.dockTile.badgeLabel = queued > 0 ? "\(queued)" : nil
+
+        let converting = converter?.isBusy ?? false
+        let drained = converter?.queue.isEmpty ?? true
+        if wasConverting, !converting, drained {
+            notifyConversionFinished(failure: converter?.failure)
+        }
+        wasConverting = converting || !drained
+    }
+
+    private func notifyConversionFinished(failure: String?) {
+        let centre = UNUserNotificationCenter.current()
+        centre.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            if let failure {
+                content.title = "Conversion stopped"
+                content.body = failure
+            } else {
+                content.title = "Conversion finished"
+                content.body = "The queue is done — every chapter is rendered."
+            }
+            centre.add(
+                UNNotificationRequest(
+                    identifier: UUID().uuidString, content: content, trigger: nil
+                )
+            )
+        }
     }
 
     /// Give MLX's buffer pool back once nothing is synthesizing.
@@ -372,6 +477,118 @@ final class AppModel {
         book.chapters
             .compactMap { chapter in progress[chapter.id].map { (chapter, $0.updatedAt) } }
             .max { $0.1 < $1.1 }?.0
+    }
+
+    // MARK: - Export
+
+    /// The export in flight, for the book screen's progress bar. One at a
+    /// time: two AAC encodes at once would fight over the same encoder for no
+    /// net gain.
+    private(set) var exporting: (bookId: String, fraction: Double)?
+    var exportFailure: String?
+
+    /// The book's fully rendered chapters as one chapter-marked audiobook.
+    func exportAudiobook(_ book: Book, to destination: URL) async {
+        guard let library, exporting == nil else { return }
+        exporting = (book.id, 0)
+        defer { exporting = nil }
+
+        let chapters = exportableChapters(of: book, in: library)
+        let metadata = AudiobookExporter.BookMetadata(
+            title: book.title,
+            author: book.author,
+            cover: coverURL(for: book).flatMap { try? Data(contentsOf: $0) }
+        )
+        // Percent steps only: the writer reports every buffer, and a main-actor
+        // hop per 1.3 s of audio adds up over a ten-hour book.
+        let reported = ReportedPercent()
+        let update: @Sendable (Double) -> Void = { [weak self] fraction in
+            guard reported.advance(to: fraction) else { return }
+            Task { @MainActor [weak self] in
+                guard let self, self.exporting?.bookId == book.id else { return }
+                self.exporting = (book.id, fraction)
+            }
+        }
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try AudiobookExporter.writeM4B(
+                    chapters: chapters, metadata: metadata, to: destination, progress: update
+                )
+            }.value
+            NSWorkspace.shared.activateFileViewerSelecting([destination])
+        } catch {
+            exportFailure = error.localizedDescription
+        }
+    }
+
+    /// The book's fully rendered chapters as numbered, tagged files in a
+    /// folder — for players that want tracks rather than one audiobook.
+    func exportChapterFiles(_ book: Book, to folder: URL) async {
+        guard let library, exporting == nil else { return }
+        exporting = (book.id, 0)
+        defer { exporting = nil }
+
+        let chapters = exportableChapters(of: book, in: library)
+        let metadata = AudiobookExporter.BookMetadata(
+            title: book.title,
+            author: book.author,
+            cover: coverURL(for: book).flatMap { try? Data(contentsOf: $0) }
+        )
+        do {
+            var lastError: Error?
+            for (index, chapter) in chapters.enumerated() {
+                let name = AudiobookExporter.filename(chapter.title, number: index + 1)
+                let destination = folder.appendingPathComponent("\(name).m4a")
+                do {
+                    try await Task.detached(priority: .userInitiated) {
+                        try AudiobookExporter.writeChapterM4A(
+                            chunkURLs: chapter.chunkURLs,
+                            title: chapter.title,
+                            track: (index + 1, chapters.count),
+                            metadata: metadata,
+                            to: destination
+                        )
+                    }.value
+                } catch {
+                    lastError = error
+                }
+                exporting = (book.id, Double(index + 1) / Double(max(chapters.count, 1)))
+            }
+            if let lastError { throw lastError }
+            NSWorkspace.shared.activateFileViewerSelecting([folder])
+        } catch {
+            exportFailure = error.localizedDescription
+        }
+    }
+
+    /// Fully rendered chapters, with their chunk files in playback order.
+    /// Export never includes a partial chapter: a book that stops mid-sentence
+    /// reads as broken, where a missing chapter reads as unfinished work.
+    private func exportableChapters(
+        of book: Book, in library: Library
+    ) -> [AudiobookExporter.Chapter] {
+        book.chapters.filter(\.isComplete).map { chapter in
+            AudiobookExporter.Chapter(
+                title: chapter.title,
+                chunkURLs: (0..<chapter.renderedChunks).map {
+                    library.chunkURL(book: book.id, chapter: chapter.id, index: $0)
+                }
+            )
+        }
+    }
+
+    /// Cross-thread percent throttle for export progress.
+    private final class ReportedPercent: @unchecked Sendable {
+        private let lock = NSLock()
+        private var last = -1
+        func advance(to fraction: Double) -> Bool {
+            let percent = Int(fraction * 100)
+            return lock.withLock {
+                guard percent > last else { return false }
+                last = percent
+                return true
+            }
+        }
     }
 
     // MARK: - Rendering for the phone

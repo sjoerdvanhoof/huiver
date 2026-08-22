@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// A book: cover and details at the top, then its chapters — the Mac cut of
 /// the iOS BookView, with a "Convert all" in the toolbar because a Mac is the
@@ -51,14 +52,37 @@ struct BookDetailView: View {
                 } label: {
                     Label("Convert book", systemImage: "square.and.arrow.down.on.square")
                 }
-                .disabled(model.converter == nil || incomplete.isEmpty)
-                .help("Queue every chapter that has not been rendered yet")
+                .disabled(model.converter == nil || incomplete.isEmpty || !model.canSpeak(current))
+                .help(model.canSpeak(current)
+                    ? "Queue every chapter that has not been rendered yet"
+                    : "The model cannot read \(language.name)")
             }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Picker("Language", selection: languageBinding) {
-                        ForEach(Language.all) { Text($0.name).tag($0.code) }
+                        // Only languages the loaded model can read, plus the
+                        // book's own tag when it is not one of them — an honest
+                        // label the warning below can point at, not an option
+                        // whose render would fail on the first chunk.
+                        ForEach(pickableLanguages) { Text($0.name).tag($0.code) }
                     }
+                    Picker("Voice", selection: voiceBinding) {
+                        // "" is "follow the app-wide voice"; anything else pins
+                        // this book to one narrator regardless of Settings.
+                        Text("App voice (\(model.selectedVoice?.name ?? "default"))").tag("")
+                        Divider()
+                        ForEach(model.voices) { Text($0.name).tag($0.id) }
+                    }
+                    Divider()
+                    Button("Export audiobook…", systemImage: "square.and.arrow.up") {
+                        exportAudiobook()
+                    }
+                    .disabled(renderedCount == 0 || model.exporting != nil)
+                    Button("Export chapter files…", systemImage: "square.and.arrow.up.on.square") {
+                        exportChapterFiles()
+                    }
+                    .disabled(renderedCount == 0 || model.exporting != nil)
+                    Divider()
                     Button("Delete book", systemImage: "trash", role: .destructive) {
                         confirmingDelete = true
                     }
@@ -81,12 +105,73 @@ struct BookDetailView: View {
         } message: {
             Text("Its text and any audio rendered for it will be removed.")
         }
+        .alert(
+            "Could not export",
+            isPresented: .init(
+                get: { model.exportFailure != nil },
+                set: { if !$0 { model.exportFailure = nil } }
+            )
+        ) {
+            Button("OK") { model.exportFailure = nil }
+        } message: {
+            Text(model.exportFailure ?? "")
+        }
+    }
+
+    /// The whole book as one chapter-marked `.m4b`, through the save panel.
+    private func exportAudiobook() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "m4b") ?? .mpeg4Audio]
+        panel.nameFieldStringValue = AudiobookExporter.filename(current.title) + ".m4b"
+        panel.title = "Export audiobook"
+        if renderedCount < current.chapters.count {
+            panel.message = "Only the \(renderedCount) fully rendered "
+                + "chapter\(renderedCount == 1 ? "" : "s") will be included."
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let book = current
+        Task { await model.exportAudiobook(book, to: url) }
+    }
+
+    /// One tagged file per chapter, into a chosen folder.
+    private func exportChapterFiles() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Export here"
+        panel.title = "Export chapter files"
+        panel.message = renderedCount < current.chapters.count
+            ? "One .m4a per fully rendered chapter (\(renderedCount) of \(current.chapters.count))."
+            : "One .m4a per chapter."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let book = current
+        Task { await model.exportChapterFiles(book, to: url) }
+    }
+
+    /// The languages worth offering: what the engine can speak, with the
+    /// book's current language kept in the list even when it is unspeakable so
+    /// the picker shows the truth rather than a substitute.
+    private var pickableLanguages: [Language] {
+        var languages = model.engineLanguages
+        if !languages.contains(where: { $0.code == language.code }) {
+            languages.append(language)
+            languages.sort { $0.name < $1.name }
+        }
+        return languages
     }
 
     private var languageBinding: Binding<String> {
         .init(
             get: { language.code },
             set: { code in Task { await model.setLanguage(.named(code), for: current) } }
+        )
+    }
+
+    private var voiceBinding: Binding<String> {
+        .init(
+            get: { current.voiceId ?? "" },
+            set: { id in Task { await model.setVoice(id.isEmpty ? nil : id, for: current) } }
         )
     }
 
@@ -124,6 +209,17 @@ struct BookDetailView: View {
                 .buttonStyle(.plain)
                 .disabled(model.narrator == nil)
                 .padding(.top, Palette.Space.xs)
+
+                if let exporting = model.exporting, exporting.bookId == current.id {
+                    HStack(spacing: Palette.Space.sm) {
+                        ProgressView(value: exporting.fraction)
+                            .frame(width: 160)
+                        Text("Exporting…")
+                            .font(.huiverCaption)
+                            .foregroundStyle(theme.colors.mutedForeground)
+                    }
+                    .padding(.top, Palette.Space.xs)
+                }
             }
         }
         .padding(.horizontal, Palette.Space.lg)
@@ -135,10 +231,25 @@ struct BookDetailView: View {
         var parts = ["\(renderedCount)/\(current.chapters.count) rendered"]
         if finished > 0 { parts.append("\(finished) finished") }
         parts.append(Format.estimate(estimate))
+        // What converting the rest will actually cost, from this machine's
+        // own measured pace — an answer that used to live nowhere.
+        if renderedCount < current.chapters.count,
+           let compute = RenderPace.estimate(characters: remainingCharacters) {
+            parts.append("\(Format.estimate(compute)) to convert")
+        }
         if current.languageCode != Language.english.code {
             parts.append(language.name)
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// Characters of text not yet rendered, pro-rated for chapters part-done.
+    private var remainingCharacters: Int {
+        current.chapters.filter { !$0.isComplete }.reduce(0) { total, chapter in
+            let done = chapter.chunkCount > 0
+                ? Double(chapter.renderedChunks) / Double(chapter.chunkCount) : 0
+            return total + Int(Double(chapter.characters) * (1 - done))
+        }
     }
 
     /// Which reader this book will actually get, when it is not the chosen one.
@@ -167,7 +278,7 @@ struct BookDetailView: View {
     private var languageWarning: some View {
         HStack(alignment: .top, spacing: Palette.Space.sm) {
             Image(systemName: "exclamationmark.triangle.fill")
-            Text("\(language.name) is not one of the languages this model can read. It will still speak the book, pronouncing the words as though they were English.")
+            Text("\(language.name) is not one of the languages this model can read, so its chapters cannot be converted. If the book is actually in another language, change it from the menu above.")
         }
         .font(.huiverCaption)
         .foregroundStyle(theme.colors.mutedForeground)
@@ -190,7 +301,7 @@ struct BookDetailView: View {
     /// Queue everything that has not been rendered, in reading order. The
     /// converter works through it one chapter at a time.
     private func convertAll() {
-        guard let converter = model.converter, let voice = model.voice(for: book) else { return }
+        guard let converter = model.converter, let voice = model.voice(for: current) else { return }
         for chapter in incomplete {
             converter.convert(book: current, chapter: chapter, voice: voice, options: model.options)
         }
@@ -200,7 +311,7 @@ struct BookDetailView: View {
     /// second they stopped. Falls back to the first chapter of a book nobody
     /// has opened yet.
     private func resume() {
-        guard let narrator = model.narrator, let voice = model.voice(for: book) else { return }
+        guard let narrator = model.narrator, let voice = model.voice(for: current) else { return }
         let target = model.resumeTarget(for: current)
             ?? current.chapters.first.map { ($0, 0.0) }
         guard let (chapter, position) = target else { return }
@@ -237,6 +348,12 @@ private struct ChapterRow: View {
     }
     /// Where the listener got to, when they got somewhere and are not done.
     private var listened: Double? { model.position(in: chapter) }
+    /// Pressing play or convert on this row would have to synthesize, which
+    /// the engine will refuse for a language it cannot read. Audio already on
+    /// disk still plays — refusing that too would punish a language change.
+    private var cannotRender: Bool {
+        !model.canSpeak(book) && !chapter.isComplete
+    }
 
     var body: some View {
         HStack(spacing: Palette.Space.md) {
@@ -271,7 +388,7 @@ private struct ChapterRow: View {
             .disabled(narrator == nil)
 
             ChapterActionButton(state: actionState, action: toggleRender)
-                .disabled(model.converter == nil)
+                .disabled(model.converter == nil || cannotRender)
         }
         .padding(.horizontal, Palette.Space.lg)
         .padding(.vertical, Palette.Space.md)
@@ -312,7 +429,7 @@ private struct ChapterRow: View {
                 )
         }
         .buttonStyle(.plain)
-        .disabled(narrator == nil)
+        .disabled(narrator == nil || (cannotRender && !isCurrent))
         .help(isCurrent
             ? (narrator?.state == .speaking ? "Pause" : "Resume")
             : "Play this chapter")

@@ -13,6 +13,9 @@ struct PlayerView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var dragging: Double?
+    /// True while a drag is pressed against the rendered edge, so the bump
+    /// fires once per collision rather than continuously.
+    @State private var atRenderedEdge = false
     /// Swap the cover for the chapter's text.
     @State private var readingAlong = false
     /// The chunk texts and their times. Loaded when read-along is opened and
@@ -116,15 +119,39 @@ struct PlayerView: View {
                             let fraction = min(1, max(0, value.location.x / geometry.size.width))
                             // Clamped to what exists: dragging past the rendered
                             // edge should stop there rather than seek nowhere.
-                            dragging = min(fraction * total, narrator.renderedSeconds)
+                            let wanted = fraction * total
+                            dragging = min(wanted, narrator.renderedSeconds)
+                            // A finger against the cliff gets a bump — the
+                            // footnote explains it, this is what makes it felt.
+                            let hitEdge = wanted > narrator.renderedSeconds
+                                && !narrator.isFullyRendered
+                            if hitEdge, !atRenderedEdge {
+                                UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                            }
+                            atRenderedEdge = hitEdge
                         }
                         .onEnded { _ in
                             if let target = dragging { narrator.seek(to: target) }
                             dragging = nil
+                            atRenderedEdge = false
                         }
                 )
             }
             .frame(height: 6)
+            // The drag above is invisible to VoiceOver; this is the same
+            // control as an adjustable element.
+            .accessibilityElement()
+            .accessibilityLabel("Playback position")
+            .accessibilityValue(
+                "\(Format.duration(shown)) of \(Format.duration(narrator.estimatedDuration))"
+            )
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: narrator.skip(by: SkipIntervals.forward)
+                case .decrement: narrator.skip(by: -SkipIntervals.backward)
+                @unknown default: break
+                }
+            }
 
             HStack {
                 Text(Format.duration(shown))
@@ -168,11 +195,13 @@ struct PlayerView: View {
                 Image(systemName: "backward.end.fill")
             }
             .disabled(!narrator.hasPreviousChapter)
+            .accessibilityLabel("Previous chapter")
 
             Spacer()
-            Button { narrator.skip(by: -15) } label: {
-                Image(systemName: "gobackward.15")
+            Button { narrator.skip(by: -SkipIntervals.backward) } label: {
+                Image(systemName: SkipIntervals.symbol(back: SkipIntervals.backward))
             }
+            .accessibilityLabel("Back \(Int(SkipIntervals.backward)) seconds")
 
             Spacer()
             Button {
@@ -185,17 +214,20 @@ struct PlayerView: View {
                     .background(theme.colors.primary, in: .circle)
             }
             .disabled(narrator.state == .preparing)
+            .accessibilityLabel(narrator.state == .speaking ? "Pause" : "Play")
 
             Spacer()
-            Button { narrator.skip(by: 30) } label: {
-                Image(systemName: "goforward.30")
+            Button { narrator.skip(by: SkipIntervals.forward) } label: {
+                Image(systemName: SkipIntervals.symbol(forward: SkipIntervals.forward))
             }
+            .accessibilityLabel("Forward \(Int(SkipIntervals.forward)) seconds")
 
             Spacer()
             Button { narrator.changeChapter(by: 1) } label: {
                 Image(systemName: "forward.end.fill")
             }
             .disabled(!narrator.hasNextChapter)
+            .accessibilityLabel("Next chapter")
         }
         .font(.title3)
         .foregroundStyle(theme.colors.foreground)
@@ -203,9 +235,7 @@ struct PlayerView: View {
         .padding(.top, Palette.Space.sm)
     }
 
-    /// Speed, and a way out. There is no sleep timer yet — the Expo app has one,
-    /// and it belongs here too, but it needs playback to end cleanly on a timer
-    /// rather than just stopping.
+    /// Speed, the sleep timer, and a way out.
     private func extras(_ narrator: Narrator) -> some View {
         HStack {
             Menu {
@@ -233,6 +263,7 @@ struct PlayerView: View {
             }
 
             sleepMenu
+            chapterMenu(narrator)
 
             Button {
                 readingAlong.toggle()
@@ -260,6 +291,36 @@ struct PlayerView: View {
             .foregroundStyle(theme.colors.destructive)
         }
         .padding(.top, Palette.Space.sm)
+    }
+
+    /// Every chapter of the book being read, so moving around it does not
+    /// mean leaving the player. Jumping to an unrendered chapter starts
+    /// rendering it, exactly as playing it from the book screen would.
+    private func chapterMenu(_ narrator: Narrator) -> some View {
+        Menu {
+            if let book = narrator.book {
+                ForEach(Array(book.chapters.enumerated()), id: \.element.id) { index, chapter in
+                    Button {
+                        narrator.jumpToChapter(at: index)
+                    } label: {
+                        if chapter.id == narrator.chapter?.id {
+                            Label("\(index + 1). \(chapter.title)", systemImage: "checkmark")
+                        } else {
+                            Text("\(index + 1). \(chapter.title)")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "list.bullet")
+                .font(.huiverLabel)
+                .foregroundStyle(theme.colors.foreground)
+                .padding(.horizontal, Palette.Space.md)
+                .padding(.vertical, Palette.Space.xs)
+                .background(theme.colors.muted, in: .capsule)
+        }
+        .padding(.leading, Palette.Space.sm)
+        .accessibilityLabel("Jump to a chapter")
     }
 
     /// Stop reading after a while. In the app only: there is no lock-screen

@@ -14,6 +14,9 @@ struct PlayerView: View {
     @Environment(\.theme) private var theme
 
     @State private var dragging: Double?
+    /// The read-along pane can be put away — sometimes a window is for the
+    /// cover and the controls, not a page of text.
+    @AppStorage("showReadAlong") private var showReadAlong = true
     /// The chunk texts and their times. Loaded when the chapter changes and as
     /// synthesis extends it — reading the WAV headers for a whole chapter is
     /// not something to do four times a second.
@@ -30,6 +33,18 @@ struct PlayerView: View {
             }
         }
         .navigationTitle("Now Playing")
+        // Space is what a Mac means by play/pause. Scoped to this pane rather
+        // than bound globally in the menu, where a bare-space key equivalent
+        // would swallow the space bar in every text field in the app.
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.space) {
+            guard let narrator = model.narrator, narrator.chapterId != nil else {
+                return .ignored
+            }
+            narrator.toggle()
+            return .handled
+        }
     }
 
     private var empty: some View {
@@ -55,15 +70,17 @@ struct PlayerView: View {
                 .padding(Palette.Space.xl)
                 .frame(maxHeight: .infinity)
 
-            Divider().overlay(theme.colors.border)
+            if showReadAlong {
+                Divider().overlay(theme.colors.border)
 
-            ReadAlongView(
-                map: chunkMap,
-                currentIndex: chunkMap.index(at: dragging ?? narrator.position),
-                renderedChunks: narrator.renderedChunks,
-                seek: { narrator.seek(to: $0) }
-            )
-            .frame(maxWidth: .infinity)
+                ReadAlongView(
+                    map: chunkMap,
+                    currentIndex: chunkMap.index(at: dragging ?? narrator.position),
+                    renderedChunks: narrator.renderedChunks,
+                    seek: { narrator.seek(to: $0) }
+                )
+                .frame(maxWidth: .infinity)
+            }
         }
         // The map is rebuilt when the chapter changes, and again as synthesis
         // extends it — a chunk with no file yet has no duration, so every
@@ -147,6 +164,20 @@ struct PlayerView: View {
                 )
             }
             .frame(height: 6)
+            // The drag above is invisible to VoiceOver; this is the same
+            // control as an adjustable element.
+            .accessibilityElement()
+            .accessibilityLabel("Playback position")
+            .accessibilityValue(
+                "\(Format.duration(shown)) of \(Format.duration(narrator.estimatedDuration))"
+            )
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: narrator.skip(by: SkipIntervals.forward)
+                case .decrement: narrator.skip(by: -SkipIntervals.backward)
+                @unknown default: break
+                }
+            }
 
             HStack {
                 Text(Format.duration(shown))
@@ -163,6 +194,14 @@ struct PlayerView: View {
                     .foregroundStyle(theme.colors.mutedForeground)
                     .multilineTextAlignment(.center)
                     .padding(.top, Palette.Space.xs)
+                // A stopped render should have a handle on it, not just an
+                // explanation. Reactivating the app retries too; this is for
+                // the window that never left the front.
+                if narrator.renderFailure != nil, !narrator.isReloadingModels {
+                    Button("Try again") { narrator.resumeRendering() }
+                        .buttonStyle(.link)
+                        .font(.huiverCaption)
+                }
             }
         }
     }
@@ -191,10 +230,10 @@ struct PlayerView: View {
             .help("Previous chapter")
 
             Spacer()
-            Button { narrator.skip(by: -15) } label: {
-                Image(systemName: "gobackward.15")
+            Button { narrator.skip(by: -SkipIntervals.backward) } label: {
+                Image(systemName: SkipIntervals.symbol(back: SkipIntervals.backward))
             }
-            .help("Back 15 seconds")
+            .help("Back \(Int(SkipIntervals.backward)) seconds")
 
             Spacer()
             Button {
@@ -207,12 +246,13 @@ struct PlayerView: View {
                     .background(theme.colors.primary, in: .circle)
             }
             .disabled(narrator.state == .preparing)
+            .accessibilityLabel(narrator.state == .speaking ? "Pause" : "Play")
 
             Spacer()
-            Button { narrator.skip(by: 30) } label: {
-                Image(systemName: "goforward.30")
+            Button { narrator.skip(by: SkipIntervals.forward) } label: {
+                Image(systemName: SkipIntervals.symbol(forward: SkipIntervals.forward))
             }
-            .help("Forward 30 seconds")
+            .help("Forward \(Int(SkipIntervals.forward)) seconds")
 
             Spacer()
             Button { narrator.changeChapter(by: 1) } label: {
@@ -258,6 +298,23 @@ struct PlayerView: View {
             .fixedSize()
 
             sleepMenu
+            chapterMenu(narrator)
+
+            Button {
+                showReadAlong.toggle()
+            } label: {
+                Image(systemName: showReadAlong ? "text.quote" : "text.alignleft")
+                    .font(.huiverLabel)
+                    .foregroundStyle(
+                        showReadAlong ? theme.colors.primary : theme.colors.foreground
+                    )
+                    .padding(.horizontal, Palette.Space.md)
+                    .padding(.vertical, Palette.Space.xs)
+                    .background(theme.colors.muted, in: .capsule)
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, Palette.Space.sm)
+            .help(showReadAlong ? "Hide the text" : "Read along")
 
             Spacer()
 
@@ -271,6 +328,39 @@ struct PlayerView: View {
             .foregroundStyle(theme.colors.destructive)
         }
         .padding(.top, Palette.Space.sm)
+    }
+
+    /// Every chapter of the book being read, so moving around it does not
+    /// mean leaving the player. Jumping to an unrendered chapter starts
+    /// rendering it, exactly as playing it from the book screen would.
+    private func chapterMenu(_ narrator: Narrator) -> some View {
+        Menu {
+            if let book = narrator.book {
+                ForEach(Array(book.chapters.enumerated()), id: \.element.id) { index, chapter in
+                    Button {
+                        narrator.jumpToChapter(at: index)
+                    } label: {
+                        if chapter.id == narrator.chapter?.id {
+                            Label("\(index + 1). \(chapter.title)", systemImage: "checkmark")
+                        } else {
+                            Text("\(index + 1). \(chapter.title)")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "list.bullet")
+                .font(.huiverLabel)
+                .foregroundStyle(theme.colors.foreground)
+                .padding(.horizontal, Palette.Space.md)
+                .padding(.vertical, Palette.Space.xs)
+                .background(theme.colors.muted, in: .capsule)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .padding(.leading, Palette.Space.sm)
+        .help("Jump to a chapter")
     }
 
     /// Stop reading after a while — the timer itself lives on the AppModel so

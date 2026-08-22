@@ -56,11 +56,12 @@ development is expected.
 
 ### Size
 
-The models are about 700 MB at float16, which is what the export produces by
-default. `--quantize int8` roughly halves that:
+The export quantises weights to int8 by default, which is what ships — about
+410 MB of compiled models. `--quantize none` keeps float16 at roughly twice
+the size:
 
 ```bash
-bun run ios:export -- --quantize int8
+bun run ios:export -- --quantize none
 ```
 
 Nothing generated is committed: `Models/`, `Voices/`, `build/` and
@@ -114,9 +115,9 @@ encoding slice, the mel arithmetic. A graph traced at one length is quietly
 wrong at another, and "quietly" is the problem.
 
 So a short chunk is padded out with `S3GEN_SIL`, the model's own silence token,
-and the surplus audio is trimmed by sample count. The chunker's 260-character
-default is sized to fit in one pass; a chunk that overruns is decoded in a
-second window.
+and the surplus audio is trimmed by sample count. The chunker targets 350
+characters with a 500-character ceiling, sized to fit in one pass; a chunk that
+overruns is decoded in a second window with run-up context.
 
 Change it with `--gen-tokens`. The Swift side reads the value back out of the
 model's metadata, so nothing else needs touching.

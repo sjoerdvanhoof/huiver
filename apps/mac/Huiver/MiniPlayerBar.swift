@@ -52,8 +52,8 @@ struct MiniPlayerBar: View {
 
                     Spacer(minLength: 0)
 
-                    Button { narrator.skip(by: -15) } label: {
-                        Image(systemName: "gobackward.15")
+                    Button { narrator.skip(by: -SkipIntervals.backward) } label: {
+                        Image(systemName: SkipIntervals.symbol(back: SkipIntervals.backward))
                             .foregroundStyle(theme.colors.foreground)
                     }
                     .buttonStyle(.plain)
@@ -70,8 +70,8 @@ struct MiniPlayerBar: View {
                     .buttonStyle(.plain)
                     .disabled(narrator.state == .preparing)
 
-                    Button { narrator.skip(by: 30) } label: {
-                        Image(systemName: "goforward.30")
+                    Button { narrator.skip(by: SkipIntervals.forward) } label: {
+                        Image(systemName: SkipIntervals.symbol(forward: SkipIntervals.forward))
                             .foregroundStyle(theme.colors.foreground)
                     }
                     .buttonStyle(.plain)
@@ -118,6 +118,21 @@ struct MiniPlayerBar: View {
             )
         }
         .frame(height: 3)
+        // The drag above is invisible to VoiceOver; this is the same control
+        // as an adjustable element.
+        .accessibilityElement()
+        .accessibilityLabel("Playback position")
+        .accessibilityValue(
+            "\(Format.duration(dragging ?? narrator.position)) of "
+                + "\(Format.duration(narrator.estimatedDuration))"
+        )
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: narrator.skip(by: SkipIntervals.forward)
+            case .decrement: narrator.skip(by: -SkipIntervals.backward)
+            @unknown default: break
+            }
+        }
     }
 
     /// Speed. The model has no speed control of its own, so this is the player

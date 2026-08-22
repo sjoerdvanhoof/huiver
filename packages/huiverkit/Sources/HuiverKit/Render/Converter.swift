@@ -201,6 +201,11 @@ public final class Converter {
             await predecessor?.value
             guard let self, self.generation == mine else { return }
             self.stopping.isSet = false
+            // The machine must not doze off between chunks — on the Mac this
+            // is what "leave it converting" means. Balanced however the pass
+            // ends.
+            PowerAssertion.begin()
+            defer { PowerAssertion.end() }
             await self.run()
             if self.generation == mine {
                 self.work = nil

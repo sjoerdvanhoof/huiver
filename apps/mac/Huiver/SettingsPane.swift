@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Sampling, storage and where the models landed — the parts of the iOS
@@ -6,6 +7,11 @@ import SwiftUI
 struct SettingsPane: View {
     @Environment(AppModel.self) private var model
     @Environment(\.theme) private var theme
+
+    /// Local mirrors of the UserDefaults-backed skip sizes: pickers need a
+    /// value that view updates can observe.
+    @State private var skipBack = SkipIntervals.backward
+    @State private var skipForward = SkipIntervals.forward
 
     var body: some View {
         @Bindable var model = model
@@ -52,6 +58,25 @@ struct SettingsPane: View {
             }
 
             Section {
+                Picker("Skip back", selection: $skipBack) {
+                    ForEach(SkipIntervals.backwardChoices, id: \.self) {
+                        Text("\(Int($0)) seconds").tag($0)
+                    }
+                }
+                Picker("Skip forward", selection: $skipForward) {
+                    ForEach(SkipIntervals.forwardChoices, id: \.self) {
+                        Text("\(Int($0)) seconds").tag($0)
+                    }
+                }
+            } header: {
+                Text("Playback")
+            } footer: {
+                Text("The transport buttons everywhere — player, mini player, menu bar. Control Centre picks the new sizes up at the next launch.")
+            }
+            .onChange(of: skipBack) { _, new in SkipIntervals.backward = new }
+            .onChange(of: skipForward) { _, new in SkipIntervals.forward = new }
+
+            Section {
                 LabeledContent("Books", value: "\(model.books.count)")
                 LabeledContent("Audio on disk", value: size(model.bytesOnDisk))
                 Toggle("Clean up finished chapters", isOn: cleanupBinding)
@@ -73,6 +98,21 @@ struct SettingsPane: View {
                 }
             }
 
+            Section {
+                Button("Copy diagnostics") {
+                    let url = URL.documentsDirectory.appendingPathComponent("playback.log")
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(
+                        (try? String(contentsOf: url, encoding: .utf8)) ?? "The log is empty.",
+                        forType: .string
+                    )
+                }
+            } header: {
+                Text("Diagnostics")
+            } footer: {
+                Text("The playback log — what the player, the media keys and sync were doing, with timestamps. Paste it into a message when something misbehaves; it contains no book text.")
+            }
+
             if let failure = model.loadFailure {
                 Section("Engine") {
                     Text(failure).font(.caption).foregroundStyle(.red)
@@ -81,7 +121,12 @@ struct SettingsPane: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Settings")
-        .task { await model.refresh() }
+        .task {
+            await model.refresh()
+            // The full audio-tree walk, done when this pane asks for it
+            // rather than on the converter's every chunk.
+            await model.refreshStorage()
+        }
     }
 
     /// `autoCleanup` lives in UserDefaults rather than in observable state, so

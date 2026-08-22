@@ -104,7 +104,7 @@ struct MTLMLXParityTests {
         let cfgWeight: Float = 0.5
 
         // Seed both caches from the same prefill tensors.
-        mlx.seed(keys: keys, values: values, length: prefixLength)
+        try mlx.seed(keys: keys, values: values, length: prefixLength)
         let state = decode.makeState()
         seed(state: state, keys: keys, values: values, length: prefixLength, context: mlx.config.maxContext)
 

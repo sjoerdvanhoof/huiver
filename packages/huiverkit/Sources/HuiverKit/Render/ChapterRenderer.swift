@@ -25,6 +25,16 @@ public actor ChapterRenderer {
         self.library = library
     }
 
+    /// Silence appended after a chunk: a quarter-second between sentences, the
+    /// same gap the desktop worker inserted, so they do not run into each
+    /// other. A chunk that ends mid-sentence — one long enough that the
+    /// chunker had to break inside it — gets a breath instead: a
+    /// quarter-second hole in the middle of a sentence is exactly the artifact
+    /// the chunker exists to avoid.
+    static func pauseSamples(endsMidSentence: Bool) -> Int {
+        endsMidSentence ? WavFile.sampleRate * 6 / 100 : WavFile.sampleRate / 4
+    }
+
     /// Chunks already on disk, in order, stopping at the first gap.
     public nonisolated func rendered(book: String, chapter: String, of count: Int) -> [URL] {
         var found: [URL] = []
@@ -76,12 +86,89 @@ public actor ChapterRenderer {
                     // for every chapter rendered before a chunker change.
                     ChunkManifest(voice: voice.id, texts: chunks.map(\.text)).write(to: directory)
 
-                    for (index, chunk) in chunks.enumerated() {
-                        if cancelled() { break }
-                        let url = library.chunkURL(book: book.id, chapter: chapter.id, index: index)
+                    // The mel decode runs off the engine actor, so chunk N's
+                    // audio is decoded *while* chunk N+1's token loop holds
+                    // the actor — the two halves of a chunk's cost used to run
+                    // in series, and this is what stops that. One decode in
+                    // flight at a time; its tokens are always complete, so
+                    // whatever it produces is a whole chunk worth keeping.
+                    let stack = await engine.s3Stack()
+                    var inFlight: (
+                        index: Int, url: URL, endsMidSentence: Bool,
+                        decode: Task<[Float], Error>
+                    )?
+                    // What synthesis actually costs on this device, measured
+                    // chunk over chunk and blended into `RenderPace` — the
+                    // number every "how long will this take" answer rests on.
+                    var lastFinish = ContinuousClock.now
 
-                        if !FileManager.default.fileExists(atPath: url.path) {
-                            let samples = try await engine.speak(
+                    // Write the decoded chunk, report it, and note the
+                    // progress on the chapter — everything the serial loop did
+                    // after `speak` returned.
+                    func finish(
+                        _ work: (
+                            index: Int, url: URL, endsMidSentence: Bool,
+                            decode: Task<[Float], Error>
+                        )
+                    ) async throws {
+                        let samples = try await work.decode.value
+                        let pause = Self.pauseSamples(endsMidSentence: work.endsMidSentence)
+                        let padded = samples + [Float](repeating: 0, count: pause)
+                        try WavFile.data(from: padded).write(to: work.url, options: .atomic)
+                        let now = ContinuousClock.now
+                        let spent = lastFinish.duration(to: now)
+                        lastFinish = now
+                        RenderPace.record(
+                            spent: Double(spent.components.seconds)
+                                + Double(spent.components.attoseconds) / 1e18,
+                            audioSeconds: Double(samples.count) / Double(WavFile.sampleRate)
+                        )
+                        continuation.yield(
+                            Progress(
+                                chunkIndex: work.index,
+                                chunkCount: chunks.count,
+                                url: work.url,
+                                seconds: WavFile.duration(ofFileAt: work.url) ?? 0
+                            )
+                        )
+                        var updated = chapter
+                        updated.chunkCount = chunks.count
+                        updated.renderedChunks = work.index + 1
+                        updated.renderedVoice = voice.id
+                        try? await library.update(chapter: updated, in: book.id)
+                    }
+
+                    do {
+                        for (index, chunk) in chunks.enumerated() {
+                            if cancelled() { break }
+                            let url = library.chunkURL(
+                                book: book.id, chapter: chapter.id, index: index
+                            )
+
+                            if FileManager.default.fileExists(atPath: url.path) {
+                                // Already on disk. The decode in flight is the
+                                // chunk before this one, so it reports first.
+                                if let work = inFlight {
+                                    inFlight = nil
+                                    try await finish(work)
+                                }
+                                continuation.yield(
+                                    Progress(
+                                        chunkIndex: index,
+                                        chunkCount: chunks.count,
+                                        url: url,
+                                        seconds: WavFile.duration(ofFileAt: url) ?? 0
+                                    )
+                                )
+                                var updated = chapter
+                                updated.chunkCount = chunks.count
+                                updated.renderedChunks = index + 1
+                                updated.renderedVoice = voice.id
+                                try? await library.update(chapter: updated, in: book.id)
+                                continue
+                            }
+
+                            let tokens = try await engine.speakTokens(
                                 chunk.text,
                                 voice: voice,
                                 options: options,
@@ -96,31 +183,30 @@ public actor ChapterRenderer {
                                 cancelled: cancelled
                             )
                             if cancelled() { break }
-                            // A quarter-second of silence between chunks, the
-                            // same gap the desktop worker inserts, so sentences
-                            // do not run into each other.
-                            let padded = samples + [Float](
-                                repeating: 0, count: WavFile.sampleRate / 4
-                            )
-                            try WavFile.data(from: padded).write(to: url, options: .atomic)
+                            // Not handed `cancelled`: the tokens are complete,
+                            // so letting the decode finish yields a whole
+                            // chunk on disk — a truncated one would be frozen
+                            // forever by the resume check above.
+                            let decode = Task.detached {
+                                try stack.render(tokens, voice: voice)
+                            }
+                            if let work = inFlight {
+                                inFlight = nil
+                                try await finish(work)
+                            }
+                            inFlight = (index, url, chunk.endsMidSentence, decode)
                         }
-
-                        continuation.yield(
-                            Progress(
-                                chunkIndex: index,
-                                chunkCount: chunks.count,
-                                url: url,
-                                seconds: WavFile.duration(ofFileAt: url) ?? 0
-                            )
-                        )
-
-                        var updated = chapter
-                        updated.chunkCount = chunks.count
-                        updated.renderedChunks = index + 1
-                        updated.renderedVoice = voice.id
-                        try? await library.update(chapter: updated, in: book.id)
+                        if let work = inFlight {
+                            inFlight = nil
+                            try await finish(work)
+                        }
+                        continuation.finish()
+                    } catch {
+                        // The chunk already decoded is progress worth keeping
+                        // even when the one after it failed.
+                        if let work = inFlight { try? await finish(work) }
+                        continuation.finish(throwing: error)
                     }
-                    continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
                 }

@@ -92,6 +92,18 @@ public actor LibrarySyncDataSource: SyncDataSource {
         await requests?.record(jobStatus)
     }
 
+    /// The names the peer gave its voices, kept for the deliveries: a voice
+    /// crosses as an id and a blob, and the manifest is the only place its
+    /// name ever travels.
+    private var peerVoiceNames: [String: String] = [:]
+
+    public func receive(peerManifest: SyncMessage.Manifest) async {
+        peerVoiceNames = Dictionary(
+            peerManifest.voices.map { ($0.id, $0.name) },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
     private func voiceManifests() -> [VoiceManifest] {
         guard let directory = voiceDirectory,
               let voices = try? VoicePack.load(from: directory)
@@ -178,12 +190,36 @@ public actor LibrarySyncDataSource: SyncDataSource {
                 at: directory, withIntermediateDirectories: true
             )
             try data.write(to: directory.appendingPathComponent("\(id).voice"), options: .atomic)
+            // Into the manifest as well as onto disk: a blob the manifest does
+            // not mention can never be loaded, and is asked for again by every
+            // session that follows.
+            try VoicePack.register(
+                id: id,
+                name: peerVoiceNames[id] ?? id,
+                detail: "synced from another device",
+                in: directory
+            )
 
         case .voicePreview(let id):
             guard let directory = voiceDirectory else { return }
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true
+            )
             try data.write(
                 to: directory.appendingPathComponent("\(id).preview.wav"), options: .atomic
             )
+            // The preview may land before or after its voice; re-registering
+            // once the voice file exists picks it up either way.
+            if FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent("\(id).voice").path
+            ) {
+                try VoicePack.register(
+                    id: id,
+                    name: peerVoiceNames[id] ?? id,
+                    detail: "synced from another device",
+                    in: directory
+                )
+            }
         }
     }
 

@@ -228,6 +228,21 @@ public actor ChatterboxEngine {
     /// per chunk (~62 MB a time). Belongs to exactly one `MLModel`, so it is
     /// dropped when `reload` replaces `decode`.
     private var decodeState: MLState?
+    /// The conditioning encoder's output for the last (voice, expression)
+    /// pair. Chapter-constant inputs, so the whole book pays one prediction
+    /// per voice. Keyed by tensor content, not just the voice id — deleting
+    /// and re-recording a voice can reuse an id with different tensors.
+    private var condCache: (key: String, cond: MLMultiArray)?
+
+    /// The memo key for `condCache`.
+    private static func condKey(voice: Voice, exaggeration: Float) -> String {
+        var hasher = Hasher()
+        hasher.combine(voice.id)
+        for value in voice.speakerEmbedding { hasher.combine(value.bitPattern) }
+        for token in voice.condPromptTokens { hasher.combine(token) }
+        hasher.combine(exaggeration.bitPattern)
+        return String(hasher.finalize())
+    }
     private let tokenizer: Tokenizing
     /// Where the models came from, kept so they can be loaded again.
     private let source: Models
@@ -439,6 +454,8 @@ public actor ChatterboxEngine {
         if cond != nil {
             (cond, label) = try await Self.load(name(source.cond), source.cond, using: ladder(source.cond))
             placement[name(source.cond)] = label
+            // The memo belongs to the instance just replaced.
+            condCache = nil
         }
         (flow, label) = try await Self.load(name(source.flow), source.flow, using: ladder(source.flow))
         placement[name(source.flow)] = label
@@ -742,8 +759,30 @@ public actor ChatterboxEngine {
         endsMidSentence: Bool = false,
         cancelled: @Sendable () -> Bool = { false }
     ) throws -> [Float] {
+        let tokens = try speakTokens(
+            text, voice: voice, options: options, language: language,
+            beginsMidSentence: beginsMidSentence, endsMidSentence: endsMidSentence,
+            cancelled: cancelled
+        )
+        return try s3Stack().render(tokens, voice: voice, cancelled: cancelled)
+    }
+
+    /// The token half of `speak`: everything up to and including the T3 loop,
+    /// which is the part that must hold the actor. The audio half is a pure
+    /// function of these tokens — `s3Stack().render` — and runs off the actor,
+    /// which is what lets a caller overlap chunk N's mel decode with chunk
+    /// N+1's token loop instead of paying the two in series.
+    public func speakTokens(
+        _ text: String,
+        voice: Voice,
+        options: SamplingOptions = SamplingOptions(),
+        language: Language = .english,
+        beginsMidSentence: Bool = false,
+        endsMidSentence: Bool = false,
+        cancelled: @Sendable () -> Bool = { false }
+    ) throws -> SpokenTokens {
         try validate(voice)
-        var audio: [Float] = []
+        var runs: [[Int32]] = []
         let pieces = splitToFit(text, language: language)
         for (index, piece) in pieces.enumerated() {
             if cancelled() { break }
@@ -758,9 +797,39 @@ public actor ChatterboxEngine {
                 cancelled: cancelled
             )
             if tokens.isEmpty { continue }
-            audio += try decodeToAudio(tokens: tokens, voice: voice)
+            runs.append(tokens)
         }
-        return audio
+        return SpokenTokens(runs: runs)
+    }
+
+    /// A snapshot of the mel decoder and vocoder for off-actor rendering.
+    ///
+    /// The models are the instances loaded now; a `reload` replaces the
+    /// actor's own references, and a stack in flight simply keeps the old
+    /// instances alive until it finishes — the same lifetime rule the reload
+    /// already lives by.
+    public func s3Stack() -> S3Stack {
+        S3Stack(
+            flow: flow,
+            vocoder: vocoder,
+            windows: s3Windows.map { ($0.flow, $0.vocoder, $0.genTokens) },
+            genTokens: genTokens,
+            promptTokenLength: promptTokenLength,
+            promptFeatureLength: promptFeatureLength,
+            melDimension: melDimension,
+            tokenMelRatio: tokenMelRatio,
+            hop: hop,
+            silenceToken: silenceToken,
+            sampleRate: sampleRate
+        )
+    }
+
+    /// Whether this voice's tensors fit the loaded models. Sync can hand a
+    /// Nano phone a voice cloned for the multilingual Mac; offering it as a
+    /// narrator would fail on the first chunk, so the roster filters through
+    /// this instead.
+    public func canRead(_ voice: Voice) -> Bool {
+        (try? validate(voice)) != nil
     }
 
     /// A voice whose tensors do not match the loaded models must fail here,
@@ -780,11 +849,17 @@ public actor ChatterboxEngine {
     }
 
     /// The chunker budgets in characters against an English ~4 chars/token;
-    /// text that tokenizes worse — degenerate ASCII, non-Latin scripts — can
-    /// blow the prefill ceiling anyway. Rather than failing the chunk (which
-    /// used to abort the whole chapter), split it at a word boundary near the
-    /// middle and speak the pieces one after another. Rare enough that the
-    /// prosody reset at the join is acceptable; dropped words would not be.
+    /// text that tokenizes worse — the grapheme tokenizer's ~0.75 tokens per
+    /// character, degenerate ASCII, non-Latin scripts — can blow the prefill
+    /// ceiling anyway. Rather than failing the chunk (which used to abort the
+    /// whole chapter), split it and speak the pieces one after another.
+    ///
+    /// The split lands at the friendliest boundary available: the sentence
+    /// break nearest the middle, then a clause break, then the midpoint word.
+    /// The seam resets prosody wherever it falls, and a reader pausing between
+    /// sentences is unremarkable where one stopping mid-word is not. The chunk
+    /// boundaries on disk are untouched — this split lives entirely inside one
+    /// chunk's render, so audio stays interchangeable between devices.
     private func splitToFit(_ text: String, language: Language) -> [String] {
         // Measured with `PuncNorm`'s default shape; the real call may add a
         // token or two (a trailing stop, a capitalisation), so a small margin
@@ -792,13 +867,36 @@ public actor ChatterboxEngine {
         let brackets = textBrackets == nil ? 0 : 2
         let measured = tokenizer.encode(PuncNorm.apply(text), language: language).count + brackets
         guard measured > maxTextTokens - 4 else { return [text] }
-        let words = text.split(whereSeparator: \.isWhitespace)
-        // A single unbreakable over-long word is left for `generateSpeechTokens`
-        // to refuse; there is nothing sayable to salvage from it.
-        guard words.count > 1 else { return [text] }
-        let head = words[..<(words.count / 2)].joined(separator: " ")
-        let tail = words[(words.count / 2)...].joined(separator: " ")
+        guard let (head, tail) = Self.splitNearMiddle(text) else { return [text] }
         return splitToFit(head, language: language) + splitToFit(tail, language: language)
+    }
+
+    /// Cut `text` in two near its middle, preferring sentence boundaries,
+    /// then clause punctuation, then whitespace. Nil only for a single
+    /// unbreakable over-long word, which `generateSpeechTokens` refuses —
+    /// there is nothing sayable to salvage from it.
+    static func splitNearMiddle(_ text: String) -> (head: String, tail: String)? {
+        for pieces in [
+            Chunker.sentences(in: text),
+            Chunker.clauses(in: text),
+            text.split(whereSeparator: \.isWhitespace).map(String.init),
+        ] where pieces.count > 1 {
+            // The cut point whose left half comes closest to half the text.
+            let total = pieces.reduce(0) { $0 + $1.count }
+            var running = 0
+            var best: (index: Int, distance: Int)?
+            for (index, piece) in pieces.enumerated().dropLast() {
+                running += piece.count
+                let distance = abs(total / 2 - running)
+                if best == nil || distance < best!.distance { best = (index, distance) }
+            }
+            guard let best else { continue }
+            return (
+                pieces[...best.index].joined(separator: " "),
+                pieces[(best.index + 1)...].joined(separator: " ")
+            )
+        }
+        return nil
     }
 
     // MARK: - T3, the token loop
@@ -845,23 +943,32 @@ public actor ChatterboxEngine {
         #if canImport(MLX)
         if let mlxDecode, let cond {
             // The conditioning encoder is the one Core ML prediction left on
-            // this path — fixed shapes, once per chunk. Everything after it,
-            // prompt to tokens, happens on MLX.
-            let condOut = try cond.prediction(
-                from: try MLDictionaryFeatureProvider(dictionary: [
-                    "speaker_emb": try array(
-                        voice.speakerEmbedding, shape: [1, voice.speakerEmbedding.count]
-                    ),
-                    "prompt_tokens": try array(
-                        voice.condPromptTokens, shape: [1, voice.condPromptTokens.count]
-                    ),
-                    "emotion": try array([options.exaggeration], shape: [1, 1]),
-                ])
-            )
-            guard let conditioning = condOut.featureValue(for: "cond")?.multiArrayValue else {
-                throw EngineError.badOutput("cond")
+            // this path — fixed shapes. Its inputs are chapter-constant (the
+            // voice and the expression slider), so the output is memoised and
+            // a whole book pays for it once per voice, not once per chunk.
+            let condKey = Self.condKey(voice: voice, exaggeration: options.exaggeration)
+            let conditioning: MLMultiArray
+            if let cached = condCache, cached.key == condKey {
+                conditioning = cached.cond
+            } else {
+                let condOut = try cond.prediction(
+                    from: try MLDictionaryFeatureProvider(dictionary: [
+                        "speaker_emb": try mlArray(
+                            voice.speakerEmbedding, shape: [1, voice.speakerEmbedding.count]
+                        ),
+                        "prompt_tokens": try mlArray(
+                            voice.condPromptTokens, shape: [1, voice.condPromptTokens.count]
+                        ),
+                        "emotion": try mlArray([options.exaggeration], shape: [1, 1]),
+                    ])
+                )
+                guard let fresh = condOut.featureValue(for: "cond")?.multiArrayValue else {
+                    throw EngineError.badOutput("cond")
+                }
+                conditioning = fresh
+                condCache = (condKey, conditioning)
             }
-            let prefixRows = mlxDecode.prefill(cond: conditioning, textTokens: textTokens)
+            let prefixRows = try mlxDecode.prefill(cond: conditioning, textTokens: textTokens)
             return try generateTokensMLX(
                 mlxDecode, prefixRows: prefixRows,
                 prefixLength: prefixLength, budget: budget, options: options,
@@ -877,31 +984,31 @@ public actor ChatterboxEngine {
         let prefillInputs: [String: Any] = switch variant {
         case .nano:
             [
-                "speaker_emb": try array(
+                "speaker_emb": try mlArray(
                     voice.speakerEmbedding, shape: [1, voice.speakerEmbedding.count]
                 ),
-                "prompt_tokens": try array(
+                "prompt_tokens": try mlArray(
                     voice.condPromptTokens, shape: [1, voice.condPromptTokens.count]
                 ),
-                "text_tokens": try array(textTokens, shape: [1, textTokens.count]),
-                "text_positions": try array(
+                "text_tokens": try mlArray(textTokens, shape: [1, textTokens.count]),
+                "text_positions": try mlArray(
                     (0..<textTokens.count).map { Int32(condPrefixLength + $0) },
                     shape: [1, textTokens.count]
                 ),
-                "bos_position": try array(
+                "bos_position": try mlArray(
                     [Int32(condPrefixLength + textTokens.count)], shape: [1, 1]
                 ),
             ]
         case .multilingual:
             [
-                "speaker_emb": try array(
+                "speaker_emb": try mlArray(
                     voice.speakerEmbedding, shape: [1, voice.speakerEmbedding.count]
                 ),
-                "prompt_tokens": try array(
+                "prompt_tokens": try mlArray(
                     voice.condPromptTokens, shape: [1, voice.condPromptTokens.count]
                 ),
-                "text_tokens": try array(textTokens, shape: [1, textTokens.count]),
-                "emotion": try array([options.exaggeration], shape: [1, 1]),
+                "text_tokens": try mlArray(textTokens, shape: [1, textTokens.count]),
+                "emotion": try mlArray([options.exaggeration], shape: [1, 1]),
             ]
         }
         let prefixOut = try prefill.prediction(
@@ -1153,47 +1260,10 @@ public actor ChatterboxEngine {
 
     // MARK: - S3Gen, tokens to audio
 
-    /// The mel decoder is exported at one fixed length, so a run of tokens is
-    /// split into windows of that length and each is padded out with the
-    /// model's own silence token. Text chunks are sized to fit in one window;
-    /// the loop is here for the occasional chunk where the model rambles.
+    /// The audio half on the actor, for callers and tests that do not
+    /// pipeline. The real work lives in `S3Stack.decode`.
     func decodeToAudio(tokens: [Int32], voice: Voice) throws -> [Float] {
-        guard !tokens.isEmpty else { return [] }
-        var audio: [Float] = []
-
-        for step in Self.windowPlan(
-            tokenCount: tokens.count, window: genTokens, runUp: Self.runUpTokens,
-            tail: Self.tailTokens
-        ) {
-            let piece = try decodeWindow(Array(tokens[step.start..<step.end]), voice: voice)
-            let from = (step.keepFrom - step.start) * tokenMelRatio * hop
-            let to = min((step.keepUntil - step.start) * tokenMelRatio * hop, piece.count)
-            guard from < to else { continue }
-
-            // The seam is an equal-power crossfade, not a dip: the run-up
-            // means this window also rendered the last few milliseconds the
-            // previous one kept, so the two versions of that same moment are
-            // blended — where ramping each side to zero left a five-
-            // millisecond notch of silence at every window join.
-            let overlap = min(seamRamp, from, audio.count)
-            if overlap > 1 {
-                for i in 0..<overlap {
-                    let t = Float(i) / Float(overlap - 1)
-                    audio[audio.count - overlap + i] =
-                        audio[audio.count - overlap + i] * cosf(.pi / 2 * t)
-                        + piece[from - overlap + i] * sinf(.pi / 2 * t)
-                }
-            }
-            audio += piece[from..<to]
-        }
-
-        fadeIn(&audio)
-        // Every chunk ends at zero, whatever happened. The renderer appends a
-        // quarter-second of silence to each one, and a chunk whose last sample
-        // is not near zero clicks as it meets that silence — which is also what
-        // a chunk cut short by the token budget would do.
-        fadeOut(&audio)
-        return audio
+        try s3Stack().decode(tokens: tokens, voice: voice)
     }
 
     /// Tokens of already-spoken context handed to a window that is not the
@@ -1260,21 +1330,101 @@ public actor ChatterboxEngine {
         return steps
     }
 
+}
+
+// MARK: - The audio half, off the actor
+
+/// One chunk's worth of speech tokens, ready for the mel decoder.
+///
+/// Usually one run; more when `splitToFit` had to break the text. Each run is
+/// rendered separately, with its own fades, exactly as `speak` always did.
+public struct SpokenTokens: Sendable {
+    let runs: [[Int32]]
+    public var isEmpty: Bool { runs.allSatisfy(\.isEmpty) }
+}
+
+/// The mel decoder and vocoder, snapshotted off the engine actor.
+///
+/// This exists for one reason: the token loop and the mel decode are the two
+/// halves of a chunk's cost, and inside the actor they could only ever run in
+/// series. A stack rendered off-actor lets `ChapterRenderer` decode chunk N
+/// while the actor generates chunk N+1's tokens.
+///
+/// `@unchecked Sendable` because it holds `MLModel`s: Apple documents
+/// `prediction` as thread-safe, every other stored property is immutable, and
+/// the mutable Core ML state (the KV cache) belongs to the token loop, which
+/// stays on the actor.
+public struct S3Stack: @unchecked Sendable {
+    let flow: MLModel
+    let vocoder: MLModel
+    let windows: [(flow: MLModel, vocoder: MLModel, genTokens: Int)]
+    let genTokens: Int
+    let promptTokenLength: Int
+    let promptFeatureLength: Int
+    let melDimension: Int
+    let tokenMelRatio: Int
+    let hop: Int
+    let silenceToken: Int32
+    let sampleRate: Int
+
     /// Length of the crossfade that hides a window join: five milliseconds,
     /// long enough to remove a step, short enough that blending two slightly
     /// different renderings of the same moment cannot smear a phoneme.
     private var seamRamp: Int { sampleRate / 200 }
 
-    /// Ramp the last few milliseconds to silence, so the file ends at zero.
-    ///
-    /// Scaled down rather than skipped for a very short chunk — skipping left
-    /// it ending off zero, which clicks against the silence appended after it.
-    private func fadeOut(_ audio: inout [Float]) {
-        let ramp = min(sampleRate / 100, audio.count / 2)
-        guard ramp > 1 else { return }
-        for i in 0..<ramp {
-            audio[audio.count - ramp + i] *= Float(ramp - 1 - i) / Float(ramp - 1)
+    /// Every run of a chunk, rendered and joined.
+    public func render(
+        _ tokens: SpokenTokens, voice: Voice, cancelled: () -> Bool = { false }
+    ) throws -> [Float] {
+        var audio: [Float] = []
+        for run in tokens.runs {
+            if cancelled() { break }
+            audio += try decode(tokens: run, voice: voice)
         }
+        return audio
+    }
+
+    /// The mel decoder is exported at one fixed length, so a run of tokens is
+    /// split into windows of that length and each is padded out with the
+    /// model's own silence token. Text chunks are sized to fit in one window;
+    /// the loop is here for the occasional chunk where the model rambles.
+    func decode(tokens: [Int32], voice: Voice) throws -> [Float] {
+        guard !tokens.isEmpty else { return [] }
+        var audio: [Float] = []
+
+        for step in ChatterboxEngine.windowPlan(
+            tokenCount: tokens.count, window: genTokens,
+            runUp: ChatterboxEngine.runUpTokens, tail: ChatterboxEngine.tailTokens
+        ) {
+            let piece = try decodeWindow(Array(tokens[step.start..<step.end]), voice: voice)
+            let from = (step.keepFrom - step.start) * tokenMelRatio * hop
+            let to = min((step.keepUntil - step.start) * tokenMelRatio * hop, piece.count)
+            guard from < to else { continue }
+
+            // The seam is an equal-power crossfade, not a dip: the run-up
+            // means this window also rendered the last few milliseconds the
+            // previous one kept, so the two versions of that same moment are
+            // blended — where ramping each side to zero left a five-
+            // millisecond notch of silence at every window join.
+            let overlap = min(seamRamp, from, audio.count)
+            if overlap > 1 {
+                for i in 0..<overlap {
+                    let t = Float(i) / Float(overlap - 1)
+                    audio[audio.count - overlap + i] =
+                        audio[audio.count - overlap + i] * cosf(.pi / 2 * t)
+                        + piece[from - overlap + i] * sinf(.pi / 2 * t)
+                }
+            }
+            audio += piece[from..<to]
+        }
+
+        fadeIn(&audio)
+        // Every chunk ends at zero, whatever happened. The renderer appends a
+        // quarter-second of silence to each one, and a chunk whose last sample
+        // is not near zero clicks as it meets that silence — which is also what
+        // a chunk cut short by the token budget would do.
+        fadeOut(&audio)
+        return audio
     }
 
     private func decodeWindow(_ window: [Int32], voice: Voice) throws -> [Float] {
@@ -1283,7 +1433,7 @@ public actor ChatterboxEngine {
         // of it is used — twenty estimator passes over every mel frame,
         // rendered silence included — so a typical 400-token chunk through a
         // fitted window is the single cheapest speedup S3 has.
-        let fitted = s3Windows
+        let fitted = windows
             .filter { $0.genTokens >= window.count + 3 }
             .min { $0.genTokens < $1.genTokens }
         let (flow, vocoder, capacity) = fitted.map { ($0.flow, $0.vocoder, $0.genTokens) }
@@ -1299,21 +1449,21 @@ public actor ChatterboxEngine {
 
         let melLength = (promptTokenLength + capacity) * tokenMelRatio
         let melOut = try flow.prediction(from: try MLDictionaryFeatureProvider(dictionary: [
-            "prompt_tokens": try array(voice.promptTokens, shape: [1, promptTokenLength]),
-            "gen_tokens": try array(padded, shape: [1, capacity]),
-            "prompt_feat": try array(
+            "prompt_tokens": try mlArray(voice.promptTokens, shape: [1, promptTokenLength]),
+            "gen_tokens": try mlArray(padded, shape: [1, capacity]),
+            "prompt_feat": try mlArray(
                 voice.promptFeatures, shape: [1, promptFeatureLength, melDimension]
             ),
-            "embedding": try array(voice.xvector, shape: [1, voice.xvector.count]),
-            "noise": try gaussian(shape: [1, melDimension, melLength]),
+            "embedding": try mlArray(voice.xvector, shape: [1, voice.xvector.count]),
+            "noise": try mlGaussian(shape: [1, melDimension, melLength]),
         ]))
         guard let mel = melOut.featureValue(for: "mel")?.multiArrayValue else {
-            throw EngineError.badOutput("mel")
+            throw ChatterboxEngine.EngineError.badOutput("mel")
         }
 
         let wavOut = try vocoder.prediction(from: try MLDictionaryFeatureProvider(dictionary: ["mel": mel]))
         guard let waveform = wavOut.featureValue(for: "waveform")?.multiArrayValue else {
-            throw EngineError.badOutput("waveform")
+            throw ChatterboxEngine.EngineError.badOutput("waveform")
         }
 
         let wanted = min(spoken * tokenMelRatio * hop, waveform.count)
@@ -1335,71 +1485,83 @@ public actor ChatterboxEngine {
         }
     }
 
-    // MARK: - Buffers
-
-    private func array(_ values: [Float], shape: [Int]) throws -> MLMultiArray {
-        let out = try MLMultiArray(shape: shape.map(NSNumber.init), dataType: .float32)
-        assert(values.count == out.count, "\(values.count) floats into shape \(shape)")
-        out.withUnsafeMutableBufferPointer(ofType: Float.self) { buffer, _ in
-            _ = buffer.update(fromContentsOf: values)
-        }
-        return out
-    }
-
-    private func array(_ values: [Int32], shape: [Int]) throws -> MLMultiArray {
-        let out = try MLMultiArray(shape: shape.map(NSNumber.init), dataType: .int32)
-        assert(values.count == out.count, "\(values.count) ints into shape \(shape)")
-        out.withUnsafeMutableBufferPointer(ofType: Int32.self) { buffer, _ in
-            _ = buffer.update(fromContentsOf: values)
-        }
-        return out
-    }
-
-    /// The flow decoder starts from gaussian noise rather than generating it
-    /// internally — Core ML has no random number generator, so the seed lives
-    /// on this side of the boundary.
+    /// Ramp the last few milliseconds to silence, so the file ends at zero.
     ///
-    /// Box-Muller over bulk random bits, vectorised with Accelerate: the array
-    /// is ~163k floats per window, and drawing them one `Float.random` at a
-    /// time was measurable against the model itself.
-    private func gaussian(shape: [Int]) throws -> MLMultiArray {
-        let out = try MLMultiArray(shape: shape.map(NSNumber.init), dataType: .float32)
-        let count = out.count
-        guard count > 0 else { return out }
-        let pairs = (count + 1) / 2
-
-        var bits = [UInt32](repeating: 0, count: pairs * 2)
-        arc4random_buf(&bits, bits.count * MemoryLayout<UInt32>.size)
-
-        // Radii from the first half of the bits, angles from the second. The
-        // +0.5 keeps the uniform strictly inside (0, 1), so the log is finite.
-        var radius = [Float](repeating: 0, count: pairs)
-        var angle = [Float](repeating: 0, count: pairs)
-        for i in 0..<pairs {
-            radius[i] = Float((Double(bits[i]) + 0.5) * 0x1p-32)
-            angle[i] = Float(Double(bits[pairs + i]) * 0x1p-32 * 2 * .pi)
+    /// Scaled down rather than skipped for a very short chunk — skipping left
+    /// it ending off zero, which clicks against the silence appended after it.
+    private func fadeOut(_ audio: inout [Float]) {
+        let ramp = min(sampleRate / 100, audio.count / 2)
+        guard ramp > 1 else { return }
+        for i in 0..<ramp {
+            audio[audio.count - ramp + i] *= Float(ramp - 1 - i) / Float(ramp - 1)
         }
-        var n = Int32(pairs)
-        vvlogf(&radius, radius, &n)
-        vDSP.multiply(-2, radius, result: &radius)
-        vvsqrtf(&radius, radius, &n)
-        var sines = [Float](repeating: 0, count: pairs)
-        var cosines = [Float](repeating: 0, count: pairs)
-        vvsincosf(&sines, &cosines, angle, &n)
+    }
+}
 
-        out.withUnsafeMutableBufferPointer(ofType: Float.self) { buffer, _ in
-            // The two normals of a pair land in separate halves rather than
-            // interleaved — they are independent, so placement is free.
-            vDSP.multiply(radius, cosines, result: &cosines)
-            cosines.withUnsafeBufferPointer { _ = buffer.update(fromContentsOf: $0[0..<min(pairs, count)]) }
-            if count > pairs {
-                vDSP.multiply(radius, sines, result: &sines)
-                sines.withUnsafeBufferPointer {
-                    _ = UnsafeMutableBufferPointer(rebasing: buffer[pairs...])
-                        .update(fromContentsOf: $0[0..<(count - pairs)])
-                }
+// MARK: - Buffers
+
+private func mlArray(_ values: [Float], shape: [Int]) throws -> MLMultiArray {
+    let out = try MLMultiArray(shape: shape.map(NSNumber.init), dataType: .float32)
+    assert(values.count == out.count, "\(values.count) floats into shape \(shape)")
+    out.withUnsafeMutableBufferPointer(ofType: Float.self) { buffer, _ in
+        _ = buffer.update(fromContentsOf: values)
+    }
+    return out
+}
+
+private func mlArray(_ values: [Int32], shape: [Int]) throws -> MLMultiArray {
+    let out = try MLMultiArray(shape: shape.map(NSNumber.init), dataType: .int32)
+    assert(values.count == out.count, "\(values.count) ints into shape \(shape)")
+    out.withUnsafeMutableBufferPointer(ofType: Int32.self) { buffer, _ in
+        _ = buffer.update(fromContentsOf: values)
+    }
+    return out
+}
+
+/// The flow decoder starts from gaussian noise rather than generating it
+/// internally — Core ML has no random number generator, so the seed lives
+/// on this side of the boundary.
+///
+/// Box-Muller over bulk random bits, vectorised with Accelerate: the array
+/// is ~163k floats per window, and drawing them one `Float.random` at a
+/// time was measurable against the model itself.
+private func mlGaussian(shape: [Int]) throws -> MLMultiArray {
+    let out = try MLMultiArray(shape: shape.map(NSNumber.init), dataType: .float32)
+    let count = out.count
+    guard count > 0 else { return out }
+    let pairs = (count + 1) / 2
+
+    var bits = [UInt32](repeating: 0, count: pairs * 2)
+    arc4random_buf(&bits, bits.count * MemoryLayout<UInt32>.size)
+
+    // Radii from the first half of the bits, angles from the second. The
+    // +0.5 keeps the uniform strictly inside (0, 1), so the log is finite.
+    var radius = [Float](repeating: 0, count: pairs)
+    var angle = [Float](repeating: 0, count: pairs)
+    for i in 0..<pairs {
+        radius[i] = Float((Double(bits[i]) + 0.5) * 0x1p-32)
+        angle[i] = Float(Double(bits[pairs + i]) * 0x1p-32 * 2 * .pi)
+    }
+    var n = Int32(pairs)
+    vvlogf(&radius, radius, &n)
+    vDSP.multiply(-2, radius, result: &radius)
+    vvsqrtf(&radius, radius, &n)
+    var sines = [Float](repeating: 0, count: pairs)
+    var cosines = [Float](repeating: 0, count: pairs)
+    vvsincosf(&sines, &cosines, angle, &n)
+
+    out.withUnsafeMutableBufferPointer(ofType: Float.self) { buffer, _ in
+        // The two normals of a pair land in separate halves rather than
+        // interleaved — they are independent, so placement is free.
+        vDSP.multiply(radius, cosines, result: &cosines)
+        cosines.withUnsafeBufferPointer { _ = buffer.update(fromContentsOf: $0[0..<min(pairs, count)]) }
+        if count > pairs {
+            vDSP.multiply(radius, sines, result: &sines)
+            sines.withUnsafeBufferPointer {
+                _ = UnsafeMutableBufferPointer(rebasing: buffer[pairs...])
+                    .update(fromContentsOf: $0[0..<(count - pairs)])
             }
         }
-        return out
     }
+    return out
 }

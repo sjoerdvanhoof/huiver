@@ -1,5 +1,6 @@
 import AVFoundation
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
@@ -7,6 +8,14 @@ struct SettingsView: View {
     /// Plays the bundled samples. `AVAudioPlayer` rather than the engine: these
     /// are finished files, and auditioning a voice should not wake the model.
     @State private var preview = PreviewPlayer()
+    /// A voice picked while the phone holds audio read by someone else, held
+    /// until the switch is confirmed — changing narrator re-renders those
+    /// chapters, which is hours of compute worth a sentence of warning.
+    @State private var pendingVoice: Voice?
+    /// Local mirrors of the UserDefaults-backed skip sizes: pickers need a
+    /// value that view updates can observe.
+    @State private var skipBack = SkipIntervals.backward
+    @State private var skipForward = SkipIntervals.forward
 
     var body: some View {
         @Bindable var model = model
@@ -17,6 +26,11 @@ struct SettingsView: View {
                     HStack(spacing: Palette.Space.md) {
                         if let url = voice.previewURL {
                             Button {
+                                // One narrator at a time: auditioning over a
+                                // playing book gave two voices at once.
+                                if model.narrator?.state == .speaking {
+                                    model.narrator?.pause()
+                                }
                                 preview.toggle(url, id: voice.id)
                             } label: {
                                 Image(systemName: preview.playing == voice.id
@@ -33,7 +47,7 @@ struct SettingsView: View {
                         }
 
                         Button {
-                            model.selectedVoiceId = voice.id
+                            select(voice)
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -94,6 +108,25 @@ struct SettingsView: View {
                 Text("Conversion runs while huiver is open. iOS suspends apps that leave the screen, and it offers no way to keep computing in the background — so leaving mid-chapter finishes the sentence being worked on and stops there. Coming back picks up exactly where it left off, without pressing convert again, even after a force quit. Listening does keep going off screen, because then the app really is playing audio.")
             }
 
+            Section {
+                Picker("Skip back", selection: $skipBack) {
+                    ForEach(SkipIntervals.backwardChoices, id: \.self) {
+                        Text("\(Int($0)) seconds").tag($0)
+                    }
+                }
+                Picker("Skip forward", selection: $skipForward) {
+                    ForEach(SkipIntervals.forwardChoices, id: \.self) {
+                        Text("\(Int($0)) seconds").tag($0)
+                    }
+                }
+            } header: {
+                Text("Playback")
+            } footer: {
+                Text("The transport buttons everywhere — player, mini player, lock screen. The lock screen picks the new sizes up at the next launch.")
+            }
+            .onChange(of: skipBack) { _, new in SkipIntervals.backward = new }
+            .onChange(of: skipForward) { _, new in SkipIntervals.forward = new }
+
             ConnectorSection()
 
             Section {
@@ -118,6 +151,18 @@ struct SettingsView: View {
                 }
             }
 
+            Section {
+                Button("Copy diagnostics") {
+                    let url = URL.documentsDirectory.appendingPathComponent("playback.log")
+                    UIPasteboard.general.string =
+                        (try? String(contentsOf: url, encoding: .utf8)) ?? "The log is empty."
+                }
+            } header: {
+                Text("Diagnostics")
+            } footer: {
+                Text("The playback log — what the player, the lock screen and sync were doing, with timestamps. Paste it into a message when something misbehaves; it contains no book text.")
+            }
+
             if let failure = model.loadFailure {
                 Section("Engine") {
                     Text(failure).font(.caption).foregroundStyle(.red)
@@ -126,8 +171,54 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await model.refresh() }
+        .task {
+            await model.refresh()
+            // The full audio-tree walk, done when this screen asks for it
+            // rather than on the converter's every chunk.
+            await model.refreshStorage()
+        }
         .onDisappear { preview.stop() }
+        .confirmationDialog(
+            "Change the voice to \(pendingVoice?.name ?? "")?",
+            isPresented: .init(
+                get: { pendingVoice != nil },
+                set: { if !$0 { pendingVoice = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Change voice") {
+                if let voice = pendingVoice { model.selectedVoiceId = voice.id }
+                pendingVoice = nil
+            }
+            Button("Cancel", role: .cancel) { pendingVoice = nil }
+        } message: {
+            Text(
+                "\(renderedByOthers(than: pendingVoice)) rendered chapter(s) were read "
+                    + "by another voice. Their audio stays playable as it is; playing or "
+                    + "converting one again re-renders it in the new voice."
+            )
+        }
+    }
+
+    /// Switch immediately when nothing rendered is affected; otherwise say
+    /// what the change means first.
+    private func select(_ voice: Voice) {
+        guard voice.id != model.selectedVoiceId else { return }
+        if renderedByOthers(than: voice) > 0 {
+            pendingVoice = voice
+        } else {
+            model.selectedVoiceId = voice.id
+        }
+    }
+
+    /// How many chapters on the phone hold audio in a voice other than this one.
+    private func renderedByOthers(than voice: Voice?) -> Int {
+        guard let voice else { return 0 }
+        return model.books.reduce(0) { total, book in
+            total + book.chapters.filter {
+                $0.renderedChunks > 0 && $0.renderedVoice != nil && $0.renderedVoice != voice.id
+            }.count
+        }
     }
 
     /// `autoCleanup` lives in UserDefaults rather than in observable state, so
@@ -168,9 +259,15 @@ final class PreviewPlayer {
         do {
             #if os(iOS)
             // `.playback` so a sample is audible with the ringer switch set to
-            // silent, which is where a phone usually is.
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-            try AVAudioSession.sharedInstance().setActive(true)
+            // silent, which is where a phone usually is. The narrator's own
+            // configuration — spoken audio, long-form — is kept when it is
+            // already in place: overwriting it with `.default` left the whole
+            // session in the wrong mode for the rest of the listen.
+            let session = AVAudioSession.sharedInstance()
+            if session.category != .playback {
+                try session.setCategory(.playback, mode: .spokenAudio, policy: .longFormAudio)
+            }
+            try session.setActive(true)
             #endif
             let player = try AVAudioPlayer(contentsOf: url)
             player.prepareToPlay()

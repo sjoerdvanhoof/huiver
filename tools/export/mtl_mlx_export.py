@@ -93,7 +93,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=Path("../../apps/mac/build-mtl"))
     parser.add_argument(
-        "--quantize", choices=["none", "int8", "int4"], default="none",
+        # int8 is what ships (bun run mac:backbone passes it explicitly); a
+        # default of "none" handed anyone running this script directly a
+        # 1.1 GB fp16 backbone that nothing installs.
+        "--quantize", choices=["none", "int8", "int4"], default="int8",
         help="grouped affine quantisation of the projections (default: none, float16)",
     )
     args = parser.parse_args()

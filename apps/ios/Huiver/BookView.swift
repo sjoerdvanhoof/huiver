@@ -9,11 +9,19 @@ struct BookView: View {
     let book: Book
 
     @Environment(AppModel.self) private var model
+    @Environment(SyncModel.self) private var sync
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
 
     @State private var showingPlayer = false
     @State private var confirmingDelete = false
+    /// A finished export waiting for the share sheet.
+    @State private var sharing: ShareItem?
+
+    struct ShareItem: Identifiable {
+        let url: URL
+        var id: String { url.path }
+    }
 
     /// The book as the library currently has it, so language changes and render
     /// progress show up without leaving the screen.
@@ -45,6 +53,23 @@ struct BookView: View {
                     Picker("Language", selection: languageBinding) {
                         ForEach(Language.all) { Text($0.name).tag($0.code) }
                     }
+                    // The whole book at once: what the Mac exists for. Only
+                    // offered with a Mac to offer it to.
+                    if sync.isPaired, renderedCount < current.chapters.count {
+                        Button("Convert book on the Mac", systemImage: "desktopcomputer") {
+                            Task { await model.requestBookConversionOnMac(current) }
+                        }
+                    }
+                    Divider()
+                    Button("Share audiobook", systemImage: "square.and.arrow.up") {
+                        Task {
+                            if let url = await model.exportAudiobook(current) {
+                                sharing = ShareItem(url: url)
+                            }
+                        }
+                    }
+                    .disabled(renderedCount == 0 || model.exporting != nil)
+                    Divider()
                     Button("Delete book", systemImage: "trash", role: .destructive) {
                         confirmingDelete = true
                     }
@@ -75,6 +100,33 @@ struct BookView: View {
         } message: {
             Text("Its text and any audio rendered for it will be removed.")
         }
+        .sheet(item: $sharing) { item in
+            ActivityView(url: item.url)
+                .presentationDetents([.medium, .large])
+        }
+        .alert(
+            "Could not export",
+            isPresented: .init(
+                get: { model.exportFailure != nil },
+                set: { if !$0 { model.exportFailure = nil } }
+            )
+        ) {
+            Button("OK") { model.exportFailure = nil }
+        } message: {
+            Text(model.exportFailure ?? "")
+        }
+    }
+
+    /// Hand a finished export to the system share sheet — AirDrop, Files,
+    /// Books, whatever the phone has.
+    private struct ActivityView: UIViewControllerRepresentable {
+        let url: URL
+
+        func makeUIViewController(context: Context) -> UIActivityViewController {
+            UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        }
+
+        func updateUIViewController(_: UIActivityViewController, context: Context) {}
     }
 
     private var languageBinding: Binding<String> {
@@ -118,6 +170,17 @@ struct BookView: View {
                 .buttonStyle(.plain)
                 .disabled(model.narrator == nil)
                 .padding(.top, Palette.Space.xs)
+
+                if let exporting = model.exporting, exporting.bookId == current.id {
+                    HStack(spacing: Palette.Space.sm) {
+                        ProgressView(value: exporting.fraction)
+                            .frame(width: 140)
+                        Text("Preparing audio…")
+                            .font(.huiverCaption)
+                            .foregroundStyle(theme.colors.mutedForeground)
+                    }
+                    .padding(.top, Palette.Space.xs)
+                }
             }
         }
         .padding(.horizontal, Palette.Space.lg)
@@ -129,7 +192,22 @@ struct BookView: View {
         var parts = ["\(renderedCount)/\(current.chapters.count) rendered"]
         if finished > 0 { parts.append("\(finished) finished") }
         parts.append(Format.estimate(estimate))
+        // What converting the rest will actually cost, from this phone's own
+        // measured pace — an answer that used to live nowhere.
+        if renderedCount < current.chapters.count,
+           let compute = RenderPace.estimate(characters: remainingCharacters) {
+            parts.append("\(Format.estimate(compute)) to convert")
+        }
         return parts.joined(separator: " · ")
+    }
+
+    /// Characters of text not yet rendered, pro-rated for chapters part-done.
+    private var remainingCharacters: Int {
+        current.chapters.filter { !$0.isComplete }.reduce(0) { total, chapter in
+            let done = chapter.chunkCount > 0
+                ? Double(chapter.renderedChunks) / Double(chapter.chunkCount) : 0
+            return total + Int(Double(chapter.characters) * (1 - done))
+        }
     }
 
     private var languageWarning: some View {
@@ -148,11 +226,22 @@ struct BookView: View {
     }
 
     private var chapters: some View {
-        VStack(spacing: 0) {
+        // Lazy: public-domain collections run to hundreds of chapters, and an
+        // eager stack builds a row — and reads converter and progress state —
+        // for every one of them before the first paint.
+        LazyVStack(spacing: 0) {
             ForEach(Array(current.chapters.enumerated()), id: \.element.id) { index, chapter in
-                ChapterRow(book: current, chapter: chapter, number: index + 1) {
-                    showingPlayer = true
-                }
+                ChapterRow(
+                    book: current, chapter: chapter, number: index + 1,
+                    opened: { showingPlayer = true },
+                    share: {
+                        Task {
+                            if let url = await model.exportChapter(chapter, in: current) {
+                                sharing = ShareItem(url: url)
+                            }
+                        }
+                    }
+                )
                 if chapter.id != current.chapters.last?.id {
                     Divider().overlay(theme.colors.border).padding(.leading, Palette.Space.lg)
                 }
@@ -186,6 +275,9 @@ private struct ChapterRow: View {
     let chapter: Chapter
     let number: Int
     let opened: () -> Void
+    /// Export this chapter and hand it to the share sheet — the sheet lives
+    /// on the book screen, so the row only asks.
+    let share: () -> Void
 
     @Environment(AppModel.self) private var model
     @Environment(SyncModel.self) private var sync
@@ -246,6 +338,12 @@ private struct ChapterRow: View {
                 Button("Render again", systemImage: "arrow.clockwise") {
                     Task { await model.rerender(chapter: chapter, in: book) }
                 }
+            }
+            if chapter.isComplete {
+                Button("Share chapter audio", systemImage: "square.and.arrow.up") {
+                    share()
+                }
+                .disabled(model.exporting != nil)
             }
             // Only worth offering with a Mac to offer it to: an ask with
             // nowhere to go would sit in the list for ever looking ignored.

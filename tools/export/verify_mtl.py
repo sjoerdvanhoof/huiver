@@ -461,7 +461,10 @@ def check_coreml_flow(model, models: Path) -> bool:
 
     path = models / "MTLS3Flow.mlpackage"
     if not path.exists():
-        return True
+        # A verification asked for against models that are not there must
+        # fail, not shrug: a green run over an empty folder reads as parity.
+        print(f"core ml flow: MISSING — {path} does not exist")
+        return False
 
     print("core ml flow:")
     flow_model = load_package(path)

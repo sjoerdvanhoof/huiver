@@ -111,7 +111,12 @@ struct RecordVoiceSheet: View {
         HStack(spacing: Palette.Space.md) {
             switch recorder.state {
             case .idle, .denied:
-                Button("Start recording", systemImage: "mic.fill") { recorder.start() }
+                Button("Start recording", systemImage: "mic.fill") {
+                    // One voice at a time: a book reading itself into the
+                    // reference clip would be cloned along with the speaker.
+                    if model.narrator?.state == .speaking { model.narrator?.pause() }
+                    recorder.start()
+                }
                     .buttonStyle(.borderedProminent)
                     .disabled(recorder.state == .denied)
                 Spacer()

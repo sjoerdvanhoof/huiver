@@ -47,6 +47,10 @@ public struct Book: Codable, Sendable, Identifiable, Hashable {
     /// Absent for books imported before that started, and for books that
     /// arrived over sync as text rather than as a file.
     public var epubFile: String?
+    /// A voice pinned to this book, overriding the app-wide selection — "read
+    /// this one in Klett, that one in Neufeld". A per-device preference, so it
+    /// stays out of the sync bundle. Optional so older libraries decode.
+    public var voiceId: String?
 
     public var languageCode: String { language ?? Language.english.code }
 
@@ -64,6 +68,17 @@ public actor Library {
     public let root: URL
     private let indexURL: URL
     private var books: [Book]
+
+    /// The same book, imported twice. Import addresses books by their content
+    /// identity — the extracted text, not the file — so a re-download of the
+    /// same EPUB is the same book however different its bytes are.
+    public struct AlreadyImported: LocalizedError {
+        public let existingTitle: String
+        public var errorDescription: String? {
+            "\"\(existingTitle)\" is already on the shelf. The same book imported "
+                + "twice would be two copies competing for one listening position."
+        }
+    }
 
     public init(root: URL) throws {
         self.root = root
@@ -144,6 +159,16 @@ public actor Library {
         language: Language? = nil,
         source: (data: Data, filename: String)? = nil
     ) throws -> Book {
+        // Refuse a book the shelf already has, by the identity sync also uses.
+        let incomingId = ContentIdentity.bookId(
+            title: extracted.title,
+            author: extracted.author,
+            chapterHashes: extracted.chapters.map { ContentIdentity.chapterHash($0.text) }
+        )
+        if let existing = books.first(where: { $0.contentId == incomingId }) {
+            throw AlreadyImported(existingTitle: existing.title)
+        }
+
         let bookId = UUID().uuidString
         // Guessed from the book's own text at import, and overridable per book.
         let detected = language ?? Language.detect(
@@ -206,6 +231,14 @@ public actor Library {
     public func setLanguage(_ language: Language, for bookId: String) throws {
         guard let index = books.firstIndex(where: { $0.id == bookId }) else { return }
         books[index].language = language.code
+        try save()
+    }
+
+    /// Pin a voice to a book, or nil to follow the app-wide selection again.
+    /// Same posture as `setLanguage`: existing audio is left alone.
+    public func setVoice(_ voiceId: String?, for bookId: String) throws {
+        guard let index = books.firstIndex(where: { $0.id == bookId }) else { return }
+        books[index].voiceId = voiceId
         try save()
     }
 
@@ -370,6 +403,14 @@ public actor Library {
             saveTask = nil
             try? save()
         }
+    }
+
+    /// Write any debounced save now. For quitting: the five-second window is
+    /// exactly the write a terminating process would otherwise lose.
+    public func flushNow() {
+        saveTask?.cancel()
+        saveTask = nil
+        try? save()
     }
 
     static func write(_ books: [Book], to url: URL) throws {

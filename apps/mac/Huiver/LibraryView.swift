@@ -6,11 +6,28 @@ import UniformTypeIdentifiers
 /// anywhere on the grid.
 struct LibraryView: View {
     @Environment(AppModel.self) private var model
+    @Environment(AppNavigation.self) private var navigation
     @Environment(\.theme) private var theme
 
     @State private var importing = false
     /// The book being pushed, driving navigation in place of a link.
     @State private var opened: Book?
+    @State private var query = ""
+    /// How the shelf is ordered, remembered across launches.
+    @AppStorage("librarySort") private var sortRaw = Sort.recent.rawValue
+
+    enum Sort: String, CaseIterable {
+        case recent, title, author, progress
+
+        var label: String {
+            switch self {
+            case .recent: "Recently added"
+            case .title: "Title"
+            case .author: "Author"
+            case .progress: "Progress"
+            }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -21,10 +38,36 @@ struct LibraryView: View {
             .navigationTitle("Library")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
+                    if model.isImporting {
+                        ProgressView()
+                            .controlSize(.small)
+                            .help("Reading the book…")
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Picker("Sort by", selection: $sortRaw) {
+                            ForEach(Sort.allCases, id: \.rawValue) { sort in
+                                Text(sort.label).tag(sort.rawValue)
+                            }
+                        }
+                    } label: {
+                        Label("Sort", systemImage: "arrow.up.arrow.down")
+                    }
+                    .help("Sort the shelf")
+                }
+                ToolbarItem(placement: .primaryAction) {
                     Button { importing = true } label: {
                         Label("Add a book", systemImage: "plus")
                     }
                 }
+            }
+            .searchable(text: $query, prompt: "Title or author")
+            // File ▸ Open lands here: the menu cannot present a panel itself.
+            .onChange(of: model.wantsImport) { _, wants in
+                guard wants else { return }
+                model.wantsImport = false
+                importing = true
             }
             .navigationDestination(item: $opened) { book in
                 BookDetailView(book: book)
@@ -117,18 +160,136 @@ struct LibraryView: View {
 
     private var shelf: some View {
         ScrollView {
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 150, maximum: 200), spacing: Palette.Space.lg)],
-                alignment: .leading,
-                spacing: Palette.Space.xl
-            ) {
-                ForEach(model.books) { book in
-                    Button { opened = book } label: { BookTile(book: book) }
-                        .buttonStyle(.plain)
+            VStack(alignment: .leading, spacing: Palette.Space.xl) {
+                if query.isEmpty, let target = continueTarget {
+                    continueRow(target)
+                }
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 150, maximum: 200), spacing: Palette.Space.lg)],
+                    alignment: .leading,
+                    spacing: Palette.Space.xl
+                ) {
+                    ForEach(shownBooks) { book in
+                        Button { opened = book } label: { BookTile(book: book) }
+                            .buttonStyle(.plain)
+                    }
                 }
             }
             .padding(Palette.Space.xl)
         }
+    }
+
+    /// The shelf, filtered by the search field and ordered by the sort menu.
+    private var shownBooks: [Book] {
+        var books = model.books
+        if !query.isEmpty {
+            let wanted = query.lowercased()
+            books = books.filter {
+                $0.title.lowercased().contains(wanted)
+                    || ($0.author?.lowercased().contains(wanted) ?? false)
+            }
+        }
+        switch Sort(rawValue: sortRaw) ?? .recent {
+        case .recent:
+            return books
+        case .title:
+            return books.sorted {
+                $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            }
+        case .author:
+            return books.sorted {
+                ($0.author ?? "").localizedCaseInsensitiveCompare($1.author ?? "")
+                    == .orderedAscending
+            }
+        case .progress:
+            return books.sorted { finishedFraction($0) > finishedFraction($1) }
+        }
+    }
+
+    private func finishedFraction(_ book: Book) -> Double {
+        guard !book.chapters.isEmpty else { return 0 }
+        let finished = book.chapters.filter { model.isFinished($0) }.count
+        return Double(finished) / Double(book.chapters.count)
+    }
+
+    // MARK: - Continue listening
+
+    /// The most recently touched unfinished chapter across the whole shelf —
+    /// the one thing a listener opening the app almost always wants first.
+    private var continueTarget: (book: Book, chapter: Chapter, position: Double)? {
+        var best: (Book, Chapter, ChapterProgress)?
+        for book in model.books {
+            for chapter in book.chapters {
+                guard let record = model.progress[chapter.id],
+                      !record.finished, record.position > 1
+                else { continue }
+                if best == nil || record.updatedAt > best!.2.updatedAt {
+                    best = (book, chapter, record)
+                }
+            }
+        }
+        return best.map { ($0.0, $0.1, $0.2.position) }
+    }
+
+    private func continueRow(
+        _ target: (book: Book, chapter: Chapter, position: Double)
+    ) -> some View {
+        Button {
+            resume(target)
+        } label: {
+            HStack(spacing: Palette.Space.md) {
+                BookCover(
+                    bookId: target.book.id,
+                    title: target.book.title,
+                    url: model.coverURL(for: target.book),
+                    width: 48,
+                    radius: Palette.Radius.md
+                )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Continue listening")
+                        .font(.huiverCaption)
+                        .foregroundStyle(theme.colors.mutedForeground)
+                    Text(target.chapter.title)
+                        .font(.huiverLabel)
+                        .foregroundStyle(theme.colors.foreground)
+                        .lineLimit(1)
+                    Text("\(target.book.title) · \(Format.duration(target.position)) in")
+                        .font(.huiverCaption)
+                        .foregroundStyle(theme.colors.mutedForeground)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Image(systemName: "play.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(theme.colors.primaryForeground)
+                    .frame(width: 32, height: 32)
+                    .background(theme.colors.primary, in: .circle)
+            }
+            .padding(Palette.Space.md)
+            .background(theme.colors.card, in: .rect(cornerRadius: Palette.Radius.lg))
+            .overlay(
+                RoundedRectangle(cornerRadius: Palette.Radius.lg)
+                    .strokeBorder(theme.colors.border)
+            )
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(model.narrator == nil)
+    }
+
+    private func resume(_ target: (book: Book, chapter: Chapter, position: Double)) {
+        guard let narrator = model.narrator, let voice = model.voice(for: target.book) else {
+            return
+        }
+        if target.chapter.isComplete, target.chapter.renderedVoice == voice.id {
+            narrator.replay(book: target.book, chapter: target.chapter, from: target.position)
+        } else {
+            narrator.play(
+                book: target.book, chapter: target.chapter, voice: voice,
+                options: model.options, from: target.position
+            )
+        }
+        navigation.showPlayer()
     }
 }
 

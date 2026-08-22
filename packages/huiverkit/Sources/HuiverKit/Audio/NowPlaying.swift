@@ -1,8 +1,10 @@
 import Foundation
+import MediaPlayer
 
 #if os(iOS)
-import MediaPlayer
 import UIKit
+#elseif os(macOS)
+import AppKit
 #endif
 
 /// The lock screen, Control Centre, CarPlay and headphone buttons.
@@ -53,9 +55,11 @@ final class NowPlaying {
     }
 
     /// The same jumps as the in-app transport, so what a listener learns on
-    /// screen still holds on the lock screen.
-    static let skipBackward: Double = 15
-    static let skipForward: Double = 30
+    /// screen still holds on the lock screen. Read from the shared setting;
+    /// the intervals are registered at activation, so a change takes effect
+    /// at the next launch.
+    static var skipBackward: Double { SkipIntervals.backward }
+    static var skipForward: Double { SkipIntervals.forward }
 
     static let rates: [Float] = [0.75, 1, 1.25, 1.5, 1.75, 2]
 
@@ -67,9 +71,7 @@ final class NowPlaying {
     /// Artwork is read once per cover rather than once per push, and pushed
     /// again when it lands.
     private var artworkURL: URL?
-    #if os(iOS)
     private var artwork: MPMediaItemArtwork?
-    #endif
 
     // MARK: - Wiring
 
@@ -80,7 +82,6 @@ final class NowPlaying {
     /// target added on every play would stack up and fire once per registration.
     func activate(commands: Commands) {
         self.commands = commands
-        #if os(iOS)
         // Targets are never removed, so a second registration would mean every
         // command running twice. If this line ever appears twice in one launch,
         // that is the bug.
@@ -109,10 +110,8 @@ final class NowPlaying {
         // rather than fast-forward.
         centre.seekForwardCommand.isEnabled = false
         centre.seekBackwardCommand.isEnabled = false
-        #endif
     }
 
-    #if os(iOS)
     private nonisolated static let interval: @Sendable (MPRemoteCommandEvent) -> Double? = {
         ($0 as? MPSkipIntervalCommandEvent)?.interval
     }
@@ -169,12 +168,10 @@ final class NowPlaying {
             return .success
         }
     }
-    #endif
 
     // MARK: - Publishing
 
     func update(_ snapshot: Snapshot) {
-        #if os(iOS)
         // Elapsed time is compared at whole seconds, because that is all the
         // lock screen shows and it extrapolates between pushes from the
         // playback rate anyway.
@@ -220,7 +217,6 @@ final class NowPlaying {
             artwork=\(artwork != nil)
             """
         )
-        #endif
     }
 
     /// Nothing is playing any more: take the controls down.
@@ -232,14 +228,12 @@ final class NowPlaying {
         PlaybackLog.note("clearing the lock screen")
         pushed = nil
         artworkURL = nil
-        #if os(iOS)
         artwork = nil
         let centre = MPRemoteCommandCenter.shared()
         centre.nextTrackCommand.isEnabled = false
         centre.previousTrackCommand.isEnabled = false
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         MPNowPlayingInfoCenter.default().playbackState = .stopped
-        #endif
     }
 
     // MARK: - Artwork
@@ -250,15 +244,19 @@ final class NowPlaying {
     /// to send between actors has to be.
     private func loadArtwork(_ url: URL?) {
         artworkURL = url
-        #if os(iOS)
         artwork = nil
         guard let url else { return }
         Task { [weak self] in
             let data = await Task.detached(priority: .utility) {
                 try? Data(contentsOf: url)
             }.value
+            #if os(iOS)
             guard let self, artworkURL == url, let data, let image = UIImage(data: data)
             else { return }
+            #else
+            guard let self, artworkURL == url, let data, let image = NSImage(data: data)
+            else { return }
+            #endif
             // `@Sendable` is doing real work here rather than quieting a
             // warning: MediaPlayer calls this handler on its own queue, and a
             // closure written in a `@MainActor` method is otherwise inferred to
@@ -272,6 +270,5 @@ final class NowPlaying {
                 update(pushed)
             }
         }
-        #endif
     }
 }

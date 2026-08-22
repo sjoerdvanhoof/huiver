@@ -195,6 +195,36 @@ public enum VoicePack {
         try updateManifest(in: directory, with: voice, file: file)
     }
 
+    /// Add or update a manifest entry for a voice whose `.voice` file is
+    /// already in `directory`.
+    ///
+    /// How a voice that arrived over sync becomes loadable: the wire delivers
+    /// an id and a blob, and a blob the manifest does not mention is invisible
+    /// to `load` — and, worse, re-requested by every future session, because
+    /// the manifest is also what the diff compares.
+    public static func register(
+        id: String, name: String, detail: String, in directory: URL
+    ) throws {
+        var manifest = readManifest(in: directory)
+        let previewFile = "\(id).preview.wav"
+        let hasPreview = FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent(previewFile).path
+        )
+        var entry = WritableManifest.Entry(
+            id: id, name: name, detail: detail, file: "\(id).voice",
+            preview: hasPreview ? previewFile : nil, persona: nil, language: nil
+        )
+        if let index = manifest.voices.firstIndex(where: { $0.id == id }) {
+            // Keep whatever a fuller entry already knew.
+            entry.persona = manifest.voices[index].persona
+            entry.language = manifest.voices[index].language
+            manifest.voices[index] = entry
+        } else {
+            manifest.voices.append(entry)
+        }
+        try writeManifest(manifest, in: directory)
+    }
+
     /// Remove a recorded voice and forget it in the manifest.
     public static func remove(id: String, from directory: URL) throws {
         var manifest = readManifest(in: directory)

@@ -58,6 +58,9 @@ struct MiniPlayer: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(narrator.state == .preparing)
+                        .accessibilityLabel(
+                            narrator.state == .speaking ? "Pause" : "Play"
+                        )
                     }
                     .padding(.horizontal, Palette.Space.md)
                     .padding(.vertical, Palette.Space.sm)
@@ -65,6 +68,12 @@ struct MiniPlayer: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(
+                "Now playing, \(narrator.chapterTitle), "
+                    + "\(Format.duration(narrator.position)) of "
+                    + "\(Format.duration(narrator.estimatedDuration))"
+            )
+            .accessibilityHint("Opens the player")
         }
     }
 

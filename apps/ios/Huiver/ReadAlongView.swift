@@ -18,6 +18,7 @@ struct ReadAlongView: View {
     let seek: (Double) -> Void
 
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Suspends auto-scroll while someone is reading ahead by hand, and for a
     /// few seconds after they stop. Without it the view yanks itself back to
@@ -65,8 +66,13 @@ struct ReadAlongView: View {
             )
             .onChange(of: currentIndex) { _, new in
                 guard let new, !isBrowsing else { return }
-                withAnimation(.easeInOut(duration: 0.35)) {
+                // Reduce Motion means what it says — jump, do not glide.
+                if reduceMotion {
                     proxy.scrollTo(new, anchor: .center)
+                } else {
+                    withAnimation(.easeInOut(duration: 0.35)) {
+                        proxy.scrollTo(new, anchor: .center)
+                    }
                 }
             }
             .onAppear {

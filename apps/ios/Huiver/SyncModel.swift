@@ -19,9 +19,11 @@ final class SyncModel {
     private(set) var activity: Activity = .idle
     private(set) var pairedMac: PairingStore.Peer?
     private(set) var lastSummary: SyncSession.Summary?
-    /// Set once per launch, so the Connector row can show when things last
-    /// moved without a persistent store of its own.
-    private(set) var lastSyncedAt: Date?
+    /// When things last moved. Persisted, so "when did this last work?" has
+    /// an answer after a relaunch rather than only within one.
+    private(set) var lastSyncedAt: Date? {
+        didSet { UserDefaults.standard.set(lastSyncedAt, forKey: "lastSyncedAt") }
+    }
 
     private let store = PairingStore()
     private let deviceId = DeviceIdentity.id()
@@ -50,6 +52,7 @@ final class SyncModel {
     init() {
         // One Mac in v1. The store holds many peers; the UI holds one.
         pairedMac = store.peers().first
+        lastSyncedAt = UserDefaults.standard.object(forKey: "lastSyncedAt") as? Date
         SyncModel.current = self
     }
 
@@ -99,7 +102,16 @@ final class SyncModel {
                 deviceName: deviceName()
             )
             await transport.close()
-            store.save(peer)
+            // The Keychain can refuse — see `PairingStore.save`'s own note
+            // that a refusal must surface. Setting `pairedMac` anyway showed
+            // a pairing that silently evaporated at the next relaunch.
+            guard store.save(peer) else {
+                activity = .failed(
+                    "The pairing could not be saved to the Keychain, so it would "
+                        + "not survive a relaunch. Try pairing again."
+                )
+                return
+            }
             pairedMac = peer
             activity = .idle
         } catch {

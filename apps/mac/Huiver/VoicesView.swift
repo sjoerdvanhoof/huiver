@@ -14,6 +14,10 @@ struct VoicesView: View {
     @State private var preview = PreviewPlayer()
 
     @State private var recording = false
+    /// A voice picked while the shelf holds audio read by someone else, held
+    /// until the switch is confirmed — changing narrator re-renders those
+    /// chapters, which is hours of compute worth a sentence of warning.
+    @State private var pendingVoice: Voice?
 
     var body: some View {
         Form {
@@ -38,7 +42,7 @@ struct VoicesView: View {
                         }
 
                         Button {
-                            model.selectedVoiceId = voice.id
+                            select(voice)
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -112,6 +116,46 @@ struct VoicesView: View {
         .sheet(isPresented: $recording) { RecordVoiceSheet() }
         .navigationTitle("Voices")
         .onDisappear { preview.stop() }
+        .confirmationDialog(
+            "Change the voice to \(pendingVoice?.name ?? "")?",
+            isPresented: .init(
+                get: { pendingVoice != nil },
+                set: { if !$0 { pendingVoice = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Change voice") {
+                if let voice = pendingVoice { model.selectedVoiceId = voice.id }
+                pendingVoice = nil
+            }
+        } message: {
+            Text(
+                "\(renderedByOthers(than: pendingVoice)) rendered chapter(s) were read "
+                    + "by another voice. Their audio stays playable as it is; playing or "
+                    + "converting one again re-renders it in the new voice."
+            )
+        }
+    }
+
+    /// Switch immediately when nothing rendered is affected; otherwise say
+    /// what the change means first.
+    private func select(_ voice: Voice) {
+        guard voice.id != model.selectedVoiceId else { return }
+        if renderedByOthers(than: voice) > 0 {
+            pendingVoice = voice
+        } else {
+            model.selectedVoiceId = voice.id
+        }
+    }
+
+    /// How many chapters on the shelf hold audio in a voice other than this one.
+    private func renderedByOthers(than voice: Voice?) -> Int {
+        guard let voice else { return 0 }
+        return model.books.reduce(0) { total, book in
+            total + book.chapters.filter {
+                $0.renderedChunks > 0 && $0.renderedVoice != nil && $0.renderedVoice != voice.id
+            }.count
+        }
     }
 }
 

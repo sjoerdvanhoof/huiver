@@ -64,6 +64,7 @@ final class MTLDecodeMLX {
     enum LoadError: Error, LocalizedError {
         case missingTensor(String)
         case missingConfig(URL)
+        case badDataType(String, String)
 
         var errorDescription: String? {
             switch self {
@@ -71,6 +72,8 @@ final class MTLDecodeMLX {
                 "MTLT3Backbone.safetensors has no '\(name)'; re-run: bun run mac:backbone"
             case .missingConfig(let url):
                 "Missing \(url.lastPathComponent) beside the backbone weights"
+            case .badDataType(let what, let type):
+                "\(what) is \(type), not a float type — re-export the models"
             }
         }
     }
@@ -301,7 +304,12 @@ final class MTLDecodeMLX {
     /// position embeddings — position without content.
     ///
     /// `cond` is the `MTLCond` model's output, (1, condPrefixLen, hidden).
-    func prefill(cond: MLMultiArray, textTokens: [Int32]) -> [Float] {
+    func prefill(cond: MLMultiArray, textTokens: [Int32]) throws -> [Float] {
+        // A bad export is an error to report, not a reason to take the
+        // process down.
+        guard cond.dataType == .float16 || cond.dataType == .float32 else {
+            throw LoadError.badDataType("the conditioning output", "\(cond.dataType)")
+        }
         let condRow: MLXArray = cond.withUnsafeBytes { bytes in
             switch cond.dataType {
             case .float16:
@@ -309,13 +317,11 @@ final class MTLDecodeMLX {
                     bytes.bindMemory(to: Float16.self),
                     [1, config.condPrefixLen, config.hidden]
                 )
-            case .float32:
+            default:
                 return MLXArray(
                     bytes.bindMemory(to: Float.self),
                     [1, config.condPrefixLen, config.hidden]
                 ).asType(.float16)
-            default:
-                fatalError("cond is \(cond.dataType), not a float type")
             }
         }
 
@@ -393,17 +399,18 @@ final class MTLDecodeMLX {
     /// Copy the Core ML prefill's cache in, replacing the first `length`
     /// positions. The source is `(layers, rows, heads, length, headDim)`,
     /// float16 or float32 depending on how the prefill was exported.
-    func seed(keys: MLMultiArray, values: MLMultiArray, length: Int) {
+    func seed(keys: MLMultiArray, values: MLMultiArray, length: Int) throws {
         let shape = [config.nLayer, config.cfgRows, config.nHead, length, config.headDim]
         for (source, caches) in [(keys, kCache), (values, vCache)] {
+            guard source.dataType == .float16 || source.dataType == .float32 else {
+                throw LoadError.badDataType("the prefill cache", "\(source.dataType)")
+            }
             let whole: MLXArray = source.withUnsafeBytes { bytes in
                 switch source.dataType {
                 case .float16:
                     return MLXArray(bytes.bindMemory(to: Float16.self), shape)
-                case .float32:
-                    return MLXArray(bytes.bindMemory(to: Float.self), shape).asType(.float16)
                 default:
-                    fatalError("prefill cache is \(source.dataType), not a float type")
+                    return MLXArray(bytes.bindMemory(to: Float.self), shape).asType(.float16)
                 }
             }
             for index in 0..<config.nLayer {

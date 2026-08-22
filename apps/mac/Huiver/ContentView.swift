@@ -82,6 +82,19 @@ struct ContentView: View {
         } message: {
             Text(model.loadFailure ?? "")
         }
+        // Imports get their own alert: a bad EPUB is not the engine's fault,
+        // and used to be reported as if it were.
+        .alert(
+            "Could not import",
+            isPresented: .init(
+                get: { model.importFailure != nil },
+                set: { if !$0 { model.importFailure = nil } }
+            )
+        ) {
+            Button("OK") { model.importFailure = nil }
+        } message: {
+            Text(model.importFailure ?? "")
+        }
     }
 
     @ViewBuilder

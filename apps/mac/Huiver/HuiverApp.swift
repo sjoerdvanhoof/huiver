@@ -1,10 +1,30 @@
 import SwiftUI
 
+/// Holds quitting open until the lazy writes are on disk.
+///
+/// The position ticker and the library index both write on debounce timers, so
+/// ⌘Q at the wrong moment lost up to five seconds of each. `terminateLater`
+/// is the sanctioned way to finish async work first; the shutdown closure is
+/// handed over once the model exists.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    var shutdown: (@MainActor () async -> Void)?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let shutdown else { return .terminateNow }
+        Task { @MainActor in
+            await shutdown()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+}
+
 @main
 struct HuiverApp: App {
     @State private var model = AppModel()
     @State private var sync = MacSyncModel()
     @Environment(\.scenePhase) private var phase
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
         WindowGroup {
@@ -13,6 +33,7 @@ struct HuiverApp: App {
                 .environment(sync)
                 .huiverTheme()
                 .task {
+                    delegate.shutdown = { [weak model] in await model?.shutdown() }
                     await model.load()
                     // After the library exists: an inbound sync session reads
                     // straight out of it.
@@ -28,11 +49,35 @@ struct HuiverApp: App {
                         model.narrator?.checkpoint()
                         model.trimEngineMemoryIfIdle()
                     }
+                    // Coming forward is the moment to pick an interrupted
+                    // render back up — the same bargain the phone makes on
+                    // foregrounding, and a no-op when nothing was interrupted.
+                    if new == .active {
+                        model.narrator?.resumeRendering()
+                    }
                 }
                 .frame(minWidth: 900, minHeight: 600)
         }
         .windowResizability(.contentMinSize)
-        .commands { playbackCommands }
+        .commands {
+            playbackCommands
+            // One window is the app. A second one shares every model with the
+            // first, and its `.task` used to re-load a gigabyte of models over
+            // the running narrator's head — so File gets Open instead of New.
+            CommandGroup(replacing: .newItem) {
+                Button("Open Book…") { model.wantsImport = true }
+                    .keyboardShortcut("o", modifiers: .command)
+            }
+        }
+
+        // ⌘, — the pane is also a sidebar destination, but a Mac app answers
+        // the shortcut regardless.
+        Settings {
+            SettingsPane()
+                .environment(model)
+                .huiverTheme()
+                .frame(minWidth: 560, minHeight: 480)
+        }
     }
 
     /// Transport as menu items, which on a Mac is what makes it keyboard
@@ -52,10 +97,10 @@ struct HuiverApp: App {
 
             Divider()
 
-            Button("Back 15 Seconds") { narrator?.skip(by: -15) }
+            Button("Back \(Int(SkipIntervals.backward)) Seconds") { narrator?.skip(by: -SkipIntervals.backward) }
                 .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
                 .disabled(!playing)
-            Button("Forward 30 Seconds") { narrator?.skip(by: 30) }
+            Button("Forward \(Int(SkipIntervals.forward)) Seconds") { narrator?.skip(by: SkipIntervals.forward) }
                 .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
                 .disabled(!playing)
 

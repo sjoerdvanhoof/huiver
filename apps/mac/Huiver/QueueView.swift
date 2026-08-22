@@ -122,6 +122,11 @@ private struct JobRow: View {
         if isActive, let converter = model.converter, converter.chunkCount > 0 {
             parts.append("\(converter.renderedChunks)/\(converter.chunkCount)")
         }
+        // How long the wait actually is, from this device's measured pace.
+        if let chapter, !chapter.isComplete,
+           let compute = RenderPace.estimate(characters: chapter.characters) {
+            parts.append(Format.estimate(compute))
+        }
         return parts.joined(separator: " · ")
     }
 }

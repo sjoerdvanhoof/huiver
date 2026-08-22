@@ -34,6 +34,7 @@ struct QueueView: View {
 
     private var isEmpty: Bool {
         converter?.active == nil && waiting.isEmpty && asked.isEmpty
+            && converter?.failure == nil
     }
 
     var body: some View {
@@ -78,6 +79,17 @@ struct QueueView: View {
 
     private var list: some View {
         List {
+            // Why the last job stopped. The chapter row carries its own error,
+            // but a failure that never reached a chapter — the engine refusing
+            // to load, most often — had nowhere to be seen at all.
+            if let failure = converter?.failure {
+                Section("Last failure") {
+                    Text(failure)
+                        .font(.huiverCaption)
+                        .foregroundStyle(theme.colors.destructive)
+                }
+                .listRowBackground(theme.colors.card)
+            }
             if let active = converter?.active {
                 Section("Converting") {
                     JobRow(job: active, isActive: true)
@@ -201,6 +213,11 @@ private struct JobRow: View {
         parts.append("read by \(voiceName)")
         if isActive, let converter = model.converter, converter.chunkCount > 0 {
             parts.append("\(converter.renderedChunks)/\(converter.chunkCount)")
+        }
+        // How long the wait actually is, from this device's measured pace.
+        if let chapter, !chapter.isComplete,
+           let compute = RenderPace.estimate(characters: chapter.characters) {
+            parts.append(Format.estimate(compute))
         }
         return parts.joined(separator: " · ")
     }

@@ -44,7 +44,7 @@ struct MTLMLXProbeTests {
         let cache = try MLMultiArray(
             shape: [30, 2, 16, length, 64].map { NSNumber(value: $0) }, dataType: .float32
         )
-        mlx.seed(keys: cache, values: cache, length: length)
+        try mlx.seed(keys: cache, values: cache, length: length)
         let seeded = time(180, steps: 100)
 
         print(String(
@@ -58,16 +58,16 @@ struct MTLMLXProbeTests {
         let cond = try MLMultiArray(
             shape: [1, 34, 1024].map { NSNumber(value: $0) }, dataType: .float32
         )
-        func timePrefill(_ count: Int) -> Double {
+        func timePrefill(_ count: Int) throws -> Double {
             let clock = ContinuousClock.now
-            _ = mlx.prefill(cond: cond, textTokens: Array(repeating: 42, count: count))
+            _ = try mlx.prefill(cond: cond, textTokens: Array(repeating: 42, count: count))
             let elapsed = clock.duration(to: .now)
             return Double(elapsed.components.seconds)
                 + Double(elapsed.components.attoseconds) / 1e18
         }
-        let firstLong = timePrefill(265)
-        let repeatLong = timePrefill(265)
-        let neighbour = timePrefill(266)
+        let firstLong = try timePrefill(265)
+        let repeatLong = try timePrefill(265)
+        let neighbour = try timePrefill(266)
         print(String(
             format: "PREFILL PROBE: 265 first %.2fs, repeat %.2fs, 266 %.2fs",
             firstLong, repeatLong, neighbour

@@ -224,8 +224,10 @@ wasting the compile and logging something that reads like a crash.
 ## Not built
 
 ### Chatterbox Multilingual: the rest of it
-The loop is pinned down and both T3 modules convert (see **Built**). What is
-left is everything downstream of the speech tokens, and then Swift.
+**Superseded — see "Done since: the token loop on MLX" below.** The Swift
+port, shipping-size exports, multilingual voices and int8 quantisation all
+exist now; this section is kept as the record of what the plan looked like
+before they did.
 
 - **The models are exported at parity sizes, not shipping ones.** The flow was
   traced at a 50-token window against the built-in voice's 157-token prompt,
@@ -255,9 +257,9 @@ left is everything downstream of the speech tokens, and then Swift.
   connection than "diff, transfer, goodbye".
 
 ### Other
-- Voice recording on the Mac is still a disabled placeholder; cloning still
-  happens through `tools/export/export_voices.py`. It is the last thing
-  `apps/web` does that the Mac cannot.
+- ~~Voice recording on the Mac is still a disabled placeholder~~ — **done**:
+  `RecordVoiceSheet` records, `MTLVoiceCloner` clones on-device, and the voice
+  lands in the roster (commit "Add on-device Mac voice recording and cloning").
 - `apps/web` is still present. Its venv is not: the Chatterbox environment now
   lives in `tools/export/.venv-chatterbox`, which was the one ordering
   constraint on retiring the web app, and `HUIVER_CHATTERBOX_VENV` points the
@@ -395,3 +397,61 @@ N's mel decode under chunk N+1's token loop.
 - **Nano on the Mac or multilingual on the phone.** Nine times the arithmetic
   per token and a 333 MB decode cache is the reason there are two models; a
   device that can run both is a device that will be asked to.
+
+## Done since: the top-notch pass
+
+One sweep over both apps and the engine, in four layers.
+
+**Bugs.** The Mac now holds a power assertion while converting (idle sleep was
+ending overnight renders), recovers playback when the output device changes,
+finishes its lazy writes before ⌘Q (`applicationShouldTerminate` →
+`terminateLater`), guards `AppModel.load()` against ⌘N re-entry, and picks a
+book's voice from the *current* book after a language change. The phone loads
+synced voices (the two-directory `VoicePack.load`, filtered by
+`engine.canRead` so a multilingual voice cannot be picked as Nano's narrator),
+surfaces a refused Keychain save instead of showing a pairing that would
+evaporate, and stopped clobbering the narrator's audio session from the voice
+previews. Both apps persist playback rate and sampling options, separate
+import failures from engine failures, refuse duplicate imports by content
+identity, and confirm a voice change that would invalidate rendered chapters.
+Received sync voices are now also written into `voices.json` — before, a
+synced blob was invisible to `load` *and* re-requested by every later session.
+The renderer's quarter-second pause respects `endsMidSentence`: a force-split
+sentence gets a breath, not a hole.
+
+**Speed.** The two halves of a chunk's cost no longer run in series:
+`ChapterRenderer` decodes chunk N's mel off the engine actor (`S3Stack`,
+snapshotted models) while chunk N+1's token loop holds it — the ROADMAP's own
+named lever. The sampler's min-p-only path (the multilingual preset) replaced
+a per-token full-vocabulary sort with a max scan, and `MTLCond` is memoised
+per (voice, expression) instead of re-predicted per chunk. `splitToFit` splits
+at the sentence or clause nearest the middle rather than the midpoint word —
+chunk boundaries on disk are untouched, so audio stays interchangeable.
+Deliberately skipped: caching the conditioning prefix's KV inside the MLX
+prefill (~30 ms/chunk against re-verifying a parity-pinned forward pass) and
+int4 decode weights (wants a listening test first).
+
+**Export.** `AudiobookExporter` writes a chapter-marked `.m4b` per book — AAC
+via `AVAssetWriter`, a hand-assembled `tx3g` chapter track associated as the
+audio track's chapter list, cover art and tags — and tagged per-chapter
+`.m4a`s. The Mac gets save panels (entitlement now user-selected read-write);
+the phone gets the share sheet on books and rendered chapters.
+
+**Platform.** Now Playing and the media keys work on the Mac (the `#if
+os(iOS)` bodies were the only thing in the way), space toggles playback in the
+player, File ▸ Open ⌘O imports, ⌘, opens Settings, the Dock badges the queue
+and a notification fires when it drains (both platforms). Libraries got
+search, sort (Mac) and a Continue Listening row; players got a chapter list
+and a measured "~n min to convert" estimate (`RenderPace`, blended from real
+chunk timings); skip intervals are configurable and defined once
+(`SkipIntervals`). Read-along respects Reduce Motion, has a text-size control
+and can be hidden (Mac). The scrubbers are VoiceOver-adjustable, the transport
+is labelled, and the iOS scrubber bumps when a drag hits the rendered edge.
+The iOS target is iPhone-only until it has a real iPad layout. The phone can
+ask the Mac for a whole book ("Convert book on the Mac"), both Settings
+screens can copy the playback log, and the last sync time survives relaunch.
+
+Still open from this pass: parity coverage for `MTLCond` and the 512/256 mel
+windows, engine-level tests for `splitToFit`/`reload()` reentrancy (both need
+installed models), a proper first-run screen for a Mac without models, and
+per-book voice pinning on the phone (the Mac has it).

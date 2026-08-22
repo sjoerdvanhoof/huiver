@@ -18,6 +18,11 @@ struct ReadAlongView: View {
     let seek: (Double) -> Void
 
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The reading size, remembered — read-along is a reading surface, and a
+    /// fixed 13-point body is nobody's favourite at arm's length.
+    @AppStorage("readAlongPointSize") private var pointSize = 14.0
 
     /// Suspends auto-scroll while someone is reading ahead by hand, and for a
     /// few seconds after they stop. Without it the view yanks itself back to
@@ -38,27 +43,31 @@ struct ReadAlongView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Palette.Space.md) {
                     ForEach(map.chunks) { chunk in
-                        Text(chunk.text)
-                            .font(.body)
-                            .lineSpacing(3)
-                            .foregroundStyle(color(for: chunk))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, Palette.Space.md)
-                            .padding(.vertical, Palette.Space.sm)
-                            .background(
-                                chunk.index == currentIndex
-                                    ? theme.colors.primary.opacity(0.14)
-                                    : .clear,
-                                in: .rect(cornerRadius: Palette.Radius.md)
-                            )
-                            .contentShape(.rect)
-                            .onTapGesture {
-                                guard chunk.index < renderedChunks else { return }
-                                seek(chunk.start + 0.01)
-                                // Clicking is a decision to follow again.
-                                browsingUntil = nil
-                            }
-                            .id(chunk.index)
+                        // A button rather than a tap gesture, so the keyboard
+                        // and VoiceOver can reach what a click can.
+                        Button {
+                            seek(chunk.start + 0.01)
+                            // Clicking is a decision to follow again.
+                            browsingUntil = nil
+                        } label: {
+                            Text(chunk.text)
+                                .font(.system(size: pointSize))
+                                .lineSpacing(pointSize * 0.25)
+                                .foregroundStyle(color(for: chunk))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, Palette.Space.md)
+                                .padding(.vertical, Palette.Space.sm)
+                                .background(
+                                    chunk.index == currentIndex
+                                        ? theme.colors.primary.opacity(0.14)
+                                        : .clear,
+                                    in: .rect(cornerRadius: Palette.Radius.md)
+                                )
+                                .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(chunk.index >= renderedChunks)
+                        .id(chunk.index)
                     }
                 }
                 // A measure, not a phone width: lines the full window wide are
@@ -77,8 +86,12 @@ struct ReadAlongView: View {
             .onChange(of: currentIndex) { _, new in
                 guard let new, !isBrowsing else { return }
                 lastAutoScroll = Date()
-                withAnimation(.easeInOut(duration: 0.35)) {
+                if reduceMotion {
                     proxy.scrollTo(new, anchor: .center)
+                } else {
+                    withAnimation(.easeInOut(duration: 0.35)) {
+                        proxy.scrollTo(new, anchor: .center)
+                    }
                 }
             }
             .onAppear {
@@ -86,7 +99,31 @@ struct ReadAlongView: View {
                 lastAutoScroll = Date()
                 proxy.scrollTo(currentIndex, anchor: .center)
             }
+            .overlay(alignment: .topTrailing) { sizeControls }
         }
+    }
+
+    /// Two quiet buttons in the corner: the whole customisation a reading
+    /// pane needs, without a preferences trip.
+    private var sizeControls: some View {
+        HStack(spacing: Palette.Space.xs) {
+            Button {
+                pointSize = max(11, pointSize - 1)
+            } label: {
+                Image(systemName: "textformat.size.smaller")
+            }
+            .help("Smaller text")
+            Button {
+                pointSize = min(28, pointSize + 1)
+            } label: {
+                Image(systemName: "textformat.size.larger")
+            }
+            .help("Larger text")
+        }
+        .buttonStyle(.borderless)
+        .padding(Palette.Space.sm)
+        .background(.thinMaterial, in: .capsule)
+        .padding(Palette.Space.md)
     }
 
     private func color(for chunk: ChunkMap.Chunk) -> Color {

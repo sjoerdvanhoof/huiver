@@ -17,7 +17,10 @@ import os
 ///       --domain-type appDataContainer --domain-identifier online.mo4.huiver.nano \
 ///       --source Documents/playback.log --destination /tmp/playback.log
 enum PlaybackLog {
-    static let logger = Logger(subsystem: "online.mo4.huiver.nano", category: "playback")
+    /// The running app's own identifier, so filtering Console by subsystem on
+    /// the Mac does not require knowing the phone's bundle id.
+    private static let subsystem = Bundle.main.bundleIdentifier ?? "online.mo4.huiver"
+    static let logger = Logger(subsystem: subsystem, category: "playback")
 
     static func note(_ message: String) {
         logger.info("\(message, privacy: .public)")
@@ -29,7 +32,9 @@ enum PlaybackLog {
     /// The copy on disk. Its own queue, so a log line never waits on the disk
     /// while audio is being scheduled, and never lands out of order.
     private final class Trail: @unchecked Sendable {
-        private let queue = DispatchQueue(label: "online.mo4.huiver.nano.playback-log")
+        private let queue = DispatchQueue(
+            label: (Bundle.main.bundleIdentifier ?? "online.mo4.huiver") + ".playback-log"
+        )
         private let url = URL.documentsDirectory.appendingPathComponent("playback.log")
         /// Enough to hold a long listening session, small enough to pull over
         /// USB without thinking about it. Past this the file starts again.

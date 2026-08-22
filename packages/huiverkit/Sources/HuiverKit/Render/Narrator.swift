@@ -47,9 +47,13 @@ public final class Narrator {
     /// rendered, which is why the player marks it with a tilde.
     public private(set) var estimatedDuration: Double = 0
     /// Playback speed. Pitch-corrected, so a book at 1.5x still sounds human.
+    /// Remembered across launches: a listener who reads at 1.5× reads at 1.5×,
+    /// and resetting them to 1 every morning is the kind of thing that makes an
+    /// audiobook app feel borrowed.
     public var rate: Float = 1 {
         didSet {
             speed.rate = max(0.5, min(3, rate))
+            UserDefaults.standard.set(rate, forKey: "playbackRate")
             publish()
         }
     }
@@ -182,6 +186,26 @@ public final class Narrator {
         self.progress = progress
         self.renderer = ChapterRenderer(engine: engine, library: library)
 
+        // Observers do not fire during init, so the stored rate is applied to
+        // the field directly; `startAudioSession` reads it into the node.
+        if let stored = UserDefaults.standard.object(forKey: "playbackRate") as? Float,
+           stored > 0 {
+            rate = max(0.5, min(3, stored))
+        }
+
+        // The engine stops itself when the output device changes — headphones
+        // unplugged, AirPods switching away — and without this the app keeps
+        // claiming to speak into hardware that is gone. macOS only: on iOS
+        // the audio session manages routes, and unplugging headphones is
+        // supposed to pause, not carry on through the speaker.
+        #if os(macOS)
+        NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: audio, queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.audioConfigurationChanged() }
+        }
+        #endif
+
         nowPlaying.activate(
             commands: NowPlaying.Commands(
                 play: { [weak self] in self?.resume() },
@@ -278,8 +302,14 @@ public final class Narrator {
             // However this pass ends — finished, superseded, stopped or
             // failed — say so, so the app can give back what synthesis was
             // holding. Whether anything is actually idle is the app's call:
-            // a superseded pass ends while its replacement runs.
-            defer { renderPassDidEnd?() }
+            // a superseded pass ends while its replacement runs. The power
+            // assertion covers the synthesis itself: playback keeps the
+            // system awake on its own, rendering ahead of it does not.
+            PowerAssertion.begin()
+            defer {
+                PowerAssertion.end()
+                renderPassDidEnd?()
+            }
             do {
                 if stale {
                     try await library.discardAudio(chapterId: chapter.id, bookId: book.id)
@@ -703,6 +733,39 @@ public final class Narrator {
         recordPosition(flushing: true)
     }
 
+    /// `checkpoint`, but only returning once the position is on disk.
+    ///
+    /// For quitting: `checkpoint` hands the write to a task that a terminating
+    /// process may never run, which is exactly the moment the write matters.
+    public func checkpointNow() async {
+        guard let book, let chapter, chapterId != nil else { return }
+        await progress.setPosition(position, chapterId: chapter.id, bookId: book.id)
+        await progress.flush()
+    }
+
+    /// The engine stopped because the output device changed. Restart it and
+    /// rebuild the queue from disk at the position the listener could hear —
+    /// the node's own timeline does not reliably survive the change.
+    private func audioConfigurationChanged() {
+        guard started, chapterId != nil else { return }
+        PlaybackLog.note("audio configuration changed \(vitals)")
+        do {
+            try audio.start()
+        } catch {
+            // No output to speak into. Saying paused is the honest state, and
+            // leaves the listener a working play button for when one is back.
+            PlaybackLog.note(
+                "engine would not restart after the change: \(error.localizedDescription)"
+            )
+            recordPosition(flushing: true)
+            state = .paused
+            return
+        }
+        player.play()
+        if state == .paused { player.pause() }
+        seek(to: position)
+    }
+
     /// The chapter has played to the end.
     ///
     /// Marking it finished comes first and unconditionally: it is true whether
@@ -931,6 +994,16 @@ public final class Narrator {
         let target = index + delta
         guard book.chapters.indices.contains(target) else { return }
         play(book: book, chapter: book.chapters[target], voice: voice, options: currentOptions)
+    }
+
+    /// Jump straight to a chapter of the current book, in the same voice —
+    /// what a chapter list inside the player means.
+    public func jumpToChapter(at index: Int) {
+        guard let book, let voice = currentVoice,
+              book.chapters.indices.contains(index),
+              book.chapters[index].id != chapter?.id
+        else { return }
+        play(book: book, chapter: book.chapters[index], voice: voice, options: currentOptions)
     }
 
     public var hasNextChapter: Bool { offsetChapterExists(1) }

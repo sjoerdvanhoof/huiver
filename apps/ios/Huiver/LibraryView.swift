@@ -18,6 +18,7 @@ struct LibraryView: View {
     @State private var pendingDeletion: Book?
     /// The book being pushed, driving navigation in place of a link.
     @State private var opened: Book?
+    @State private var query = ""
 
     var body: some View {
         NavigationStack {
@@ -89,6 +90,19 @@ struct LibraryView: View {
         } message: {
             Text(model.loadFailure ?? "")
         }
+        // Imports get their own alert: a bad EPUB is not the engine's fault,
+        // and used to be reported as if it were.
+        .alert(
+            "Could not import",
+            isPresented: .init(
+                get: { model.importFailure != nil },
+                set: { if !$0 { model.importFailure = nil } }
+            )
+        ) {
+            Button("OK") { model.importFailure = nil }
+        } message: {
+            Text(model.importFailure ?? "")
+        }
     }
 
     @ViewBuilder
@@ -143,7 +157,16 @@ struct LibraryView: View {
     /// The row styling is stripped back so it still looks like the stack did.
     private var shelf: some View {
         List {
-            ForEach(model.books) { book in
+            if query.isEmpty, let target = continueTarget {
+                continueRow(target)
+                    .listRowInsets(EdgeInsets(
+                        top: Palette.Space.sm, leading: Palette.Space.lg,
+                        bottom: Palette.Space.sm, trailing: Palette.Space.lg
+                    ))
+                    .listRowBackground(theme.colors.background)
+                    .listRowSeparatorTint(theme.colors.border)
+            }
+            ForEach(shownBooks) { book in
                 // A Button with an explicit destination rather than a
                 // NavigationLink: a link inside a List insists on drawing a
                 // disclosure chevron, and there is no API to turn it off.
@@ -170,6 +193,99 @@ struct LibraryView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .refreshable { await model.refresh() }
+        .searchable(text: $query, prompt: "Title or author")
+    }
+
+    /// The shelf, filtered by the search field. A shelf of forty
+    /// public-domain books is exactly what this app accumulates.
+    private var shownBooks: [Book] {
+        guard !query.isEmpty else { return model.books }
+        let wanted = query.lowercased()
+        return model.books.filter {
+            $0.title.lowercased().contains(wanted)
+                || ($0.author?.lowercased().contains(wanted) ?? false)
+        }
+    }
+
+    // MARK: - Continue listening
+
+    /// The most recently touched unfinished chapter across the whole shelf —
+    /// the one thing a listener opening the app almost always wants first.
+    private var continueTarget: (book: Book, chapter: Chapter, position: Double)? {
+        var best: (Book, Chapter, ChapterProgress)?
+        for book in model.books {
+            for chapter in book.chapters {
+                guard let record = model.progress[chapter.id],
+                      !record.finished, record.position > 1
+                else { continue }
+                if best == nil || record.updatedAt > best!.2.updatedAt {
+                    best = (book, chapter, record)
+                }
+            }
+        }
+        return best.map { ($0.0, $0.1, $0.2.position) }
+    }
+
+    private func continueRow(
+        _ target: (book: Book, chapter: Chapter, position: Double)
+    ) -> some View {
+        Button {
+            resume(target)
+        } label: {
+            HStack(spacing: Palette.Space.md) {
+                BookCover(
+                    bookId: target.book.id,
+                    title: target.book.title,
+                    url: model.coverURL(for: target.book),
+                    width: 48,
+                    radius: Palette.Radius.md
+                )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Continue listening")
+                        .font(.huiverCaption)
+                        .foregroundStyle(theme.colors.mutedForeground)
+                    Text(target.chapter.title)
+                        .font(.huiverLabel)
+                        .foregroundStyle(theme.colors.foreground)
+                        .lineLimit(1)
+                    Text("\(target.book.title) · \(Format.duration(target.position)) in")
+                        .font(.huiverCaption)
+                        .foregroundStyle(theme.colors.mutedForeground)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Image(systemName: "play.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(theme.colors.primaryForeground)
+                    .frame(width: 32, height: 32)
+                    .background(theme.colors.primary, in: .circle)
+            }
+            .padding(Palette.Space.md)
+            .background(theme.colors.card, in: .rect(cornerRadius: Palette.Radius.lg))
+            .overlay(
+                RoundedRectangle(cornerRadius: Palette.Radius.lg)
+                    .strokeBorder(theme.colors.border)
+            )
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(model.narrator == nil)
+        .accessibilityLabel(
+            "Continue listening, \(target.chapter.title), \(target.book.title)"
+        )
+    }
+
+    private func resume(_ target: (book: Book, chapter: Chapter, position: Double)) {
+        guard let narrator = model.narrator, let voice = model.selectedVoice else { return }
+        if target.chapter.isComplete, target.chapter.renderedVoice == voice.id {
+            narrator.replay(book: target.book, chapter: target.chapter, from: target.position)
+        } else {
+            narrator.play(
+                book: target.book, chapter: target.chapter, voice: voice,
+                options: model.options, from: target.position
+            )
+        }
+        showingPlayer = true
     }
 
     @ViewBuilder
@@ -219,6 +335,11 @@ private struct BookRow: View {
         .padding(.horizontal, Palette.Space.lg)
         .padding(.vertical, Palette.Space.md)
         .contentShape(.rect)
+        // One element, one sentence — not four Texts read as a run-on.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            [book.title, book.author, meta].compactMap { $0 }.joined(separator: ", ")
+        )
     }
 
     private var meta: String {
