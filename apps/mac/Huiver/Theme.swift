@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// The web app's design tokens, exactly as `apps/ios/Huiver/Theme.swift` has
-/// them — the Mac and the phone share a palette the way they share HuiverKit,
-/// but each app compiles its own copy because the tokens live with the views,
-/// not with the engine.
+/// The Narcisse "Gilded Pool" tokens, exactly as `apps/ios/Huiver/Theme.swift`
+/// has them — the Mac and the phone share a palette the way they share
+/// HuiverKit, but each app compiles its own copy because the tokens live with
+/// the views, not with the engine. Still water and gold: ivory light mode,
+/// water-green ink dark mode, gold accent (AA-checked on both backgrounds).
 enum Palette {
     struct Colors {
         let background: Color
@@ -18,27 +19,27 @@ enum Palette {
     }
 
     static let light = Colors(
-        background: hex(0xfd_fc_f9),
-        foreground: hex(0x0a_0a_0a),
-        card: hex(0xff_ff_ff),
-        primary: hex(0xb9_4a_00),
-        primaryForeground: hex(0xfd_fa_f3),
-        muted: hex(0xf5_f5_f5),
-        mutedForeground: hex(0x73_73_73),
-        destructive: hex(0xe7_00_0b),
-        border: hex(0xe5_e5_e5)
+        background: hex(0xfa_f7_ee),
+        foreground: hex(0x14_20_1b),
+        card: hex(0xff_fd_f6),
+        primary: hex(0x8a_61_10),
+        primaryForeground: hex(0xff_fb_f0),
+        muted: hex(0xef_eb_dd),
+        mutedForeground: hex(0x5c_6b_60),
+        destructive: hex(0xc0_36_2c),
+        border: hex(0xe2_dc_ca)
     )
 
     static let dark = Colors(
-        background: hex(0x0f_0d_0b),
-        foreground: hex(0xf6_f5_f2),
-        card: hex(0x19_17_14),
-        primary: hex(0xf5_91_45),
-        primaryForeground: hex(0x1a_10_0a),
-        muted: hex(0x26_26_26),
-        mutedForeground: hex(0xa1_a1_a1),
-        destructive: hex(0xff_64_67),
-        border: hex(0x2a_27_24)
+        background: hex(0x0b_16_13),
+        foreground: hex(0xf4_f1_e6),
+        card: hex(0x14_20_19),
+        primary: hex(0xe3_b3_4c),
+        primaryForeground: hex(0x1c_15_04),
+        muted: hex(0x1c_2a_24),
+        mutedForeground: hex(0xa3_b3_a6),
+        destructive: hex(0xff_6b_62),
+        border: hex(0x24_35_2c)
     )
 
     static func hex(_ value: UInt32) -> Color {

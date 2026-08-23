@@ -4,6 +4,7 @@ import SwiftUI
 struct HuiverApp: App {
     @State private var model = AppModel()
     @State private var sync = SyncModel()
+    @AppStorage("onboarded") private var onboarded = false
     @Environment(\.scenePhase) private var phase
 
     init() {
@@ -19,6 +20,18 @@ struct HuiverApp: App {
                 .environment(model)
                 .environment(sync)
                 .huiverTheme()
+                // Model loading keeps running underneath: onboarding and the
+                // first compile are concurrent, so the waterline is already
+                // mid-fill when the cover comes down.
+                .fullScreenCover(isPresented: .init(
+                    get: { !onboarded },
+                    set: { if !$0 { onboarded = true } }
+                )) {
+                    OnboardingView { onboarded = true }
+                        .environment(model)
+                        .huiverTheme()
+                        .interactiveDismissDisabled()
+                }
                 .task { await model.load() }
                 .onChange(of: phase) { _, new in
                     switch new {

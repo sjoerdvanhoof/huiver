@@ -85,7 +85,7 @@ Release and installs over USB. `ios:device` builds **Release** while the check a
 builds Debug, so a Release-only compile error will not show up until this runs.
 
 Add `bun run ios:previews` in front only when the voices themselves changed — it
-re-renders all 11 samples through the model and is most of the wall clock.
+re-renders all 5 samples through the model and is most of the wall clock.
 
 Run it yourself rather than asking me to — a change is not on my phone until it
 has. It needs the iPhone plugged in and unlocked; say so if that is why it failed.

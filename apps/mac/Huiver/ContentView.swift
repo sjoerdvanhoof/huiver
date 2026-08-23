@@ -46,6 +46,7 @@ struct ContentView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.theme) private var theme
 
+    @AppStorage("onboarded") private var onboarded = false
     @State private var navigation = AppNavigation()
 
     var body: some View {
@@ -62,15 +63,30 @@ struct ContentView: View {
         } detail: {
             detail
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    // Everywhere except the full player, which it would repeat.
-                    if model.narrator?.chapterId != nil, navigation.selection != .player {
-                        MiniPlayerBar { navigation.showPlayer() }
-                            .background(.bar)
-                            .overlay(alignment: .top) { Divider().overlay(theme.colors.border) }
+                    VStack(spacing: 0) {
+                        PreparingWaterline(
+                            progress: model.preparing,
+                            since: model.preparingSince,
+                            firstRun: !model.hasPreparedBefore
+                        )
+                        // Everywhere except the full player, which it would repeat.
+                        if model.narrator?.chapterId != nil, navigation.selection != .player {
+                            MiniPlayerBar { navigation.showPlayer() }
+                                .background(.bar)
+                                .overlay(alignment: .top) { Divider().overlay(theme.colors.border) }
+                        }
                     }
                 }
         }
         .environment(navigation)
+        .sheet(isPresented: .init(
+            get: { !onboarded },
+            set: { if !$0 { onboarded = true } }
+        )) {
+            OnboardingSheet { onboarded = true }
+                .environment(model)
+                .huiverTheme()
+        }
         .alert(
             "Something went wrong",
             isPresented: .init(

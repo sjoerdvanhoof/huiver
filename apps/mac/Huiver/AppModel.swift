@@ -38,6 +38,11 @@ final class AppModel {
     /// What the engine is doing while it loads, for the preparing state.
     private(set) var preparing: ChatterboxEngine.LoadProgress?
     private(set) var preparingSince: Date?
+    /// True on the run that actually compiles the models, which is the slow one
+    /// worth explaining. Set once the first load finishes.
+    var hasPreparedBefore: Bool {
+        UserDefaults.standard.bool(forKey: "preparedOnce")
+    }
     /// Every chapter's listening state, for the lists that draw it. Refreshed
     /// from the store rather than read through it, so a view body never has to
     /// await an actor.
@@ -248,6 +253,7 @@ final class AppModel {
             }
             placement = await engine.placement
             engineLanguages = engine.languages
+            UserDefaults.standard.set(true, forKey: "preparedOnce")
         } catch {
             loadFailure = error.localizedDescription
         }

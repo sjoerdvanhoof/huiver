@@ -23,8 +23,8 @@ decoder be a single fixed-shape Core ML model -- see common.PROMPT_TOKEN_LEN.
 Sources, in the order they are picked up:
 
     the model's own voice        always; it lives in the weights
-    apps/web/data/voices/builtin the LibriVox pack, if `bun run voices` was run
-    apps/web/data/voices/recorded anything recorded in the web app
+    legacy/web/data/voices/builtin the LibriVox pack, if `bun run voices` was run
+    legacy/web/data/voices/recorded anything recorded in the web app
 """
 
 from __future__ import annotations
@@ -68,6 +68,10 @@ LANGUAGE_NAMES = {
 # describes the reader. It is what makes choosing a voice a choice about who
 # reads your book rather than a choice between "UK female, measured" and "UK
 # female, crisp".
+# The four narrators the phone ships (2F/2M, UK+US). The rest of READERS stays
+# for the Mac's multilingual export, which clones the whole clip pool.
+NANO_SHIP_LIST = {"lv_klett", "lv_golding", "lv_smith", "lv_clarke"}
+
 READERS = {
     "lv_klett": (
         "Elizabeth",
@@ -194,8 +198,8 @@ def main():
     ap.add_argument(
         "--clips",
         type=Path,
-        default=Path(__file__).resolve().parents[2] / "apps" / "web" / "data" / "voices",
-        help="where the desktop app keeps its reference clips",
+        default=Path(__file__).resolve().parents[2] / "legacy" / "web" / "data" / "voices",
+        help="where the retired web app keeps its reference clips",
     )
     ap.add_argument(
         "--language-clips",
@@ -220,7 +224,7 @@ def main():
         print("loading Chatterbox Nano")
         model = load_nano()
         cond_prompt_len = 375
-        default_voice = ("nano_default", "Nano", "the model's own voice")
+        default_voice = ("nano_default", "Narrator", "the model's own even voice")
     print(f"  conditioning prompt: {cond_prompt_len} speech tokens")
     if model.conds is None:
         raise SystemExit("this checkpoint has no conds.pt, so it has no built-in voice")
@@ -264,7 +268,11 @@ def main():
     clips = []
     for folder, prefix in ((args.clips / "builtin", ""), (args.clips / "recorded", "rec_")):
         if folder.is_dir():
-            clips += [(prefix, path) for path in sorted(folder.glob("*.wav"))]
+            for path in sorted(folder.glob("*.wav")):
+                # Nano ships a trimmed roster; recorded clips always pass.
+                if not args.multilingual and prefix == "" and path.stem not in NANO_SHIP_LIST:
+                    continue
+                clips.append((prefix, path))
     if not clips:
         print(f"  no reference clips under {args.clips} — run: bun run voices")
 

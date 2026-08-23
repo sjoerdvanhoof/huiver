@@ -99,7 +99,7 @@ def main():
     ap.add_argument(
         "--clips",
         type=Path,
-        default=Path(__file__).resolve().parents[2] / "apps" / "web" / "data" / "voices",
+        default=Path(__file__).resolve().parents[2] / "legacy" / "web" / "data" / "voices",
         help="where the desktop app keeps its reference clips",
     )
     ap.add_argument(

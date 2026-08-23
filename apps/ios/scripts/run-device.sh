@@ -80,6 +80,6 @@ if [ "$launch" -eq 1 ]; then
 fi
 
 echo
-echo "installed. Look for 'huiver nano' on the home screen."
+echo "installed. Look for 'Narcisse' on the home screen."
 echo "First launch after a re-export compiles the models for the device (minutes);"
-echo "the app shows a progress screen while it does."
+echo "the app shows a gold waterline under the library while it does."

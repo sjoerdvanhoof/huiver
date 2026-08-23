@@ -2,6 +2,16 @@ import AVFoundation
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// The Voices-screen entrance to `VoiceCaptureView`: a sheet that closes when
+/// the voice exists or the person backs out.
+struct RecordVoiceSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VoiceCaptureView(onDone: { _ in dismiss() }, onCancel: { dismiss() })
+    }
+}
+
 /// Record fifteen seconds, get a voice.
 ///
 /// The passage matters more than it looks. A clone is built from one continuous
@@ -9,10 +19,15 @@ import UniformTypeIdentifiers
 /// sentence at a normal pace gives it something to generalise from, while
 /// counting to ten teaches it to count. The suggested text is there to be read
 /// rather than to be admired.
-struct RecordVoiceSheet: View {
+///
+/// Shared between the Voices sheet and onboarding, so finishing and backing
+/// out are injected rather than assuming a dismissible container.
+struct VoiceCaptureView: View {
+    let onDone: (Voice) -> Void
+    let onCancel: () -> Void
+
     @Environment(AppModel.self) private var model
     @Environment(\.theme) private var theme
-    @Environment(\.dismiss) private var dismiss
 
     @State private var recorder = VoiceRecorder()
     @State private var name = ""
@@ -84,7 +99,7 @@ struct RecordVoiceSheet: View {
             Text("Add your voice").font(.huiverTitle)
             Text(
                 recorder.state == .denied
-                    ? "Huiver needs the microphone. Allow it in System Settings ▸ Privacy & "
+                    ? "Narcisse needs the microphone. Allow it in System Settings ▸ Privacy & "
                         + "Security ▸ Microphone, then reopen this window."
                     : "Record the passage below, or upload a clear audio sample. Trim it to "
                         + "the part that sounds most like you. The original is never kept."
@@ -197,7 +212,7 @@ struct RecordVoiceSheet: View {
                     choosingFile = true
                 }
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel") { onCancel() }
             }
 
         case .recording:
@@ -205,7 +220,7 @@ struct RecordVoiceSheet: View {
                 Button("Stop", systemImage: "stop.fill") { recorder.stop() }
                     .buttonStyle(.borderedProminent)
                 Spacer()
-                Button("Cancel") { recorder.reset(); dismiss() }
+                Button("Cancel") { recorder.reset(); onCancel() }
             }
 
         case .finished:
@@ -239,7 +254,7 @@ struct RecordVoiceSheet: View {
                         }
                     }
                     Spacer()
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") { onCancel() }
                     Button(cloning ? "Creating…" : "Create voice") { create() }
                         .buttonStyle(.borderedProminent)
                         .disabled(cloning || !isUsable || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -286,12 +301,12 @@ struct RecordVoiceSheet: View {
         failure = nil
         Task {
             do {
-                _ = try await model.cloneVoice(
+                let voice = try await model.cloneVoice(
                     from: selectedSamples,
                     name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                     language: .named(languageCode)
                 )
-                dismiss()
+                onDone(voice)
             } catch {
                 failure = error.localizedDescription
             }

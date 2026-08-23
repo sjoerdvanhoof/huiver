@@ -10,9 +10,6 @@ struct LibraryView: View {
 
     @State private var importing = false
     @State private var showingPlayer = false
-    /// The prepare screen can be put aside: adding a book works while the models
-    /// are still compiling, even though playing one does not.
-    @State private var preparingDismissed = false
     /// The book a swipe has offered to delete, held until it is confirmed.
     @State private var pendingDeletion: Book?
     /// The book being pushed, driving navigation in place of a link.
@@ -25,7 +22,7 @@ struct LibraryView: View {
                 theme.colors.background.ignoresSafeArea()
                 content
             }
-            .navigationTitle("huiver")
+            .navigationTitle("Narcisse")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { importing = true } label: { Image(systemName: "plus") }
@@ -101,21 +98,24 @@ struct LibraryView: View {
         } message: {
             Text(model.importFailure ?? "")
         }
+        // A clone that failed after onboarding moved on: not the engine's
+        // fault either, and it says what to do next.
+        .alert(
+            "Could not create your voice",
+            isPresented: .init(
+                get: { model.cloneFailure != nil },
+                set: { if !$0 { model.cloneFailure = nil } }
+            )
+        ) {
+            Button("OK") { model.cloneFailure = nil }
+        } message: {
+            Text(model.cloneFailure ?? "")
+        }
     }
 
     @ViewBuilder
     private var content: some View {
-        if let preparing = model.preparing, !preparingDismissed {
-            VStack(spacing: Palette.Space.lg) {
-                PreparingView(
-                    progress: preparing,
-                    since: model.preparingSince,
-                    firstRun: !model.hasPreparedBefore
-                )
-                Button("Add a book while you wait") { preparingDismissed = true }
-                    .font(.huiverLabel)
-            }
-        } else if model.isLoading && model.books.isEmpty {
+        if model.isLoading && model.books.isEmpty {
             ProgressView()
         } else if model.books.isEmpty {
             emptyShelf
@@ -132,7 +132,7 @@ struct LibraryView: View {
             Text("No books yet")
                 .font(.huiverHeading)
                 .foregroundStyle(theme.colors.foreground)
-            Text("Add an EPUB and huiver will read it to you in a cloned voice — all on this phone.")
+            Text("Add an EPUB and Narcisse will read it to you in a cloned voice — all on this phone.")
                 .font(.huiverBody)
                 .foregroundStyle(theme.colors.mutedForeground)
                 .multilineTextAlignment(.center)
@@ -285,9 +285,11 @@ struct LibraryView: View {
     @ViewBuilder
     private var bottom: some View {
         VStack(spacing: 0) {
-            if let preparing = model.preparing, preparingDismissed {
-                PreparingStrip(progress: preparing, since: model.preparingSince)
-            }
+            PreparingWaterline(
+                progress: model.preparing,
+                since: model.preparingSince,
+                firstRun: !model.hasPreparedBefore
+            )
             if model.narrator?.chapterId != nil {
                 MiniPlayer { showingPlayer = true }
                     .background(.bar)
@@ -345,27 +347,5 @@ private struct BookRow: View {
             parts.append(Language.named(book.languageCode).name)
         }
         return parts.joined(separator: " · ")
-    }
-}
-
-/// The slim version of the prepare progress, for once it has been dismissed.
-struct PreparingStrip: View {
-    let progress: ChatterboxEngine.LoadProgress
-    let since: Date?
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        VStack(spacing: Palette.Space.xs) {
-            ProgressView(value: progress.fraction)
-            HStack {
-                Text("Getting the voice model ready · \(progress.model)")
-                Spacer()
-                if let since { Text(since, style: .timer).monospacedDigit() }
-            }
-            .font(.huiverCaption)
-            .foregroundStyle(theme.colors.mutedForeground)
-        }
-        .padding(.horizontal, Palette.Space.lg)
-        .padding(.vertical, Palette.Space.sm)
     }
 }
