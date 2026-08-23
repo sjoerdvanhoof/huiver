@@ -257,6 +257,7 @@ public final class Converter {
                 // Stopping is ordinary, and leaves a usable prefix.
             } catch {
                 failure = error.localizedDescription
+                PlaybackLog.note("convert failed: \(PlaybackLog.detail(of: error))")
                 switch error {
                 case ChatterboxEngine.EngineError.textTooLong,
                      ChatterboxEngine.EngineError.voiceMismatch:

@@ -4,7 +4,6 @@ import SwiftUI
 struct HuiverApp: App {
     @State private var model = AppModel()
     @State private var sync = SyncModel()
-    @Environment(\.colorScheme) private var scheme
     @Environment(\.scenePhase) private var phase
 
     init() {
@@ -19,7 +18,7 @@ struct HuiverApp: App {
             LibraryView()
                 .environment(model)
                 .environment(sync)
-                .huiverTheme(scheme)
+                .huiverTheme()
                 .task { await model.load() }
                 .onChange(of: phase) { _, new in
                     switch new {

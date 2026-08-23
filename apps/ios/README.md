@@ -58,21 +58,49 @@ development is expected.
 Offered to the Neural Engine, `S3Flow` — a conformer over 2036 positions, 7,000
 lines of MIL — keeps `ANECompilerService` at 100% for **over nineteen minutes**
 without finishing; loaded as `cpuAndGPU` the same package is ready in **2.2
-seconds**, both measured cold on an M-series Mac. So the export now records
-`computeUnits` on three of the four packages and `ComputeUnits.ladder(for:)`
-reads it before loading, which is what keeps the Neural Engine out of it:
+seconds**, both measured cold on an M-series Mac. So the export records
+`computeUnits` on every package and `ComputeUnits.ladder(for:)` reads it before
+loading. Nothing goes to the Neural Engine, and each package has its own reason:
 
-| package | units | why |
-| --- | --- | --- |
-| `T3Decode` | all | fixed shapes, hundreds of runs per chunk — the one the engine earns |
-| `S3Flow` | cpu_gpu | the compile above; the mel decoder runs twice per window against an idle GPU |
-| `T3Prefill` | cpu_gpu | flexible text dimension, which the ANE compiler will not take (`ANECCompile() FAILED`) |
-| `S3Vocoder` | cpu_gpu | `HiFTGenerator`'s DFT stand-ins fail the ANE compile outright |
+| package | why not the Neural Engine |
+| --- | --- |
+| `T3Decode` | compiles and loads there, then **fails every prediction** — see below |
+| `S3Flow` | the nineteen-minute compile above |
+| `T3Prefill` | flexible text dimension, which the ANE compiler will not take (`ANECCompile() FAILED`) |
+| `S3Vocoder` | `HiFTGenerator`'s DFT stand-ins fail the ANE compile outright |
 
-Only the first three lines are a change of placement on paper: the prefill and
-the vocoder already fell back on their own, having spent the compile first.
-Packages exported before this can be relabelled without re-tracing — the weights
-do not change, only one metadata string:
+### The decode step is the one that hurt
+
+`T3Decode` is the graph the Neural Engine should have earned: fixed shapes,
+hundreds of runs per chunk. It compiles for the ANE, it loads there without
+complaint, and then every prediction comes back as
+
+```
+ANEProgramProcessRequestDirect() Failed with status=0x1 : statusType=0x9:
+  Program Inference error
+```
+
+which Core ML hands the app as `Unable to compute the prediction using ML
+Program. It can be an invalid input data or broken/unsupported model.` The
+stateful KV cache is the likely cause — two 31 MB fp16 states — so reclaiming
+the engine means exporting the cache as ordinary inputs and outputs rather than
+as Core ML state. That is a different export, not a flag; `--decode-units all`
+is there for the day it exists.
+
+Two things about this are worth keeping in mind, because together they hid it
+for a long time:
+
+- **A compile failure falls back; an inference failure does not.** `S3Vocoder`
+  fails `ANECCompile()` and Core ML quietly moves it to the GPU, so it works.
+  `T3Decode` compiles *successfully*, which commits Core ML to the engine, and
+  there is nowhere to fall back to once a prediction throws.
+- **The Mac cannot see it.** macOS answers an `.all` load for these graphs with
+  the GPU, so `swift test --filter EngineTests` renders a sentence perfectly
+  while the phone cannot produce a single chunk. Reproduce it by asking for the
+  engine explicitly, which is what `MLComputeUnits.cpuAndNeuralEngine` is for.
+
+Packages exported before all this can be relabelled without re-tracing — the
+weights do not change, only one metadata string:
 
 ```bash
 cd tools/export && ./.venv-chatterbox/bin/python tag_compute_units.py ../../apps/ios/build
@@ -370,9 +398,9 @@ been observed, and **no timing on real hardware has been measured yet.**
 
 Two things are worth knowing before reading too much into any of it:
 
-- Only the decode step is on the Neural Engine, and deliberately — see the
-  `computeUnits` table above. It is the hot loop, and it is also the only one of
-  the four whose ANE compile is worth waiting for.
+- Nothing runs on the Neural Engine — see the `computeUnits` table above. The
+  decode step is the hot loop and would be the one to want there; it is also the
+  one whose predictions fail there, so these numbers are GPU numbers.
 - Nothing has been profiled per stage, so where the time actually goes — prefill,
   the token loop, the mel decoder, the vocoder — is still unknown.
 

@@ -59,9 +59,20 @@ CACHE_SHAPE = (N_LAYER, 1, N_HEAD, MAX_CONTEXT, HEAD_DIM)
 
 # Which processors a package is allowed to use, mirroring `export_mtl.py`.
 #
-# Only the decode step is worth the Neural Engine. It is a fixed-shape graph
-# that runs hundreds of times per chunk, which is exactly what the ANE is for.
-# The other three are all load-time losses:
+# Nothing here goes to the Neural Engine, and the reasons differ per package.
+#
+# * **T3Decode** was the one that should have earned it: a fixed-shape graph
+#   running hundreds of times per chunk. It compiles for the ANE and loads
+#   there happily, and then *every prediction fails* -- `ANEProgramProcess-
+#   RequestDirect() Failed with status=0x1 : statusType=0x9: Program Inference
+#   error`, surfacing to the app as Core ML's unhelpful "invalid input data or
+#   broken/unsupported model". The stateful KV cache is the likely reason (two
+#   31 MB fp16 states); reclaiming the ANE means exporting the cache as
+#   ordinary inputs and outputs rather than as state, which is a different
+#   export, not a flag. Reproduce with
+#   `MLComputeUnits.cpuAndNeuralEngine` -- macOS puts an `.all` load on the GPU
+#   and never sees it, which is why the Mac ran this for months while the
+#   phone could not synthesise a single chunk.
 #
 # * **S3Flow** compiles for the ANE, but a conformer over 2036 positions had
 #   `ANECompilerService` pinned at 100% for *nineteen minutes without
@@ -78,7 +89,8 @@ CACHE_SHAPE = (N_LAYER, 1, N_HEAD, MAX_CONTEXT, HEAD_DIM)
 #
 # `ComputeUnits.ladder(for:)` on the Swift side reads the `computeUnits` value
 # recorded below out of the compiled model's metadata *before* loading, so a
-# package marked here is never offered to the Neural Engine at all.
+# package marked here is never offered to the Neural Engine at all -- which for
+# the decode step is the difference between rendering and not.
 UNITS = {
     "all": ct.ComputeUnit.ALL,
     "cpu_gpu": ct.ComputeUnit.CPU_AND_GPU,
@@ -126,7 +138,10 @@ def save(model, out: Path, name: str, meta: dict):
 # ------------------------------------------------------------------------ T3
 
 
-def export_t3(model, out: Path, quant: str, verify: bool, prefill_units: str = "cpu_gpu"):
+def export_t3(
+    model, out: Path, quant: str, verify: bool,
+    prefill_units: str = "cpu_gpu", decode_units: str = "cpu_gpu",
+):
     import t3_export as T
 
     print("T3: building modules")
@@ -208,13 +223,16 @@ def export_t3(model, out: Path, quant: str, verify: bool, prefill_units: str = "
         states=[state("k_cache"), state("v_cache")],
         minimum_deployment_target=ct.target.iOS18,
         compute_precision=ct.precision.FLOAT16,
-        compute_units=ct.ComputeUnit.ALL,
+        compute_units=UNITS[decode_units],
     )
     save(
         quantize(mldecode, quant),
         out,
         "T3Decode",
         dict(
+            # The hot loop, and still not on the Neural Engine: it predicts
+            # there only by failing. See UNITS.
+            computeUnits=decode_units,
             maxContext=MAX_CONTEXT,
             maxGenTokens=MAX_GEN_TOKENS,
             nLayer=N_LAYER,
@@ -344,6 +362,11 @@ def main():
         "--prefill-units", choices=sorted(UNITS), default="cpu_gpu",
         help="which processors the prefill may use (see UNITS; default: %(default)s)",
     )
+    ap.add_argument(
+        "--decode-units", choices=sorted(UNITS), default="cpu_gpu",
+        help="which processors the decode step may use; `all` needs a decode "
+             "export whose KV cache is not Core ML state (see UNITS)",
+    )
     ap.add_argument("--no-verify", action="store_true", help="skip the torch parity checks")
     args = ap.parse_args()
 
@@ -354,7 +377,7 @@ def main():
     if args.only != "s3":
         export_t3(
             model, args.out, args.quantize, not args.no_verify,
-            prefill_units=args.prefill_units,
+            prefill_units=args.prefill_units, decode_units=args.decode_units,
         )
     if args.only != "t3":
         export_s3(

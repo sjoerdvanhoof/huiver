@@ -95,14 +95,32 @@ extension EnvironmentValues {
     }
 }
 
+/// Reads the appearance where it can actually be seen. `colorScheme` in the
+/// `App` struct is resolved once, outside any window, so a theme built there is
+/// light for good — this modifier lives in the view tree, where the value
+/// tracks the window and updates when the system switches.
+///
+/// Taking the scheme as an argument is what went wrong before: the app passed
+/// the `App`'s value (always light) and `LibraryView` passed its own (correctly
+/// dark), which put two palettes in one window — a light background with
+/// light-on-light titles drawn over it. There is no argument to get wrong now.
+private struct HuiverThemeModifier: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        let theme = Theme(scheme)
+        content
+            .environment(\.theme, theme)
+            .tint(theme.colors.primary)
+    }
+}
+
 extension View {
     /// Installs the palette for the current appearance, and tints the standard
     /// controls with it so buttons and progress bars match without every call
     /// site saying so.
-    func huiverTheme(_ scheme: ColorScheme) -> some View {
-        let theme = Theme(scheme)
-        return environment(\.theme, theme)
-            .tint(theme.colors.primary)
+    func huiverTheme() -> some View {
+        modifier(HuiverThemeModifier())
     }
 }
 

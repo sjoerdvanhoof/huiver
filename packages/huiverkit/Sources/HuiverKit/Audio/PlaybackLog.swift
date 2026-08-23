@@ -27,6 +27,25 @@ enum PlaybackLog {
         trail.append(message)
     }
 
+    /// Everything an error knows, not just the sentence it shows a listener.
+    ///
+    /// Core ML reports a failed prediction as "Unable to compute the prediction
+    /// using ML Program. It can be an invalid input data or broken/unsupported
+    /// model" whatever went wrong, and puts the actual reason — a compiler
+    /// message, an ANE status code, a shape — in `NSUnderlyingError`, however
+    /// many layers down. That sentence cost a long time to get behind once; the
+    /// log should not make anyone do it twice.
+    static func detail(of error: Error) -> String {
+        var parts: [String] = []
+        var current = error as NSError
+        while true {
+            parts.append("\(current.domain) \(current.code): \(current.localizedDescription)")
+            guard let next = current.userInfo[NSUnderlyingErrorKey] as? NSError else { break }
+            current = next
+        }
+        return parts.joined(separator: " ← ")
+    }
+
     private static let trail = Trail()
 
     /// The copy on disk. Its own queue, so a log line never waits on the disk

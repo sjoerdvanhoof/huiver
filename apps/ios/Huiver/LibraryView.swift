@@ -6,7 +6,6 @@ import UniformTypeIdentifiers
 /// pinned to the bottom where a thumb reaches it.
 struct LibraryView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.colorScheme) private var scheme
     @Environment(\.theme) private var theme
 
     @State private var importing = false
@@ -45,7 +44,6 @@ struct LibraryView: View {
                 BookView(book: book)
             }
         }
-        .huiverTheme(scheme)
         .fileImporter(
             isPresented: $importing,
             // Identified by contents rather than name, so anything readable is

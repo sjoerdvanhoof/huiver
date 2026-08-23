@@ -447,7 +447,7 @@ public final class Narrator {
     /// pause button stop working, because both keyed off the state.
     private func interrupted(by error: Error) {
         let message = error.localizedDescription
-        PlaybackLog.note("render interrupted: \(message) \(vitals)")
+        PlaybackLog.note("render interrupted: \(PlaybackLog.detail(of: error)) \(vitals)")
         renderFailure = message
         // Nothing rendered at all means there is genuinely nothing to listen to,
         // and that is worth showing as a failure.

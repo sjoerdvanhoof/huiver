@@ -23,12 +23,14 @@ from pathlib import Path
 
 import coremltools as ct
 
-# Same split as UNITS in export_models.py, and for the same reasons: the decode
-# step is the one graph the Neural Engine earns its compile on.
+# Same split as UNITS in export_models.py, and for the same reasons. Nothing
+# goes to the Neural Engine: the three that would waste a compile there, and
+# T3Decode, which compiles for it and then fails every prediction.
 DEFAULTS = {
     "S3Flow": "cpu_gpu",
     "S3Vocoder": "cpu_gpu",
     "T3Prefill": "cpu_gpu",
+    "T3Decode": "cpu_gpu",
 }
 
 
