@@ -319,9 +319,17 @@ public final class Narrator {
         // everything it reads has to be in place first.
         state = .preparing
 
-        // Audio rendered in a different voice is not this chapter's audio.
+        // Audio rendered in a different voice is trimmed rather than thrown
+        // away: everything up to the listening position stays as it was read —
+        // re-listening to minutes of chapter in the new voice is not what a
+        // voice change asks for — and the new narrator takes over from there.
+        // Starting from the top (position zero) keeps nothing, which is the
+        // old behaviour for a chapter nobody was inside.
         let stale = chapter.renderedVoice != nil && chapter.renderedVoice != voice.id
-        render(book: book, chapter: chapter, voice: voice, options: options, discardingStale: stale)
+        render(
+            book: book, chapter: chapter, voice: voice, options: options,
+            discardingStaleAfter: stale ? max(0, startPosition) : nil
+        )
     }
 
     /// Run the renderer for a chapter, scheduling chunks as they land.
@@ -335,7 +343,7 @@ public final class Narrator {
         chapter: Chapter,
         voice: Voice,
         options: SamplingOptions,
-        discardingStale stale: Bool = false,
+        discardingStaleAfter heard: Double? = nil,
         reloadingModels reload: Bool = false
     ) {
         // Each pass gets a number and its own stop switch. A pass that has been
@@ -364,8 +372,24 @@ public final class Narrator {
                 renderPassDidEnd?()
             }
             do {
-                if stale {
-                    try await library.discardAudio(chapterId: chapter.id, bookId: book.id)
+                if let heard {
+                    // The chunk under the playhead is kept too, so the new
+                    // voice drops in at the next sentence gap rather than
+                    // mid-word. What follows it goes: it was rendered by the
+                    // old voice and the listener has asked for a new one.
+                    let keep = Self.chunksStarted(
+                        before: heard,
+                        urls: renderer.rendered(
+                            book: book.id, chapter: chapter.id, of: chapter.chunkCount
+                        )
+                    )
+                    PlaybackLog.note(
+                        "voice change keeps \(keep) heard chunk(s) up to "
+                            + "\(String(format: "%.1f", heard))s"
+                    )
+                    try await library.discardAudio(
+                        chapterId: chapter.id, bookId: book.id, fromChunk: keep
+                    )
                 }
                 try startAudioSession()
                 if reload {
@@ -753,14 +777,17 @@ public final class Narrator {
 
     /// Jump to the stored position, once there is enough audio to jump to.
     ///
-    /// The two-second margin is `seekTarget`'s: a forward seek that would gain
-    /// less than that is refused, so asking before the edge has cleared it
-    /// would silently do nothing and leave the listener at the start of a
-    /// chapter they were halfway through. Waiting is only a moment — the
-    /// renderer reads existing chunks off disk as fast as it can open them.
+    /// The quarter-second is `seekTarget`'s edge: asking before the rendered
+    /// edge has cleared the target would clamp the seek short of it. It used
+    /// to wait a full two seconds past the target, but a voice change keeps
+    /// exactly the chunks the listener has heard — the edge lands a breath
+    /// past the position — and waiting for more meant sitting at the top of
+    /// the chapter until the new voice had synthesized its first chunk.
+    /// Landing on the edge and running dry there is the right wait: at the
+    /// listener's place, not at the beginning.
     private func applyPendingResume() {
         guard let target = pendingResume, started else { return }
-        guard renderedSeconds > target + 2 || isFullyRendered else { return }
+        guard renderedSeconds - 0.25 > target || isFullyRendered else { return }
         pendingResume = nil
         PlaybackLog.note("resuming at \(String(format: "%.1f", target))s \(vitals)")
         seek(to: target)
@@ -1148,6 +1175,22 @@ public final class Narrator {
         let target = max(0, min(seconds, edge))
         if target > position, target - position < 2 { return nil }
         return target
+    }
+
+    /// How many rendered chunks the listener has started, walking the files in
+    /// order and summing their durations — the count to keep when a new voice
+    /// takes over at `position`. Zero for a listener at the top of the chapter,
+    /// which keeps nothing: the whole chapter re-renders, as it always did.
+    nonisolated static func chunksStarted(before position: Double, urls: [URL]) -> Int {
+        guard position > 0 else { return 0 }
+        var elapsed = 0.0
+        var count = 0
+        for url in urls {
+            guard elapsed < position else { break }
+            count += 1
+            elapsed += WavFile.duration(ofFileAt: url) ?? 0
+        }
+        return count
     }
 
     /// Where a chunk should start: straight after the last one, unless the

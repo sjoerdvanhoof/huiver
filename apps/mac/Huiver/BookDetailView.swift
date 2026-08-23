@@ -363,6 +363,10 @@ private struct ChapterRow: View {
 
     private var narrator: Narrator? { model.narrator }
     private var isCurrent: Bool { narrator?.chapterId == chapter.id }
+    /// Who reads this chapter, when more than one voice does — a voice change
+    /// mid-listen keeps the audio already heard, so a chapter can carry two
+    /// narrators and the row should say where the second one drops in.
+    @State private var voiceSpans: [ChunkMap.VoiceSpan] = []
     private var isConverting: Bool { model.converter?.isQueued(chapter.id) ?? false }
     private var isFinished: Bool { model.isFinished(chapter) }
     /// Playing this chapter is also rendering it: the narrator writes every
@@ -404,12 +408,38 @@ private struct ChapterRow: View {
                         ListenedBar(fraction: listened / max(estimatedLength, 1))
                             .padding(.top, 2)
                     }
+                    if voiceSpans.count > 1 {
+                        VoiceSpanStrip(
+                            spans: voiceSpans,
+                            total: max(
+                                estimatedLength,
+                                voiceSpans.reduce(0) { $0 + $1.duration }
+                            ),
+                            name: { id in
+                                model.voices.first { $0.id == id }?.name ?? "Former voice"
+                            }
+                        )
+                        .padding(.top, 1)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
             .disabled(narrator == nil)
+            // Re-read who says what when audio lands or is trimmed. Off the
+            // main actor: it opens every chunk's WAV header.
+            .task(id: "\(chapter.renderedChunks)-\(chapter.renderedVoice ?? "")") {
+                guard chapter.renderedChunks > 0, let library = model.library else {
+                    voiceSpans = []
+                    return
+                }
+                let book = book
+                let chapter = chapter
+                voiceSpans = await Task.detached(priority: .utility) {
+                    ChunkMap.voiceSpans(book: book, chapter: chapter, library: library)
+                }.value
+            }
 
             ChapterActionButton(state: actionState, action: toggleRender)
                 .disabled(model.converter == nil || cannotRender)
@@ -560,6 +590,45 @@ private struct ChapterRow: View {
                 .clipShape(.capsule)
             }
             .frame(height: 2)
+        }
+    }
+
+    /// The chapter's narrators laid out along the row, each name sitting where
+    /// its voice drops in, with a hairline marking the handover. Quiet on
+    /// purpose: it shares the row with a progress bar and a detail line.
+    private struct VoiceSpanStrip: View {
+        let spans: [ChunkMap.VoiceSpan]
+        let total: Double
+        let name: (String) -> String
+
+        @Environment(\.theme) private var theme
+
+        var body: some View {
+            GeometryReader { geometry in
+                ZStack(alignment: .topLeading) {
+                    ForEach(spans) { span in
+                        HStack(spacing: 3) {
+                            // The first voice starts the chapter rather than
+                            // dropping into it, so it gets no handover mark.
+                            if span.start > 0 {
+                                Rectangle()
+                                    .fill(theme.colors.border)
+                                    .frame(width: 1, height: 10)
+                            }
+                            Text(name(span.voiceId))
+                                .font(.caption2)
+                                .foregroundStyle(theme.colors.mutedForeground)
+                                .lineLimit(1)
+                        }
+                        .offset(x: geometry.size.width * min(1, span.start / max(total, 1)))
+                    }
+                }
+            }
+            .frame(height: 12)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                "Read by " + spans.map { name($0.voiceId) }.joined(separator: ", then ")
+            )
         }
     }
 

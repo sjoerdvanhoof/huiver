@@ -120,4 +120,40 @@ struct SeekTests {
         #expect(Narrator.seekTarget(to: 0, from: 0, rendered: 0) == nil)
         #expect(Narrator.seekTarget(to: 0, from: 0, rendered: 0.2) == nil)
     }
+
+    // MARK: - What a voice change keeps
+
+    /// Three one-second chunks on disk, and the count of them the listener has
+    /// started — which is what a new voice keeps when it takes over.
+    func writeChunks(_ count: Int) throws -> [URL] {
+        let directory = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let samples = [Float](repeating: 0, count: WavFile.sampleRate)
+        return try (0..<count).map { index in
+            let url = directory.appendingPathComponent(String(format: "%05d.wav", index))
+            try WavFile.data(from: samples).write(to: url)
+            return url
+        }
+    }
+
+    @Test("a listener at the top of the chapter keeps nothing")
+    func keepsNothingAtTheTop() throws {
+        #expect(Narrator.chunksStarted(before: 0, urls: try writeChunks(3)) == 0)
+    }
+
+    @Test("the chunk under the playhead is kept, what follows is not")
+    func keepsTheHeardPrefix() throws {
+        let urls = try writeChunks(3)
+        // Half a second into the first chunk: only that chunk has been started.
+        #expect(Narrator.chunksStarted(before: 0.5, urls: urls) == 1)
+        // Half a second into the second.
+        #expect(Narrator.chunksStarted(before: 1.5, urls: urls) == 2)
+        // Exactly on a boundary: the chunk ahead has not been started yet.
+        #expect(Narrator.chunksStarted(before: 1.0, urls: urls) == 1)
+    }
+
+    @Test("a position past the rendered edge keeps everything there is")
+    func keepsEverythingPastTheEdge() throws {
+        #expect(Narrator.chunksStarted(before: 30, urls: try writeChunks(3)) == 3)
+    }
 }

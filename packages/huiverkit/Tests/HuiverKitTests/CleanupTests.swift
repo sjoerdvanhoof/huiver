@@ -145,6 +145,54 @@ struct CleanupTests {
         #expect(after.renderedVoice == nil)
         #expect(progress[chapter.id]?.finished == true, "still finished")
     }
+
+    /// A voice change mid-listen trims rather than discards: the chunks the
+    /// listener has heard stay, everything after them goes.
+    @Test("discarding from a chunk keeps the heard prefix")
+    func discardsFromAChunkOnly() async throws {
+        let library = try Library(
+            root: URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        )
+        let book = try await library.add(
+            ExtractedBook(
+                title: "A Book", author: nil,
+                chapters: [ExtractedChapter(title: "One", text: "Words enough to chunk.")]
+            ),
+            language: .english
+        )
+        let chapterId = book.chapters[0].id
+        let directory = library.audioDirectory(book: book.id, chapter: chapterId)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let samples = [Float](repeating: 0, count: WavFile.sampleRate)
+        for index in 0..<4 {
+            try WavFile.data(from: samples).write(
+                to: library.chunkURL(book: book.id, chapter: chapterId, index: index)
+            )
+        }
+        var chapter = book.chapters[0]
+        chapter.chunkCount = 4
+        chapter.renderedChunks = 4
+        chapter.renderedVoice = "ruth"
+        try await library.update(chapter: chapter, in: book.id)
+
+        try await library.discardAudio(chapterId: chapterId, bookId: book.id, fromChunk: 2)
+
+        let after = try #require(await library.book(book.id)?.chapters.first)
+        #expect(after.renderedChunks == 2)
+        #expect(after.renderedVoice == "ruth", "the prefix is still whose it was")
+        for index in 0..<4 {
+            let exists = FileManager.default.fileExists(
+                atPath: library.chunkURL(book: book.id, chapter: chapterId, index: index).path
+            )
+            #expect(exists == (index < 2), "chunk \(index)")
+        }
+
+        // From chunk zero is the old full discard.
+        try await library.discardAudio(chapterId: chapterId, bookId: book.id, fromChunk: 0)
+        let cleared = try #require(await library.book(book.id)?.chapters.first)
+        #expect(cleared.renderedChunks == 0)
+        #expect(cleared.renderedVoice == nil)
+    }
 }
 
 /// The sleep timer's state machine. The fade itself is audio-engine territory

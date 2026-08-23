@@ -4,8 +4,10 @@ public struct Chapter: Codable, Sendable, Identifiable, Hashable {
     public var id: String
     public var title: String
     public var text: String
-    /// Which voice the stored audio was rendered in, so switching voice
-    /// invalidates it rather than producing a chapter read by two narrators.
+    /// The voice of the most recent render pass. A chapter can hold audio
+    /// from more than one narrator — a voice change mid-listen keeps what was
+    /// already heard — and `ChunkManifest.chunkVoices` records who read what;
+    /// this is the voice a resumed render would continue in.
     public var renderedVoice: String?
     public var chunkCount: Int = 0
     public var renderedChunks: Int = 0
@@ -340,12 +342,37 @@ public actor Library {
         try save()
     }
 
-    /// Throw away a chapter's audio, which is what a change of voice means.
+    /// Throw away a chapter's audio — "Render again", or a chunker change.
     public func discardAudio(chapterId: String, bookId: String) throws {
         try? FileManager.default.removeItem(at: audioDirectory(book: bookId, chapter: chapterId))
         guard var chapter = book(bookId)?.chapters.first(where: { $0.id == chapterId }) else { return }
         chapter.renderedChunks = 0
         chapter.renderedVoice = nil
+        try update(chapter: chapter, in: bookId)
+    }
+
+    /// Throw away a chapter's audio from one chunk on, keeping what comes
+    /// before it — what a change of voice means mid-listen: the part already
+    /// heard stays as it was read, and the new voice takes over from here.
+    public func discardAudio(chapterId: String, bookId: String, fromChunk index: Int) throws {
+        guard index > 0 else {
+            return try discardAudio(chapterId: chapterId, bookId: bookId)
+        }
+        // Rendered files are a contiguous prefix, so walking until the first
+        // gap deletes everything at or past `index`.
+        var chunk = index
+        while FileManager.default.fileExists(
+            atPath: chunkURL(book: bookId, chapter: chapterId, index: chunk).path
+        ) {
+            try? FileManager.default.removeItem(
+                at: chunkURL(book: bookId, chapter: chapterId, index: chunk)
+            )
+            chunk += 1
+        }
+        guard var chapter = book(bookId)?.chapters.first(where: { $0.id == chapterId }),
+              chapter.renderedChunks > index
+        else { return }
+        chapter.renderedChunks = index
         try update(chapter: chapter, in: bookId)
     }
 

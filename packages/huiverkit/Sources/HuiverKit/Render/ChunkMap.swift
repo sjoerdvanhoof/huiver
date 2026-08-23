@@ -13,28 +13,43 @@ public struct ChunkManifest: Codable, Sendable, Equatable {
     public static let currentVersion = 1
 
     public var version: Int
-    /// The voice these chunks were rendered in. A manifest whose voice does not
-    /// match the audio's belongs to a previous render.
+    /// The voice of the most recent render pass — the one reading anything
+    /// that still has to be rendered. Chunks already on disk may have been
+    /// read by someone else; see `chunkVoices`.
     public var voice: String
     /// Which `Chunker` decided these boundaries. Absent in manifests written
     /// before the chunker was versioned, which by definition means v1.
     public var chunker: Int?
     public var texts: [String]
+    /// Who reads each chunk, one entry per chunk. A chapter used to have one
+    /// narrator by construction — changing voice discarded the audio — but a
+    /// voice change mid-listen now keeps what was already heard, so a chapter
+    /// can be read by more than one voice and this is the record of who says
+    /// what. Absent in older manifests, where `voice` covers every chunk.
+    public var chunkVoices: [String]?
 
     /// The chunker that produced this, treating a manifest too old to say as
     /// the only version that existed when it was written.
     public var chunkerVersion: Int { chunker ?? 1 }
 
+    /// Which voice reads this chunk.
+    public func voice(forChunk index: Int) -> String {
+        guard let chunkVoices, chunkVoices.indices.contains(index) else { return voice }
+        return chunkVoices[index]
+    }
+
     public init(
         version: Int = ChunkManifest.currentVersion,
         voice: String,
         chunker: Int? = Chunker.version,
-        texts: [String]
+        texts: [String],
+        chunkVoices: [String]? = nil
     ) {
         self.version = version
         self.voice = voice
         self.chunker = chunker
         self.texts = texts
+        self.chunkVoices = chunkVoices
     }
 
     public func write(to directory: URL) {
@@ -133,5 +148,47 @@ public struct ChunkMap: Sendable, Equatable {
             elapsed += duration
         }
         return ChunkMap(chunks: chunks)
+    }
+
+    /// One narrator's continuous stretch of a chapter, for the rows that say
+    /// who reads what and where each voice drops in.
+    public struct VoiceSpan: Sendable, Equatable, Identifiable {
+        public let voiceId: String
+        /// Where this narrator starts, in chapter seconds.
+        public let start: Double
+        /// How much they read, in rendered seconds.
+        public var duration: Double
+
+        public var id: Double { start }
+    }
+
+    /// Who reads this chapter, in order, from the audio actually on disk.
+    ///
+    /// Walks the rendered prefix — the same contiguous-files rule everything
+    /// else follows — and folds consecutive chunks by the same voice into one
+    /// span. A chapter rendered before per-chunk voices were written down
+    /// reports a single span in the manifest's voice.
+    public static func voiceSpans(
+        book: Book, chapter: Chapter, library: Library
+    ) -> [VoiceSpan] {
+        let directory = library.audioDirectory(book: book.id, chapter: chapter.id)
+        let manifest = ChunkManifest.read(from: directory)
+
+        var spans: [VoiceSpan] = []
+        var elapsed = 0.0
+        var index = 0
+        while true {
+            let url = library.chunkURL(book: book.id, chapter: chapter.id, index: index)
+            guard let duration = WavFile.duration(ofFileAt: url) else { break }
+            let voice = manifest?.voice(forChunk: index) ?? chapter.renderedVoice ?? ""
+            if !spans.isEmpty, spans[spans.count - 1].voiceId == voice {
+                spans[spans.count - 1].duration += duration
+            } else {
+                spans.append(VoiceSpan(voiceId: voice, start: elapsed, duration: duration))
+            }
+            elapsed += duration
+            index += 1
+        }
+        return spans
     }
 }

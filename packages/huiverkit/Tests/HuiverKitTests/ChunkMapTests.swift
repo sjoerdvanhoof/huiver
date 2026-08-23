@@ -165,4 +165,71 @@ struct ChunkMapTests {
         #expect(abs(map.chunks[1].start - 1.0) < 0.01)
         #expect(abs(map.chunks[2].start - 3.0) < 0.01, "the third begins after the first two")
     }
+
+    // MARK: - Who reads what
+
+    /// A manifest written before per-chunk voices existed answers with its one
+    /// voice for every chunk; a newer one answers per chunk, and past the end
+    /// of its record falls back to the latest pass's voice.
+    @Test("the per-chunk voice falls back to the manifest voice")
+    func perChunkVoiceFallback() {
+        let legacy = ChunkManifest(voice: "ruth", texts: ["One.", "Two."])
+        #expect(legacy.voice(forChunk: 0) == "ruth")
+        #expect(legacy.voice(forChunk: 1) == "ruth")
+
+        let mixed = ChunkManifest(
+            voice: "peter", texts: ["One.", "Two.", "Three."], chunkVoices: ["ruth", "peter"]
+        )
+        #expect(mixed.voice(forChunk: 0) == "ruth")
+        #expect(mixed.voice(forChunk: 1) == "peter")
+        #expect(mixed.voice(forChunk: 2) == "peter", "past the record is the latest voice")
+    }
+
+    /// Write two chunks by one voice and one by another, and the spans say who
+    /// reads what, where, and for how long.
+    @Test("voice spans fold consecutive chunks by the same reader")
+    func voiceSpansFromDisk() async throws {
+        let (library, book) = try await makeLibraryBook()
+        let chapter = book.chapters[0]
+        let directory = library.audioDirectory(book: book.id, chapter: chapter.id)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        for (index, seconds) in [1.0, 2.0, 1.0].enumerated() {
+            let samples = [Float](repeating: 0, count: Int(Double(WavFile.sampleRate) * seconds))
+            try WavFile.data(from: samples).write(
+                to: library.chunkURL(book: book.id, chapter: chapter.id, index: index)
+            )
+        }
+        ChunkManifest(
+            voice: "peter",
+            texts: ["One.", "Two.", "Three.", "Four."],
+            chunkVoices: ["ruth", "ruth", "peter", "peter"]
+        ).write(to: directory)
+
+        let spans = ChunkMap.voiceSpans(book: book, chapter: chapter, library: library)
+        #expect(spans.map(\.voiceId) == ["ruth", "peter"])
+        #expect(abs(spans[0].start) < 0.01)
+        #expect(abs(spans[0].duration - 3.0) < 0.01)
+        #expect(abs(spans[1].start - 3.0) < 0.01, "the second voice drops in after the first")
+        #expect(abs(spans[1].duration - 1.0) < 0.01, "and only the rendered chunk counts")
+    }
+
+    /// A chapter rendered before per-chunk voices is one span, in the voice
+    /// the chapter says read it.
+    @Test("a legacy chapter reports a single span")
+    func legacySingleSpan() async throws {
+        let (library, book) = try await makeLibraryBook()
+        var chapter = book.chapters[0]
+        chapter.renderedVoice = "ruth"
+        let directory = library.audioDirectory(book: book.id, chapter: chapter.id)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let samples = [Float](repeating: 0, count: WavFile.sampleRate)
+        try WavFile.data(from: samples).write(
+            to: library.chunkURL(book: book.id, chapter: chapter.id, index: 0)
+        )
+
+        let spans = ChunkMap.voiceSpans(book: book, chapter: chapter, library: library)
+        #expect(spans.map(\.voiceId) == ["ruth"])
+    }
 }

@@ -5,10 +5,12 @@ import Foundation
 /// The per-chunk files are the whole resume story. A render interrupted
 /// anywhere — the app was killed, the phone got hot, you pressed stop — leaves
 /// a prefix of numbered WAVs behind, and starting again picks up at the first
-/// one missing. As on the desktop, a prefix is only reused when the work is
-/// identical: same text, same voice, same chunking. Change the voice and the
-/// audio is discarded rather than continued, because half a chapter in one
-/// voice and half in another is worse than re-rendering.
+/// one missing. A prefix is reused whenever the boundaries still hold: same
+/// text, same chunking. A different *voice* continues rather than discards —
+/// the listener keeps what they have already heard and the new narrator takes
+/// over at the first missing chunk, with `ChunkManifest.chunkVoices` recording
+/// who read what. Trimming back to the listening position, when a voice change
+/// should take over mid-chapter, is the caller's move (`Narrator.play`).
 public actor ChapterRenderer {
     public struct Progress: Sendable {
         public let chunkIndex: Int
@@ -65,15 +67,16 @@ public actor ChapterRenderer {
                     // Audio left over from a different chunker cannot be
                     // continued: `00007.wav` says something else under the new
                     // boundaries, so carrying on from it would repeat one
-                    // stretch of the chapter and skip another. Audio in a
-                    // different voice cannot be continued either — half a
-                    // chapter each from two narrators is worse than
-                    // re-rendering — and the check has to live here, where
-                    // every render path passes: `Narrator.play` compared
-                    // voices itself, but the converter queue did not.
-                    if let existing = ChunkManifest.read(from: directory),
-                       existing.chunkerVersion != Chunker.version || existing.voice != voice.id {
+                    // stretch of the chapter and skip another. The check has
+                    // to live here, where every render path passes. Audio in
+                    // a different voice, though, *is* continued: a listener
+                    // who changes narrator mid-chapter keeps what they have
+                    // already heard, and the new voice takes over at the next
+                    // missing chunk — who read what is written down below.
+                    var existing = ChunkManifest.read(from: directory)
+                    if let stored = existing, stored.chunkerVersion != Chunker.version {
                         try await library.discardAudio(chapterId: chapter.id, bookId: book.id)
+                        existing = nil
                     }
 
                     try FileManager.default.createDirectory(
@@ -84,7 +87,19 @@ public actor ChapterRenderer {
                     // but only by a build that chunks the same way, and read-
                     // along would then silently highlight the wrong sentence
                     // for every chapter rendered before a chunker change.
-                    ChunkManifest(voice: voice.id, texts: chunks.map(\.text)).write(to: directory)
+                    //
+                    // Also *who* says it: chunks already on disk keep whoever
+                    // read them, everything still to render is this voice.
+                    let onDisk = rendered(book: book.id, chapter: chapter.id, of: chunks.count).count
+                    var chunkVoices = (0..<min(onDisk, chunks.count)).map {
+                        existing?.voice(forChunk: $0) ?? voice.id
+                    }
+                    chunkVoices += Array(
+                        repeating: voice.id, count: max(0, chunks.count - chunkVoices.count)
+                    )
+                    ChunkManifest(
+                        voice: voice.id, texts: chunks.map(\.text), chunkVoices: chunkVoices
+                    ).write(to: directory)
 
                     // The mel decode runs off the engine actor, so chunk N's
                     // audio is decoded *while* chunk N+1's token loop holds
