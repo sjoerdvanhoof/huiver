@@ -70,7 +70,7 @@ public final class Converter {
     public var didChange: (@MainActor () -> Void)?
 
     /// Identifier registered in Info.plist under `BGTaskSchedulerPermittedIdentifiers`.
-    public static let backgroundTaskIdentifier = "online.mo4.huiver.nano.convert"
+    public static let backgroundTaskIdentifier = "com.hoofkantoor.huiver.convert"
 
     private let engine: ChatterboxEngine
     /// Set when a render threw, because the likeliest reason is a model that has
@@ -389,25 +389,39 @@ public final class Converter {
             forTaskWithIdentifier: backgroundTaskIdentifier,
             using: nil
         ) { task in
-            // The system can reclaim the slot at any point. Stopping between
-            // chunks is what keeps the prefix on disk valid, so expiry asks for
-            // a stop rather than letting the process be killed mid-write.
-            task.expirationHandler = {
-                Task { @MainActor in Converter.current?.cancelAll() }
+            handleBackgroundTask(task)
+        }
+    }
+
+    /// The scheduler owns the callback queue; application state belongs to the
+    /// main actor. Keeping this bridge nonisolated avoids Swift's runtime queue
+    /// assertion when iOS grants a task.
+    private nonisolated static func handleBackgroundTask(_ task: BGTask) {
+        let scheduled = SendableBackgroundTask(task)
+        // The system can reclaim the slot at any point. Stopping between chunks
+        // keeps the prefix on disk valid.
+        scheduled.value.expirationHandler = {
+            Task { @MainActor in Converter.current?.cancelAll() }
+        }
+        Task { @MainActor in
+            guard let converter = Converter.current else {
+                scheduled.value.setTaskCompleted(success: false)
+                return
             }
-            Task { @MainActor in
-                guard let converter = Converter.current else {
-                    task.setTaskCompleted(success: false)
-                    return
-                }
-                converter.resumeInBackground()
-                await converter.waitUntilIdle()
-                // Ask for another slot if there is still a queue: one grant is
-                // not enough for a book, and iOS will not volunteer a second.
-                converter.scheduleBackgroundProcessing()
-                task.setTaskCompleted(success: true)
-            }
+            converter.resumeInBackground()
+            await converter.waitUntilIdle()
+            converter.scheduleBackgroundProcessing()
+            scheduled.value.setTaskCompleted(success: true)
         }
     }
     #endif
 }
+
+#if canImport(UIKit)
+/// BGTask is framework-owned and intentionally survives the scheduler callback,
+/// but lacks a Sendable annotation for the hop into our main-actor handler.
+private final class SendableBackgroundTask: @unchecked Sendable {
+    let value: BGTask
+    init(_ value: BGTask) { self.value = value }
+}
+#endif

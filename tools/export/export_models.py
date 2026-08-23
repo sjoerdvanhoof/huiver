@@ -57,6 +57,34 @@ from common import (
 
 CACHE_SHAPE = (N_LAYER, 1, N_HEAD, MAX_CONTEXT, HEAD_DIM)
 
+# Which processors a package is allowed to use, mirroring `export_mtl.py`.
+#
+# Only the decode step is worth the Neural Engine. It is a fixed-shape graph
+# that runs hundreds of times per chunk, which is exactly what the ANE is for.
+# The other three are all load-time losses:
+#
+# * **S3Flow** compiles for the ANE, but a conformer over 2036 positions had
+#   `ANECompilerService` pinned at 100% for *nineteen minutes without
+#   finishing* on an M-series Mac; the same package loads as `cpuAndGPU` in 2.2
+#   seconds. That compile is redone whenever the cache is cold -- after a
+#   re-export, after a reinstall, after iOS purges Caches -- and it is the
+#   whole of "loading the models is suddenly slow".
+# * **T3Prefill** has a flexible text dimension, the one thing the ANE compiler
+#   will not take. It already falls back on its own (`ANECCompile() FAILED` in
+#   the device log); this just stops it wasting the attempt.
+# * **S3Vocoder** is `HiFTGenerator`, the same class the multilingual export
+#   keeps off the ANE for the same reason: the compile fails on the DFT
+#   stand-ins and Core ML retries elsewhere.
+#
+# `ComputeUnits.ladder(for:)` on the Swift side reads the `computeUnits` value
+# recorded below out of the compiled model's metadata *before* loading, so a
+# package marked here is never offered to the Neural Engine at all.
+UNITS = {
+    "all": ct.ComputeUnit.ALL,
+    "cpu_gpu": ct.ComputeUnit.CPU_AND_GPU,
+    "cpu": ct.ComputeUnit.CPU_ONLY,
+}
+
 
 def quantize(model, mode: str):
     """Shrink the weights, leaving activations alone.
@@ -98,7 +126,7 @@ def save(model, out: Path, name: str, meta: dict):
 # ------------------------------------------------------------------------ T3
 
 
-def export_t3(model, out: Path, quant: str, verify: bool):
+def export_t3(model, out: Path, quant: str, verify: bool, prefill_units: str = "cpu_gpu"):
     import t3_export as T
 
     print("T3: building modules")
@@ -140,7 +168,7 @@ def export_t3(model, out: Path, quant: str, verify: bool):
         ],
         minimum_deployment_target=ct.target.iOS18,
         compute_precision=ct.precision.FLOAT16,
-        compute_units=ct.ComputeUnit.ALL,
+        compute_units=UNITS[prefill_units],
     )
     save(
         quantize(mlprefill, quant),
@@ -149,6 +177,9 @@ def export_t3(model, out: Path, quant: str, verify: bool):
         dict(
             condPrefixLen=COND_PREFIX_LEN,
             maxTextTokens=MAX_TEXT_TOKENS,
+            # Read by whoever loads this: the flexible text dimension is not
+            # something the Neural Engine compiler accepts. See UNITS.
+            computeUnits=prefill_units,
             # Nano is English-only: GPT-2's English vocabulary, and a generator
             # with no language argument. The multilingual checkpoint is a
             # different and much larger model.
@@ -199,7 +230,10 @@ def export_t3(model, out: Path, quant: str, verify: bool):
 # --------------------------------------------------------------------- S3Gen
 
 
-def export_s3(model, out: Path, quant: str, gen_tokens: int, verify: bool):
+def export_s3(
+    model, out: Path, quant: str, gen_tokens: int, verify: bool,
+    flow_units: str = "cpu_gpu",
+):
     import s3_export as S
 
     print("S3: building modules")
@@ -233,13 +267,18 @@ def export_s3(model, out: Path, quant: str, gen_tokens: int, verify: bool):
         outputs=[ct.TensorType(name="mel", dtype=np.float32)],
         minimum_deployment_target=ct.target.iOS18,
         compute_precision=ct.precision.FLOAT16,
-        compute_units=ct.ComputeUnit.ALL,
+        compute_units=UNITS[flow_units],
     )
     save(
         quantize(mlflow, quant),
         out,
         "S3Flow",
         dict(
+            # The expensive one to get wrong: see UNITS. Offered to the Neural
+            # Engine this graph costs a quarter of an hour of compiling on
+            # every cold load, and the mel decoder runs twice per window
+            # against a GPU that is idle anyway.
+            computeUnits=flow_units,
             genTokens=gen_tokens,
             promptTokenLen=PROMPT_TOKEN_LEN,
             promptFeatLen=PROMPT_FEAT_LEN,
@@ -259,13 +298,22 @@ def export_s3(model, out: Path, quant: str, gen_tokens: int, verify: bool):
         outputs=[ct.TensorType(name="waveform", dtype=np.float32)],
         minimum_deployment_target=ct.target.iOS18,
         compute_precision=ct.precision.FLOAT16,
-        compute_units=ct.ComputeUnit.ALL,
+        # Not a choice: the ANE compiler fails on this graph outright
+        # (`ANECCompile() FAILED`) and Core ML retries elsewhere, having spent
+        # the compile. The multilingual export keeps the same class off the
+        # Neural Engine for the same reason.
+        compute_units=ct.ComputeUnit.CPU_AND_GPU,
     )
     save(
         quantize(mlvoc, quant),
         out,
         "S3Vocoder",
-        dict(melFrames=mel_frames, hop=MEL_HOP, sampleRate=S3GEN_SR),
+        dict(
+            melFrames=mel_frames,
+            hop=MEL_HOP,
+            sampleRate=S3GEN_SR,
+            computeUnits="cpu_gpu",
+        ),
     )
 
 
@@ -288,6 +336,14 @@ def main():
         default=DEFAULT_GEN_TOKENS,
         help="speech tokens the flow decoder converts per pass (default: %(default)s)",
     )
+    ap.add_argument(
+        "--flow-units", choices=sorted(UNITS), default="cpu_gpu",
+        help="which processors the mel decoder may use (see UNITS; default: %(default)s)",
+    )
+    ap.add_argument(
+        "--prefill-units", choices=sorted(UNITS), default="cpu_gpu",
+        help="which processors the prefill may use (see UNITS; default: %(default)s)",
+    )
     ap.add_argument("--no-verify", action="store_true", help="skip the torch parity checks")
     args = ap.parse_args()
 
@@ -296,9 +352,15 @@ def main():
     model = load_nano()
 
     if args.only != "s3":
-        export_t3(model, args.out, args.quantize, not args.no_verify)
+        export_t3(
+            model, args.out, args.quantize, not args.no_verify,
+            prefill_units=args.prefill_units,
+        )
     if args.only != "t3":
-        export_s3(model, args.out, args.quantize, args.gen_tokens, not args.no_verify)
+        export_s3(
+            model, args.out, args.quantize, args.gen_tokens, not args.no_verify,
+            flow_units=args.flow_units,
+        )
 
     manifest = args.out / "models.json"
     manifest.write_text(

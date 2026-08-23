@@ -54,6 +54,31 @@ survives relaunches, but it is invalidated by re-exporting the models or by
 changing how they are loaded, so an occasional repeat of the long wait during
 development is expected.
 
+**Most of that used to be one model compiling for a processor it never ran on.**
+Offered to the Neural Engine, `S3Flow` — a conformer over 2036 positions, 7,000
+lines of MIL — keeps `ANECompilerService` at 100% for **over nineteen minutes**
+without finishing; loaded as `cpuAndGPU` the same package is ready in **2.2
+seconds**, both measured cold on an M-series Mac. So the export now records
+`computeUnits` on three of the four packages and `ComputeUnits.ladder(for:)`
+reads it before loading, which is what keeps the Neural Engine out of it:
+
+| package | units | why |
+| --- | --- | --- |
+| `T3Decode` | all | fixed shapes, hundreds of runs per chunk — the one the engine earns |
+| `S3Flow` | cpu_gpu | the compile above; the mel decoder runs twice per window against an idle GPU |
+| `T3Prefill` | cpu_gpu | flexible text dimension, which the ANE compiler will not take (`ANECCompile() FAILED`) |
+| `S3Vocoder` | cpu_gpu | `HiFTGenerator`'s DFT stand-ins fail the ANE compile outright |
+
+Only the first three lines are a change of placement on paper: the prefill and
+the vocoder already fell back on their own, having spent the compile first.
+Packages exported before this can be relabelled without re-tracing — the weights
+do not change, only one metadata string:
+
+```bash
+cd tools/export && ./.venv-chatterbox/bin/python tag_compute_units.py ../../apps/ios/build
+bun run ios:install
+```
+
 ### Size
 
 The export quantises weights to int8 by default, which is what ships — about
@@ -333,9 +358,9 @@ been observed, and **no timing on real hardware has been measured yet.**
 
 Two things are worth knowing before reading too much into any of it:
 
-- Core ML declines to put the flexible-shape prefill model on the Neural Engine
-  (`ANECCompile() FAILED` in the log, then a silent fall back to GPU/CPU). The
-  fixed-shape decode step, which is the hot loop, is the one that matters.
+- Only the decode step is on the Neural Engine, and deliberately — see the
+  `computeUnits` table above. It is the hot loop, and it is also the only one of
+  the four whose ANE compile is worth waiting for.
 - Nothing has been profiled per stage, so where the time actually goes — prefill,
   the token loop, the mel decoder, the vocoder — is still unknown.
 

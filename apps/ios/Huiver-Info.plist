@@ -4,8 +4,8 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>online.mo4.huiver.nano.convert</string>
-		<string>online.mo4.huiver.nano.sync</string>
+		<string>com.hoofkantoor.huiver.convert</string>
+		<string>com.hoofkantoor.huiver.sync</string>
 	</array>
 	<key>NSBonjourServices</key>
 	<array>

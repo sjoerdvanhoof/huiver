@@ -39,7 +39,7 @@ final class SyncModel {
     /// Identifier registered in Info.plist under
     /// `BGTaskSchedulerPermittedIdentifiers`. Must match exactly or the
     /// registration throws at launch.
-    static let backgroundTaskIdentifier = "online.mo4.huiver.nano.sync"
+    static let backgroundTaskIdentifier = "com.hoofkantoor.huiver.sync"
 
     /// The live model, for the background handler to find — the same trick the
     /// converter uses, and for the same reason: registration has to happen
@@ -279,29 +279,34 @@ final class SyncModel {
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: backgroundTaskIdentifier, using: nil
         ) { task in
-            task.expirationHandler = {
-                // Nothing to unwind: an interrupted session leaves a smaller
-                // diff for the next one, which is the whole design.
-                task.setTaskCompleted(success: false)
+            handleBackgroundTask(task)
+        }
+    }
+
+    /// BGTaskScheduler invokes its callback on a private dispatch queue. Keep
+    /// that callback nonisolated, then explicitly enter the main actor before
+    /// touching the observable sync model. A closure lexically created inside
+    /// this @MainActor type inherits its isolation and traps at runtime before
+    /// its first statement when Apple calls it off-main.
+    private nonisolated static func handleBackgroundTask(_ task: BGTask) {
+        let scheduled = SendableBackgroundTask(task)
+        scheduled.value.expirationHandler = {
+            // Nothing to unwind: an interrupted session leaves a smaller diff
+            // for the next one, which is the whole design.
+            scheduled.value.setTaskCompleted(success: false)
+        }
+        Task { @MainActor in
+            // `watching` is set when the app comes to the foreground, so this
+            // finds a model when the app is suspended rather than terminated.
+            guard let sync = SyncModel.current, let model = sync.watching,
+                  sync.isPaired, sync.autoSync
+            else {
+                scheduled.value.setTaskCompleted(success: false)
+                return
             }
-            Task { @MainActor in
-                // `watching` is set when the app comes to the foreground, so
-                // this finds a model when the app is suspended rather than
-                // terminated — which is the case worth having, a large first
-                // sync finishing overnight. Launched cold into the background
-                // there is no library open and nothing sensible to do.
-                guard let sync = SyncModel.current, let model = sync.watching,
-                      sync.isPaired, sync.autoSync
-                else {
-                    task.setTaskCompleted(success: false)
-                    return
-                }
-                await sync.syncNow(model: model)
-                // One grant is rarely a whole library, and iOS will not
-                // volunteer a second.
-                sync.scheduleBackgroundSync()
-                task.setTaskCompleted(success: true)
-            }
+            await sync.syncNow(model: model)
+            sync.scheduleBackgroundSync()
+            scheduled.value.setTaskCompleted(success: true)
         }
     }
     #endif
@@ -310,4 +315,12 @@ final class SyncModel {
 #if canImport(UIKit)
 import BackgroundTasks
 import UIKit
+
+/// BGTask has no Sendable annotation, although Apple explicitly hands the same
+/// task from its scheduler queue to the asynchronous handler and completion
+/// calls. This wrapper documents that single framework-owned crossing.
+private final class SendableBackgroundTask: @unchecked Sendable {
+    let value: BGTask
+    init(_ value: BGTask) { self.value = value }
+}
 #endif

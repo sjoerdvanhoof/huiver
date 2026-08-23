@@ -76,7 +76,7 @@ echo "installing $(du -sh "$app" | cut -f1) — this takes a minute over USB"
 xcrun devicectl device install app --device "$device" "$app"
 
 if [ "$launch" -eq 1 ]; then
-  xcrun devicectl device process launch --device "$device" online.mo4.huiver.nano
+  xcrun devicectl device process launch --device "$device" com.hoofkantoor.huiver
 fi
 
 echo
