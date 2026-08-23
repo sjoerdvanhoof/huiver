@@ -14,8 +14,10 @@ struct OnboardingSheet: View {
 
     @State private var step = Step.welcome
     @State private var preview = PreviewPlayer()
+    /// The languages picked on the languages page, applied on Continue.
+    @State private var selectedLanguages: Set<String> = []
 
-    enum Step { case welcome, voice, choose, done }
+    enum Step { case welcome, languages, voice, choose, done }
 
     /// A previous install already chose a voice and compiled the models: one
     /// welcome page as a rebrand moment, and no nagging about recording.
@@ -26,6 +28,7 @@ struct OnboardingSheet: View {
             theme.colors.background
             switch step {
             case .welcome: welcome.transition(pageTransition)
+            case .languages: languages.transition(pageTransition)
             case .voice: voice.transition(pageTransition)
             case .choose: choose.transition(pageTransition)
             case .done: done.transition(pageTransition)
@@ -34,7 +37,7 @@ struct OnboardingSheet: View {
         .frame(width: 620)
         .frame(minHeight: 460)
         .overlay(alignment: .topTrailing) {
-            if step == .voice || step == .choose {
+            if step == .languages || step == .voice || step == .choose {
                 Button("Skip") { advance(to: .done) }
                     .buttonStyle(.plain)
                     .font(.huiverLabel)
@@ -82,15 +85,88 @@ struct OnboardingSheet: View {
             primaryButton(returning ? "Continue" : "Begin") {
                 if returning {
                     onFinished()
-                } else if model.canCloneVoices {
-                    advance(to: .voice)
                 } else {
-                    advance(to: .choose)
+                    advance(to: .languages)
                 }
             }
             .padding(.bottom, Palette.Space.xxl)
         }
         .padding(.horizontal, Palette.Space.xxl)
+    }
+
+    // MARK: - Which languages
+
+    private var languages: some View {
+        VStack(alignment: .leading, spacing: Palette.Space.lg) {
+            Text("Which languages do you read?")
+                .font(.huiverTitle)
+                .foregroundStyle(theme.colors.foreground)
+                .padding(.top, Palette.Space.xxl)
+
+            Text("Narcisse ships a narrator for eighteen languages, and hides the ones you do not read. Pick the languages of your books — more can be added later from Settings, and a book in something new will ask.")
+                .font(.huiverBody)
+                .foregroundStyle(theme.colors.mutedForeground)
+
+            ScrollView {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 130), spacing: Palette.Space.sm)],
+                    spacing: Palette.Space.sm
+                ) {
+                    ForEach(model.selectableLanguages) { language in
+                        languageChip(language)
+                    }
+                }
+                .padding(2)
+            }
+            .frame(maxHeight: 280)
+
+            primaryButton("Continue") {
+                model.setPreferredLanguages(Array(selectedLanguages))
+                advance(to: model.canCloneVoices ? .voice : .choose)
+            }
+            .disabled(selectedLanguages.isEmpty)
+            .opacity(selectedLanguages.isEmpty ? 0.5 : 1)
+            .padding(.bottom, Palette.Space.xl)
+        }
+        .padding(.horizontal, Palette.Space.xxl)
+        .onAppear {
+            if selectedLanguages.isEmpty {
+                selectedLanguages = Set(model.preferredLanguageCodes)
+                selectedLanguages.insert(Language.english.code)
+            }
+        }
+    }
+
+    private func languageChip(_ language: Language) -> some View {
+        let isOn = selectedLanguages.contains(language.code)
+        return Button {
+            if isOn {
+                selectedLanguages.remove(language.code)
+            } else {
+                selectedLanguages.insert(language.code)
+            }
+        } label: {
+            HStack(spacing: Palette.Space.xs) {
+                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isOn ? theme.colors.primary : theme.colors.border)
+                Text(language.name)
+                    .font(.huiverLabel)
+                    .foregroundStyle(theme.colors.foreground)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, Palette.Space.md)
+            .padding(.vertical, Palette.Space.sm)
+            .background(
+                isOn ? theme.colors.primary.opacity(0.12) : theme.colors.card,
+                in: .rect(cornerRadius: Palette.Radius.md)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: Palette.Radius.md)
+                    .stroke(isOn ? theme.colors.primary.opacity(0.5) : theme.colors.border, lineWidth: 1)
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
     }
 
     /// The name over its own reflection: the myth, in one image.
@@ -169,7 +245,7 @@ struct OnboardingSheet: View {
             } else {
                 ScrollView {
                     VStack(spacing: 0) {
-                        ForEach(model.voices) { voice in
+                        ForEach(chooseableVoices) { voice in
                             voiceRow(voice)
                             Divider().overlay(theme.colors.border)
                         }
@@ -187,6 +263,19 @@ struct OnboardingSheet: View {
                 .padding(.bottom, Palette.Space.xl)
         }
         .padding(.horizontal, Palette.Space.xxl)
+    }
+
+    /// The roster cut down to the chosen languages, in their order — voices
+    /// for the other fifteen-odd languages have no business on a first run.
+    private var chooseableVoices: [Voice] {
+        let codes = model.preferredLanguageCodes.isEmpty
+            ? [Language.english.code] : model.preferredLanguageCodes
+        var ordered: [Voice] = []
+        for code in codes {
+            ordered.append(contentsOf: model.voices.filter { $0.language == code })
+        }
+        ordered.append(contentsOf: model.voices.filter { $0.language == nil })
+        return ordered
     }
 
     private func voiceRow(_ voice: Voice) -> some View {
@@ -209,17 +298,29 @@ struct OnboardingSheet: View {
 
             Button {
                 // No re-render confirmation here: nothing exists to re-render.
-                model.selectedVoiceId = voice.id
+                model.selectVoice(voice)
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(voice.name).foregroundStyle(theme.colors.foreground)
+                        HStack(spacing: Palette.Space.xs) {
+                            Text(voice.name).foregroundStyle(theme.colors.foreground)
+                            // Which language this voice becomes the reader
+                            // for, when more than one is in play.
+                            if let code = voice.language, model.preferredLanguageCodes.count > 1 {
+                                Text(Language.named(code).name)
+                                    .font(.caption2)
+                                    .foregroundStyle(theme.colors.mutedForeground)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(theme.colors.muted, in: .capsule)
+                            }
+                        }
                         Text(voice.detail)
                             .font(.huiverCaption)
                             .foregroundStyle(theme.colors.mutedForeground)
                     }
                     Spacer()
-                    if model.selectedVoiceId == voice.id {
+                    if chosenId(for: voice) == voice.id {
                         Image(systemName: "checkmark").foregroundStyle(.tint)
                     }
                 }
@@ -228,6 +329,13 @@ struct OnboardingSheet: View {
             .buttonStyle(.plain)
         }
         .padding(Palette.Space.md)
+    }
+
+    /// The checkmark a row compares itself against: its language's chosen
+    /// reader, or the app-wide voice for a row with no language.
+    private func chosenId(for voice: Voice) -> String? {
+        guard let code = voice.language else { return model.selectedVoiceId }
+        return model.preferredVoice(for: code)?.id
     }
 
     // MARK: - Done

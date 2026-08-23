@@ -35,7 +35,7 @@
     "ios:previews": "cd tools/export && ./.venv-chatterbox/bin/python export_previews.py --out ../../apps/ios/build-voices",
     "mac:build": "xcodebuild -project apps/mac/Huiver.xcodeproj -scheme Huiver -configuration Debug build -allowProvisioningUpdates -skipPackagePluginValidation -derivedDataPath apps/mac/DerivedData",
     "mac:install": "apps/mac/scripts/install-models.sh",
-    "mac:run": "bun run mac:build && open apps/mac/DerivedData/Build/Products/Debug/Huiver.app",
+    "mac:run": "bun run mac:build && open apps/mac/DerivedData/Build/Products/Debug/Narcisse.app",
     "mtl:probe": "cd tools/export && ./.venv-chatterbox/bin/python probe_mtl.py",
     "mtl:verify": "cd tools/export && ./.venv-chatterbox/bin/python verify_mtl.py",
     "mac:models": "cd tools/export && ./.venv-chatterbox/bin/python export_mtl.py --out ../../apps/mac/build-mtl --gen-tokens 768 512 256 --prompt-tokens 250",

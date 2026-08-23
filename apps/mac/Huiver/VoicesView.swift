@@ -21,83 +21,52 @@ struct VoicesView: View {
 
     var body: some View {
         Form {
-            Section {
-                ForEach(model.voices) { voice in
-                    HStack(spacing: Palette.Space.md) {
-                        if let url = voice.previewURL {
-                            Button {
-                                preview.toggle(url, id: voice.id)
-                            } label: {
-                                Image(systemName: preview.playing == voice.id
-                                    ? "stop.circle.fill" : "play.circle")
-                                    .font(.title2)
-                                    .foregroundStyle(theme.colors.primary)
-                            }
-                            .buttonStyle(.plain)
-                        } else {
-                            // No sample shipped for this voice yet.
-                            Image(systemName: "play.circle")
-                                .font(.title2)
-                                .foregroundStyle(theme.colors.border)
-                        }
+            // One section per language the listener reads, each remembering
+            // its own narrator — a shelf of English and Dutch books switches
+            // between two chosen voices instead of sharing one.
+            ForEach(visibleLanguages) { language in
+                Section {
+                    ForEach(voices(in: language.code)) { voice in
+                        voiceRow(voice, chosen: chosenVoiceId(in: language.code))
+                    }
+                } header: {
+                    Text(language.name)
+                }
+            }
 
-                        Button {
-                            select(voice)
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack(spacing: Palette.Space.xs) {
-                                        Text(voice.name).foregroundStyle(.primary)
-                                        // The language the clip was recorded
-                                        // in, which is the language this voice
-                                        // has an accent for.
-                                        if let code = voice.language {
-                                            Text(Language.named(code).name)
-                                                .font(.caption2)
-                                                .foregroundStyle(theme.colors.mutedForeground)
-                                                .padding(.horizontal, 5)
-                                                .padding(.vertical, 1)
-                                                .background(
-                                                    theme.colors.muted, in: .capsule
-                                                )
-                                        }
-                                    }
-                                    Text(voice.detail).font(.caption).foregroundStyle(.secondary)
-                                    // Only for the voice in use: ten paragraphs
-                                    // of prose would turn the picker into an
-                                    // essay to scroll past.
-                                    if let persona = voice.persona,
-                                       model.selectedVoiceId == voice.id {
-                                        Text(persona)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .padding(.top, 2)
-                                    }
-                                }
-                                Spacer()
-                                if model.isRecorded(voice) {
-                                    Button {
-                                        model.deleteVoice(voice)
-                                    } label: {
-                                        Image(systemName: "trash")
-                                            .foregroundStyle(theme.colors.mutedForeground)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help("Delete this recorded voice")
-                                }
-                                if model.selectedVoiceId == voice.id {
-                                    Image(systemName: "checkmark").foregroundStyle(.tint)
-                                }
-                            }
-                            .contentShape(.rect)
+            // Voices whose clip's language nobody wrote down — a voice that
+            // arrived over sync, mostly. Never hidden: they cannot earn a
+            // section of their own.
+            if !languagelessVoices.isEmpty {
+                Section {
+                    ForEach(languagelessVoices) { voice in
+                        voiceRow(voice, chosen: model.selectedVoiceId)
+                    }
+                } header: {
+                    Text("Other voices")
+                }
+            }
+
+            Section {
+                if hiddenVoiceCount > 0 {
+                    Menu {
+                        ForEach(addableLanguages) { language in
+                            Button(language.name) { model.addPreferredLanguage(language.code) }
                         }
-                        .buttonStyle(.plain)
+                    } label: {
+                        Label("Add a language", systemImage: "plus")
                     }
                 }
             } header: {
-                Text("Voice")
+                Text("Languages")
             } footer: {
-                Text("Chatterbox has no voice roster — it clones a reference recording. Changing voice re-renders a chapter rather than mixing two narrators. Samples are pre-rendered, so they play instantly instead of waking the model.")
+                Text(
+                    "Each language keeps its own narrator — the checkmark in its section is the voice that reads its books. "
+                        + (hiddenVoiceCount > 0
+                            ? "\(hiddenVoiceCount) voice\(hiddenVoiceCount == 1 ? "" : "s") for languages you do not read are tucked away; add a language to see its reader. "
+                            : "")
+                        + "Chatterbox has no voice roster — it clones a reference recording. Changing voice re-renders a chapter rather than mixing two narrators."
+                )
             }
 
             Section {
@@ -125,7 +94,7 @@ struct VoicesView: View {
             titleVisibility: .visible
         ) {
             Button("Change voice") {
-                if let voice = pendingVoice { model.selectedVoiceId = voice.id }
+                if let voice = pendingVoice { model.selectVoice(voice) }
                 pendingVoice = nil
             }
         } message: {
@@ -138,25 +107,129 @@ struct VoicesView: View {
         }
     }
 
-    /// Switch immediately when nothing rendered is affected; otherwise say
-    /// what the change means first.
-    private func select(_ voice: Voice) {
-        guard voice.id != model.selectedVoiceId else { return }
-        if renderedByOthers(than: voice) > 0 {
-            pendingVoice = voice
-        } else {
-            model.selectedVoiceId = voice.id
+    private func voiceRow(_ voice: Voice, chosen: String?) -> some View {
+        HStack(spacing: Palette.Space.md) {
+            if let url = voice.previewURL {
+                Button {
+                    preview.toggle(url, id: voice.id)
+                } label: {
+                    Image(systemName: preview.playing == voice.id
+                        ? "stop.circle.fill" : "play.circle")
+                        .font(.title2)
+                        .foregroundStyle(theme.colors.primary)
+                }
+                .buttonStyle(.plain)
+            } else {
+                // No sample shipped for this voice yet.
+                Image(systemName: "play.circle")
+                    .font(.title2)
+                    .foregroundStyle(theme.colors.border)
+            }
+
+            Button {
+                select(voice)
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(voice.name).foregroundStyle(.primary)
+                        Text(voice.detail).font(.caption).foregroundStyle(.secondary)
+                        // Only for the voice in use: ten paragraphs of prose
+                        // would turn the picker into an essay to scroll past.
+                        if let persona = voice.persona, chosen == voice.id {
+                            Text(persona)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 2)
+                        }
+                    }
+                    Spacer()
+                    if model.isRecorded(voice) {
+                        Button {
+                            model.deleteVoice(voice)
+                        } label: {
+                            Image(systemName: "trash")
+                                .foregroundStyle(theme.colors.mutedForeground)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Delete this recorded voice")
+                    }
+                    if chosen == voice.id {
+                        Image(systemName: "checkmark").foregroundStyle(.tint)
+                    }
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
         }
     }
 
-    /// How many chapters on the shelf hold audio in a voice other than this one.
+    /// The sections worth drawing: the languages the listener asked for, plus
+    /// any a book on the shelf or a recorded voice already lives in — hiding
+    /// a language that is plainly in use would just misplace its narrator.
+    private var visibleLanguages: [Language] {
+        var codes = Set(model.preferredLanguageCodes)
+        codes.formUnion(model.books.map(\.languageCode))
+        for voice in model.voices where model.isRecorded(voice) {
+            if let code = voice.language { codes.insert(code) }
+        }
+        return Language.all.filter { codes.contains($0.code) }
+    }
+
+    private func voices(in languageCode: String) -> [Voice] {
+        model.voices.filter { $0.language == languageCode }
+    }
+
+    private var languagelessVoices: [Voice] {
+        model.voices.filter { $0.language == nil }
+    }
+
+    /// The checkmark for one language's section.
+    private func chosenVoiceId(in languageCode: String) -> String? {
+        model.preferredVoice(for: languageCode)?.id
+    }
+
+    private var addableLanguages: [Language] {
+        let visible = Set(visibleLanguages.map(\.code))
+        return model.selectableLanguages.filter { !visible.contains($0.code) }
+    }
+
+    private var hiddenVoiceCount: Int {
+        let visible = Set(visibleLanguages.map(\.code))
+        return model.voices.filter { voice in
+            guard let code = voice.language else { return false }
+            return !visible.contains(code)
+        }.count
+    }
+
+    /// Switch immediately when nothing rendered is affected; otherwise say
+    /// what the change means first.
+    private func select(_ voice: Voice) {
+        if let code = voice.language {
+            guard model.preferredVoice(for: code)?.id != voice.id
+                || model.selectedVoiceId != voice.id
+            else { return }
+        } else if voice.id == model.selectedVoiceId {
+            return
+        }
+        if renderedByOthers(than: voice) > 0 {
+            pendingVoice = voice
+        } else {
+            model.selectVoice(voice)
+        }
+    }
+
+    /// How many chapters would re-render if this voice took over: those whose
+    /// audio was read by someone else, in books this voice would actually
+    /// read — a new Dutch narrator does not touch the English shelf.
     private func renderedByOthers(than voice: Voice?) -> Int {
         guard let voice else { return 0 }
-        return model.books.reduce(0) { total, book in
-            total + book.chapters.filter {
-                $0.renderedChunks > 0 && $0.renderedVoice != nil && $0.renderedVoice != voice.id
-            }.count
-        }
+        return model.books
+            .filter { voice.language == nil || $0.languageCode == voice.language }
+            .reduce(0) { total, book in
+                total + book.chapters.filter {
+                    $0.renderedChunks > 0 && $0.renderedVoice != nil && $0.renderedVoice != voice.id
+                }.count
+            }
     }
 }
 

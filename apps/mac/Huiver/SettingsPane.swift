@@ -32,6 +32,44 @@ struct SettingsPane: View {
             }
 
             Section {
+                ForEach(model.preferredLanguages) { language in
+                    HStack {
+                        if voices(for: language.code).isEmpty {
+                            LabeledContent(language.name, value: "No voice yet — record one in Voices")
+                        } else {
+                            Picker(language.name, selection: preferredVoiceBinding(for: language.code)) {
+                                ForEach(voices(for: language.code)) { voice in
+                                    Text(voice.name).tag(voice.id)
+                                }
+                            }
+                        }
+                        Button {
+                            model.removePreferredLanguage(language.code)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                                .foregroundStyle(theme.colors.mutedForeground)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(model.preferredLanguageCodes.count == 1)
+                        .help("Stop showing \(language.name) voices")
+                    }
+                }
+                if !addableLanguages.isEmpty {
+                    Menu {
+                        ForEach(addableLanguages) { language in
+                            Button(language.name) { model.addPreferredLanguage(language.code) }
+                        }
+                    } label: {
+                        Label("Add a language", systemImage: "plus")
+                    }
+                }
+            } header: {
+                Text("Your languages")
+            } footer: {
+                Text("The languages you read books in, each with the voice that reads it — voices for every other language stay out of the pickers. Audition and record voices on the Voices screen; a book that arrives in a new language will ask which voice should read it.")
+            }
+
+            Section {
                 LabeledContent("Temperature", value: String(format: "%.2f", model.options.temperature))
                 Slider(value: $model.options.temperature, in: 0.4...1.2, step: 0.05)
                 LabeledContent("Top-p", value: String(format: "%.2f", model.options.topP))
@@ -133,6 +171,24 @@ struct SettingsPane: View {
     /// it needs a binding written out rather than `@Bindable`'s.
     private var cleanupBinding: Binding<Bool> {
         .init(get: { model.autoCleanup }, set: { model.autoCleanup = $0 })
+    }
+
+    /// What can read this language: voices recorded in it, plus any whose
+    /// clip's language nobody wrote down — those read everything.
+    private func voices(for languageCode: String) -> [Voice] {
+        model.voices.filter { $0.language == languageCode || $0.language == nil }
+    }
+
+    private func preferredVoiceBinding(for languageCode: String) -> Binding<String> {
+        .init(
+            get: { model.preferredVoice(for: languageCode)?.id ?? "" },
+            set: { model.setPreferredVoice($0, for: languageCode) }
+        )
+    }
+
+    private var addableLanguages: [Language] {
+        let chosen = Set(model.preferredLanguageCodes)
+        return model.selectableLanguages.filter { !chosen.contains($0.code) }
     }
 
     private func size(_ bytes: Int64) -> String {

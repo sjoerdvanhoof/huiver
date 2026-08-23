@@ -14,7 +14,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		000000000000000000002002 /* Huiver.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Huiver.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000002002 /* Narcisse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Narcisse.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000002010 /* Models */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Models; sourceTree = "<group>"; };
 		000000000000000000002011 /* Voices */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Voices; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -51,7 +51,7 @@
 		000000000000000000002003 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				000000000000000000002002 /* Huiver.app */,
+				000000000000000000002002 /* Narcisse.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -79,7 +79,7 @@
 				000000000000000000002016 /* MLXFast */,
 			);
 			productName = Huiver;
-			productReference = 000000000000000000002002 /* Huiver.app */;
+			productReference = 000000000000000000002002 /* Narcisse.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -224,7 +224,8 @@
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = online.mo4.huiver.mac;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = Huiver;
+				PRODUCT_NAME = Narcisse;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 			};
@@ -253,7 +254,8 @@
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = online.mo4.huiver.mac;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = Huiver;
+				PRODUCT_NAME = Narcisse;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 			};

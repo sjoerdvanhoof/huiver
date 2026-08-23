@@ -25,6 +25,9 @@ struct RecordVoiceSheet: View {
 struct VoiceCaptureView: View {
     let onDone: (Voice) -> Void
     let onCancel: () -> Void
+    /// Pre-picks the sample language — the new-language prompt already knows
+    /// the recording is meant for one language in particular.
+    var presetLanguageCode: String? = nil
 
     @Environment(AppModel.self) private var model
     @Environment(\.theme) private var theme
@@ -90,6 +93,9 @@ struct VoiceCaptureView: View {
         .onChange(of: recorder.state) { _, state in
             preview.stop()
             if state == .finished { resetTrim() }
+        }
+        .onAppear {
+            if let presetLanguageCode { languageCode = presetLanguageCode }
         }
         .onDisappear { preview.stop() }
     }

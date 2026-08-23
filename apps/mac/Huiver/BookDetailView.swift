@@ -67,11 +67,13 @@ struct BookDetailView: View {
                         ForEach(pickableLanguages) { Text($0.name).tag($0.code) }
                     }
                     Picker("Voice", selection: voiceBinding) {
-                        // "" is "follow the app-wide voice"; anything else pins
+                        // "" is "follow the preference"; anything else pins
                         // this book to one narrator regardless of Settings.
-                        Text("App voice (\(model.selectedVoice?.name ?? "default"))").tag("")
+                        Text("Preferred voice (\(defaultVoiceName))").tag("")
                         Divider()
-                        ForEach(model.voices) { Text($0.name).tag($0.id) }
+                        ForEach(pinnableVoices) { voice in
+                            Text(pinLabel(for: voice)).tag(voice.id)
+                        }
                     }
                     Divider()
                     Button("Export audiobook…", systemImage: "square.and.arrow.up") {
@@ -173,6 +175,32 @@ struct BookDetailView: View {
             get: { current.voiceId ?? "" },
             set: { id in Task { await model.setVoice(id.isEmpty ? nil : id, for: current) } }
         )
+    }
+
+    /// What "follow the preference" resolves to for this book, so the default
+    /// row says who would actually read it.
+    private var defaultVoiceName: String {
+        model.preferredVoice(for: current.languageCode)?.name
+            ?? model.selectedVoice?.name ?? "default"
+    }
+
+    /// The voices worth pinning: the listener's languages plus this book's
+    /// own, with whatever is already pinned kept in the list — the full
+    /// eighteen-language roster has no place in a toolbar menu.
+    private var pinnableVoices: [Voice] {
+        var codes = Set(model.preferredLanguageCodes)
+        codes.insert(current.languageCode)
+        return model.voices.filter { voice in
+            voice.language == nil
+                || codes.contains(voice.language!)
+                || voice.id == current.voiceId
+        }
+    }
+
+    /// The voice's accent beside its name, when it differs from the book.
+    private func pinLabel(for voice: Voice) -> String {
+        guard let code = voice.language, code != current.languageCode else { return voice.name }
+        return "\(voice.name) (\(Language.named(code).name))"
     }
 
     private var header: some View {

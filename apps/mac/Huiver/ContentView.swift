@@ -87,6 +87,18 @@ struct ContentView: View {
                 .environment(model)
                 .huiverTheme()
         }
+        // A book arrived in a language nobody has picked a voice for. One
+        // sheet per language; dismissing moves on to the next in the queue.
+        .sheet(item: .init(
+            get: { onboarded ? model.pendingLanguagePrompts.first : nil },
+            set: { if $0 == nil, !model.pendingLanguagePrompts.isEmpty {
+                model.pendingLanguagePrompts.removeFirst()
+            } }
+        )) { prompt in
+            NewLanguageSheet(prompt: prompt)
+                .environment(model)
+                .huiverTheme()
+        }
         .alert(
             "Something went wrong",
             isPresented: .init(

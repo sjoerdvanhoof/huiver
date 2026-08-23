@@ -81,6 +81,94 @@ final class AppModel {
         voices.first { $0.id == selectedVoiceId } ?? voices.first
     }
 
+    /// The languages this listener actually reads books in. Everything else's
+    /// voices stay out of the pickers — the roster ships a reader for each of
+    /// eighteen languages, and a shelf of English and Dutch books has no use
+    /// for the Greek one. Chosen at onboarding, extended from Settings, and
+    /// extended automatically when a book arrives in something new.
+    private(set) var preferredLanguageCodes: [String] {
+        didSet { UserDefaults.standard.set(preferredLanguageCodes, forKey: "preferredLanguages") }
+    }
+
+    /// Which voice reads each language, by language code. Its own map rather
+    /// than one selection: switching between an English and a Dutch book
+    /// should not need the narrator re-picked every time.
+    private(set) var preferredVoiceIds: [String: String] {
+        didSet { UserDefaults.standard.set(preferredVoiceIds, forKey: "preferredVoices") }
+    }
+
+    /// Books that arrived in a language nobody has picked a voice for yet.
+    /// The window shows one sheet per language and works through the queue.
+    var pendingLanguagePrompts: [NewLanguagePrompt] = []
+
+    struct NewLanguagePrompt: Identifiable {
+        let language: Language
+        let bookTitle: String
+        var id: String { language.code }
+    }
+
+    var preferredLanguages: [Language] { preferredLanguageCodes.map(Language.named) }
+
+    /// What the language pickers offer: the engine's own list once it has
+    /// loaded, and Chatterbox's known-good subset while it is still compiling —
+    /// onboarding runs before the engine finishes.
+    var selectableLanguages: [Language] {
+        if engineLanguages.count > 1 { return engineLanguages }
+        let unreadable: Set<String> = ["zh", "ja", "he", "ko", "ru"]
+        return Language.all.filter { !unreadable.contains($0.code) }
+    }
+
+    func setPreferredLanguages(_ codes: [String]) {
+        preferredLanguageCodes = Self.languageOrder(codes)
+    }
+
+    func addPreferredLanguage(_ code: String) {
+        guard !preferredLanguageCodes.contains(code) else { return }
+        preferredLanguageCodes = Self.languageOrder(preferredLanguageCodes + [code])
+    }
+
+    /// The last language stays: an empty list would leave every picker blank.
+    func removePreferredLanguage(_ code: String) {
+        guard preferredLanguageCodes.count > 1 else { return }
+        preferredLanguageCodes.removeAll { $0 == code }
+    }
+
+    /// `Language.all` is in name order; keeping the preference list in the
+    /// same order keeps every screen's sections in the same order.
+    private static func languageOrder(_ codes: some Collection<String>) -> [String] {
+        let wanted = Set(codes)
+        return Language.all.map(\.code).filter { wanted.contains($0) }
+    }
+
+    /// Make this voice the reader for one language, and make sure that
+    /// language is on the list — picking a voice for it is wanting it.
+    func setPreferredVoice(_ voiceId: String, for languageCode: String) {
+        preferredVoiceIds[languageCode] = voiceId
+        addPreferredLanguage(languageCode)
+    }
+
+    /// A voice picked by hand: the app-wide selection, and the preferred
+    /// reader for the language its clip was recorded in.
+    func selectVoice(_ voice: Voice) {
+        selectedVoiceId = voice.id
+        if let code = voice.language { setPreferredVoice(voice.id, for: code) }
+    }
+
+    /// The voice that reads books in this language: the one chosen for it,
+    /// else the app-wide voice when its accent fits, else the first reader
+    /// recorded in the language.
+    func preferredVoice(for languageCode: String) -> Voice? {
+        if let id = preferredVoiceIds[languageCode],
+           let voice = voices.first(where: { $0.id == id }) {
+            return voice
+        }
+        if let selected = selectedVoice,
+           selected.language == nil || selected.language == languageCode {
+            return selected
+        }
+        return voices.first { $0.language == languageCode }
+    }
+
     /// Which voice should read this book.
     ///
     /// The chosen voice, unless the book is in a language that voice was not
@@ -98,17 +186,16 @@ final class AppModel {
         if let pinned = book.voiceId, let voice = voices.first(where: { $0.id == pinned }) {
             return voice
         }
-        guard let selected = selectedVoice else { return nil }
-        let language = book.languageCode
-        if selected.language == nil || selected.language == language { return selected }
-        return voices.first { $0.language == language } ?? selected
+        return preferredVoice(for: book.languageCode) ?? selectedVoice
     }
 
     /// Whether `voice(for:)` would override the chosen voice, so a screen can
-    /// say so rather than surprising the listener. A pinned voice is not a
-    /// substitution — it is the listener's own instruction.
+    /// say so rather than surprising the listener. Neither a pinned voice nor
+    /// a per-language choice is a substitution — both are the listener's own
+    /// instruction.
     func substitutesVoice(for book: Book) -> Bool {
         guard book.voiceId == nil,
+              preferredVoiceIds[book.languageCode] == nil,
               let selected = selectedVoice, let chosen = voice(for: book)
         else { return false }
         return chosen.id != selected.id
@@ -140,6 +227,9 @@ final class AppModel {
 
     init() {
         selectedVoiceId = UserDefaults.standard.string(forKey: "voice") ?? "mtl_default"
+        preferredLanguageCodes = UserDefaults.standard.stringArray(forKey: "preferredLanguages") ?? []
+        preferredVoiceIds =
+            UserDefaults.standard.dictionary(forKey: "preferredVoices") as? [String: String] ?? [:]
         // Observers do not fire in init, so this neither re-saves what it read
         // nor loses the preset when nothing was stored.
         if let data = UserDefaults.standard.data(forKey: "samplingOptions"),
@@ -200,6 +290,16 @@ final class AppModel {
         } catch {
             loadFailure = error.localizedDescription
             return
+        }
+
+        // A library that predates the language list gets one seeded from what
+        // it already holds — the languages on the shelf plus the chosen
+        // voice's own — rather than being asked to start over.
+        if UserDefaults.standard.stringArray(forKey: "preferredLanguages") == nil {
+            var codes = Set(books.map(\.languageCode))
+            codes.insert(Language.english.code)
+            if let accent = selectedVoice?.language { codes.insert(accent) }
+            preferredLanguageCodes = Self.languageOrder(codes)
         }
 
         // Cloning is a separate model from the four the engine loads, and a
@@ -297,8 +397,19 @@ final class AppModel {
                 let data = try Data(contentsOf: url)
                 return (data, try Extract.book(from: data, filename: filename))
             }.value
-            _ = try await library.add(extracted, source: (data: data, filename: filename))
+            let book = try await library.add(extracted, source: (data: data, filename: filename))
             books = await library.all()
+            // A language nobody has picked a voice for yet: ask, rather than
+            // silently handing the book to whichever reader falls out of the
+            // fallback. One prompt per language, however many books arrive.
+            if !preferredLanguageCodes.contains(book.languageCode),
+               !pendingLanguagePrompts.contains(where: { $0.id == book.languageCode }) {
+                pendingLanguagePrompts.append(
+                    NewLanguagePrompt(
+                        language: .named(book.languageCode), bookTitle: book.title
+                    )
+                )
+            }
         } catch {
             importFailure = error.localizedDescription
         }
@@ -728,7 +839,8 @@ final class AppModel {
             from: Bundle.main.resourceURL!.appendingPathComponent("Voices"),
             plus: recordedVoices
         )
-        selectedVoiceId = voice.id
+        // Recording yourself in a language is picking yourself for it.
+        selectVoice(voice)
         return voice
     }
 
@@ -748,6 +860,11 @@ final class AppModel {
             plus: recordedVoices
         )) ?? voices
         if selectedVoiceId == voice.id { selectedVoiceId = voices.first?.id ?? "mtl_default" }
+        // Any language it was reading falls back to the resolution order
+        // rather than keeping a preference that points at nothing.
+        for (code, id) in preferredVoiceIds where id == voice.id {
+            preferredVoiceIds[code] = nil
+        }
     }
 
     func clearFailure() { loadFailure = nil }
