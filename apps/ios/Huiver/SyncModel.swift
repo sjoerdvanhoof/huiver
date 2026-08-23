@@ -78,7 +78,7 @@ final class SyncModel {
     /// Scan result → stored pairing.
     func pair(with code: String) async {
         guard let payload = Pairing.QRPayload.decode(code), let secret = payload.secret else {
-            activity = .failed("That is not a huiver pairing code.")
+            activity = .failed("That is not a Narcisse pairing code.")
             return
         }
         guard !payload.isExpired else {
@@ -223,7 +223,7 @@ final class SyncModel {
         #if canImport(UIKit)
         return UIDevice.current.name
         #else
-        return Host.current().localizedName ?? "huiver"
+        return Host.current().localizedName ?? "Narcisse"
         #endif
     }
 

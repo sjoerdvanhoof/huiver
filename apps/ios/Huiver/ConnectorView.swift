@@ -77,7 +77,7 @@ struct ConnectorSection: View {
                         + "whichever is newer. Directly between the two devices — nothing leaves "
                         + "your network. Automatic sync starts a session when the Mac appears on "
                         + "the network, at most once a minute."
-                    : "Open huiver on your Mac, choose Pair a phone, and scan the code it shows."
+                    : "Open Narcisse on your Mac, choose Pair a phone, and scan the code it shows."
             )
         }
         .sheet(isPresented: $showingScanner) {

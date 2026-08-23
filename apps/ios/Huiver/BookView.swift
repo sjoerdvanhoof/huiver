@@ -216,7 +216,7 @@ struct BookView: View {
             // Said plainly rather than hidden behind a disabled button: Nano
             // will read Dutch, just with English pronunciation, and that is
             // worth knowing before waiting an hour for a chapter.
-            Text("\(language.name) is one of Chatterbox's languages, but not one Nano can read — Nano is English-only. It will still speak this book, pronouncing the words as though they were English.")
+            Text("\(language.name) is one of Chatterbox's languages, but not one this phone's model can read — it is English-only. It will still speak this book, pronouncing the words as though they were English.")
         }
         .font(.huiverCaption)
         .foregroundStyle(theme.colors.mutedForeground)

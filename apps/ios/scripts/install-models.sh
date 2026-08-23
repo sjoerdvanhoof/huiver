@@ -61,6 +61,9 @@ voice_src="${2:-$here/build-voices}"
 if [ -d "$voice_src" ] && [ "$(cd "$voice_src" && pwd -P)" = "$(cd "$voices" && pwd -P)" ]; then
   echo "voices already in place"
 elif compgen -G "$voice_src/*.voice" >/dev/null 2>&1; then
+  # Replace rather than add, like the Mac script: a voice dropped from the
+  # export must not linger in the bundle from an earlier install.
+  rm -f "$voices"/*.voice "$voices"/voices.json "$voices"/*.preview.wav
   cp "$voice_src"/*.voice "$voice_src/voices.json" "$voices/"
   # Previews are optional: a voice without one just has no play button.
   cp "$voice_src"/*.preview.wav "$voices/" 2>/dev/null || true

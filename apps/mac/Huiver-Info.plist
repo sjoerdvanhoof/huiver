@@ -7,12 +7,12 @@
 	  settings. This file exists for the keys that have no build setting.
 	-->
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Huiver announces itself on the local network so your iPhone can sync books, audio and progress. Nothing leaves your network.</string>
+	<string>Narcisse announces itself on the local network so your iPhone can sync books, audio and progress. Nothing leaves your network.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_huiver._tcp</string>
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Huiver records a short reference clip when you clone a voice. The recording stays on this Mac.</string>
+	<string>Narcisse records a short reference clip when you clone a voice. The recording stays on this Mac.</string>
 </dict>
 </plist>

@@ -179,7 +179,7 @@ final class VoiceRecorder {
 
         var errorDescription: String? {
             switch self {
-            case .unreadable: "Huiver could not decode that audio file."
+            case .unreadable: "Narcisse could not decode that audio file."
             case .empty: "That audio file is empty."
             }
         }

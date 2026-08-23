@@ -41,6 +41,10 @@ public enum SyncDiff {
             }
         }
 
+        // TODO(narcisse): the Mac advertises its whole bundle, so the phone
+        // pulls multilingual voices Nano cannot read (they never show — the
+        // roster filters on engine.canRead — but they cost disk and transfer).
+        // Filtering here needs an engine/format tag in the manifest first.
         let mineVoices = Set(mine.voices.map(\.id))
         for voice in theirs.voices where !mineVoices.contains(voice.id) {
             items.append(.voice(id: voice.id))

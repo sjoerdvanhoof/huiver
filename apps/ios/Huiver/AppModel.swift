@@ -176,10 +176,21 @@ final class AppModel {
             // A voice cloned for the Mac's multilingual model has the wrong
             // tensor shapes for Nano, and sync will happily deliver one.
             // Offering it as a narrator fails on the first chunk, so the
-            // roster keeps what this engine can actually read.
+            // roster keeps what this engine can actually read. The Mac ships
+            // its own clones under the same lv_ ids, and a synced copy wins
+            // the merge — so when the override is unreadable, the bundled
+            // original comes back rather than the voice disappearing.
+            let bundled = (try? VoicePack.load(
+                from: resources.appendingPathComponent("Voices")
+            )) ?? []
             var readable: [Voice] = []
             for voice in voices {
-                if await engine.canRead(voice) { readable.append(voice) }
+                if await engine.canRead(voice) {
+                    readable.append(voice)
+                } else if let original = bundled.first(where: { $0.id == voice.id }),
+                          await engine.canRead(original) {
+                    readable.append(original)
+                }
             }
             voices = readable
             let narrator = Narrator(engine: engine, library: library!, progress: progressStore)
@@ -206,8 +217,17 @@ final class AppModel {
             placement = await engine.placement
             engineLanguages = engine.languages
             UserDefaults.standard.set(true, forKey: "preparedOnce")
+            if let pending = pendingClone {
+                pendingClone = nil
+                await runClone(samples: pending.samples, name: pending.name)
+            }
         } catch {
             loadFailure = error.localizedDescription
+            if pendingClone != nil {
+                pendingClone = nil
+                cloneFailure = "The voice model failed to load, so your recording "
+                    + "couldn't become a voice yet. You can record again in Settings."
+            }
         }
         preparing = nil
         preparingSince = nil
@@ -431,6 +451,45 @@ final class AppModel {
     ///
     /// The recording never leaves the phone. What is written is the five
     /// tensors of a voice, none of which can be turned back into audio.
+    /// A recording waiting for the engine. Onboarding lets someone read the
+    /// passage while the models are still compiling; the clone runs the moment
+    /// the first load finishes instead of blocking the flow on it.
+    struct PendingClone {
+        var samples: [Float]
+        var name: String
+    }
+
+    private(set) var pendingClone: PendingClone?
+    private(set) var cloneInFlight = false
+    /// Surfaced as its own alert, like `importFailure`: a failed clone is not
+    /// the engine's fault and should say what to do next.
+    var cloneFailure: String?
+
+    /// Clone now if the engine is up; otherwise remember the take and clone
+    /// when `load()` finishes.
+    func submitClone(samples: [Float], name: String) {
+        if narrator != nil {
+            Task { await runClone(samples: samples, name: name) }
+        } else {
+            pendingClone = PendingClone(samples: samples, name: name)
+        }
+    }
+
+    private func runClone(samples: [Float], name: String) async {
+        cloneInFlight = true
+        defer { cloneInFlight = false }
+        do {
+            _ = try await cloneVoice(
+                from: samples,
+                name: name,
+                language: engineLanguages.first ?? .english
+            )
+        } catch {
+            cloneFailure = "Your voice couldn't be created: \(error.localizedDescription) "
+                + "You can record again in Settings."
+        }
+    }
+
     func cloneVoice(from recording: [Float], name: String, language: Language) async throws -> Voice {
         guard let modelDirectory, let recordedVoices, let resources = Bundle.main.resourceURL
         else { throw VoiceCloner.CloneError.unavailable }

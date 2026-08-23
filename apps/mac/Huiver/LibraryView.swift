@@ -94,43 +94,13 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let preparing = model.preparing {
-            preparingState(preparing)
-        } else if model.isLoading && model.books.isEmpty {
+        if model.isLoading && model.books.isEmpty {
             ProgressView()
         } else if model.books.isEmpty {
             emptyShelf
         } else {
             shelf
         }
-    }
-
-    /// The first launch compiles the models for this machine; after that it is
-    /// a moment. Slim enough to live inline rather than being its own screen.
-    private func preparingState(_ progress: ChatterboxEngine.LoadProgress) -> some View {
-        VStack(spacing: Palette.Space.md) {
-            Image(systemName: "waveform")
-                .font(.system(size: 40))
-                .foregroundStyle(.tint)
-                .symbolEffect(.variableColor.iterative, options: .repeating)
-            Text("Getting the voice model ready")
-                .font(.huiverHeading)
-                .foregroundStyle(theme.colors.foreground)
-            VStack(spacing: Palette.Space.xs) {
-                ProgressView(value: progress.fraction)
-                HStack {
-                    Text("\(progress.model) · \(progress.index) of \(progress.total)")
-                    Spacer()
-                    if let since = model.preparingSince {
-                        Text(since, style: .timer).monospacedDigit()
-                    }
-                }
-                .font(.huiverCaption)
-                .foregroundStyle(theme.colors.mutedForeground)
-            }
-            .frame(maxWidth: 360)
-        }
-        .padding(Palette.Space.xl)
     }
 
     private var emptyShelf: some View {
@@ -141,7 +111,7 @@ struct LibraryView: View {
             Text("No books yet")
                 .font(.huiverHeading)
                 .foregroundStyle(theme.colors.foreground)
-            Text("Add an EPUB — or drop one on this window — and huiver will read it to you in a cloned voice, all on this Mac.")
+            Text("Add an EPUB — or drop one on this window — and Narcisse will read it to you in a cloned voice, all on this Mac.")
                 .font(.huiverBody)
                 .foregroundStyle(theme.colors.mutedForeground)
                 .multilineTextAlignment(.center)

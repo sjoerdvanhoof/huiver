@@ -75,7 +75,7 @@ public enum VoicePack {
             switch self {
             case .noManifest(let url):
                 "No voices.json in \(url.path). Run: bun run ios:voices"
-            case .badMagic(let file): "\(file) is not a huiver voice file"
+            case .badMagic(let file): "\(file) is not a Narcisse voice file"
             case .badVersion(let file, let v): "\(file) is voice format v\(v); this app reads v\(version)"
             case .truncated(let file): "\(file) ended early"
             }

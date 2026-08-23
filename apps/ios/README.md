@@ -12,7 +12,7 @@ this app exists:
 | | `legacy/mobile` (Expo, retired) | `apps/ios` (this) |
 | --- | --- | --- |
 | Engine | Kokoro via `react-native-sherpa-onnx` | Chatterbox Nano via Core ML |
-| Voices | 21 built-in | 11 cloned, shipped with the app |
+| Voices | 21 built-in | 5 shipped (4 narrators + Narrator, the model's own voice) |
 | UI | React Native | SwiftUI |
 | Platforms | iOS and Android | iOS 18+ |
 | Bundle id | `online.mo4.huiver` | `online.mo4.huiver.nano` |
@@ -38,9 +38,10 @@ Then open `apps/ios/Huiver.xcodeproj`, pick your team under *Signing &
 Capabilities*, and run it on your iPhone. A free Apple ID works; the build
 expires after seven days and you re-run it.
 
-`bun run ios:voices` clones the ten LibriVox narrators the desktop app uses, so
-run `bun run voices` first if you have not. Without it you still get **Nano**,
-the voice baked into the weights, which needs no download.
+`bun run ios:voices` clones the four shipped narrators (the full LibriVox clip
+pool stays available to the Mac export), so run `bun run voices` first if you
+have not. Without it you still get **Narrator**, the voice baked into the
+weights, which needs no download.
 
 **The first launch is slow.** Core ML compiles each model for the device the
 first time it is loaded, which takes several minutes. The app shows a progress
@@ -216,7 +217,7 @@ chatterbox pin in `apps/web/py/requirements-chatterbox.txt`; the constants in
 ## Voices, and recording your own
 
 Chatterbox has no voice roster — it clones whatever ten-to-fifteen second clip
-it is given. The ten voices that ship were cloned on the Mac, once:
+it is given. The four narrators that ship were cloned on the Mac, once:
 `export_voices.py` reduces each reference clip to about 165 KB of conditionals,
 and that is what travels.
 
