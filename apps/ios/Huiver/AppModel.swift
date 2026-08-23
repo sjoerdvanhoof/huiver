@@ -27,6 +27,15 @@ final class AppModel {
     private(set) var placement: [String: String] = [:]
     /// Languages the loaded models can actually read.
     private(set) var engineLanguages: [Language] = [.english]
+    /// Where the compiled models are, kept because cloning needs them long
+    /// after `load` has finished with them.
+    private(set) var modelDirectory: URL?
+    /// Whether a cloner package is installed beside the engine. Not a loaded
+    /// cloner: see `cloneVoice` for why one is never held.
+    private(set) var canCloneVoices = false
+    /// Where voices recorded on this phone are written — the same directory
+    /// sync delivers into, so one `VoicePack.load` finds both.
+    private(set) var recordedVoices: URL?
     private(set) var preparing: ChatterboxEngine.LoadProgress?
     private(set) var preparingSince: Date?
     /// Every chapter's listening state, for the lists that draw it. Refreshed
@@ -150,10 +159,17 @@ final class AppModel {
             return
         }
 
+        let models = resources.appendingPathComponent("Models")
+        modelDirectory = models
+        recordedVoices = documents.appendingPathComponent("voices")
+        // The file, not the model: a cloner is 262 MB and holding one for a
+        // button that is usually not pressed would cost more than it is worth.
+        canCloneVoices = VoiceCloner.isAvailable(in: models)
+
         preparingSince = Date()
         do {
             let engine = try await ChatterboxEngine.load(
-                models: .init(directory: resources.appendingPathComponent("Models"))
+                models: .init(directory: models)
             ) { [weak self] progress in
                 Task { @MainActor in self?.preparing = progress }
             }
@@ -399,6 +415,75 @@ final class AppModel {
                 return true
             }
         }
+    }
+
+    // MARK: - Recording a voice
+
+    /// Turn a recording into a voice this phone can read with.
+    ///
+    /// The cloner is loaded here and dropped on the way out, rather than held
+    /// beside the engine the way the Mac holds its own. Four models and their
+    /// weights already sit in memory — 736 MB of them — and iOS answers a
+    /// high-water mark it does not like by killing the app with no crash
+    /// report. 262 MB more, permanently, for a button most sessions never
+    /// press, is not a trade worth making; a few seconds of loading when the
+    /// button *is* pressed is.
+    ///
+    /// The recording never leaves the phone. What is written is the five
+    /// tensors of a voice, none of which can be turned back into audio.
+    func cloneVoice(from recording: [Float], name: String, language: Language) async throws -> Voice {
+        guard let modelDirectory, let recordedVoices, let resources = Bundle.main.resourceURL
+        else { throw VoiceCloner.CloneError.unavailable }
+
+        // An id from the name, and a number if that name is taken: two voices
+        // called "Me" must not become one file.
+        let base = "rec_" + name.lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: "_", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+        var id = base.isEmpty ? "rec_voice" : base
+        var suffix = 2
+        while voices.contains(where: { $0.id == id }) {
+            id = "\(base)_\(suffix)"
+            suffix += 1
+        }
+
+        let cloner = try await VoiceCloner(models: modelDirectory)
+        let voice = try await cloner.clone(
+            recording,
+            id: id,
+            name: name.isEmpty ? "My voice" : name,
+            detail: "recorded in \(language.name) on this phone",
+            persona: "Your own voice, cloned from a short recording.",
+            language: language.code
+        )
+        try VoicePack.write(voice, to: recordedVoices)
+        voices = try VoicePack.load(
+            from: resources.appendingPathComponent("Voices"), plus: recordedVoices
+        )
+        selectedVoiceId = voice.id
+        return voice
+    }
+
+    /// Whether this voice was made here, which is the only kind that can be
+    /// deleted — the bundled ones come back with the app.
+    func isRecorded(_ voice: Voice) -> Bool {
+        guard let recordedVoices else { return false }
+        return FileManager.default.fileExists(
+            atPath: recordedVoices.appendingPathComponent("\(voice.id).voice").path
+        )
+    }
+
+    func deleteRecordedVoice(_ voice: Voice) {
+        guard let recordedVoices, let resources = Bundle.main.resourceURL,
+              isRecorded(voice)
+        else { return }
+        try? VoicePack.remove(id: voice.id, from: recordedVoices)
+        voices = (try? VoicePack.load(
+            from: resources.appendingPathComponent("Voices"), plus: recordedVoices
+        )) ?? voices
+        // Whatever is left, so the app is never pointing at a voice that has
+        // gone. Audio already rendered in it keeps playing: see `Narrator.route`.
+        if selectedVoiceId == voice.id { selectedVoiceId = voices.first?.id ?? "nano_default" }
     }
 
     // MARK: - Asking the Mac

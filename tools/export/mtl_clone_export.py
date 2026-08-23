@@ -39,17 +39,28 @@ from torch import nn
 S3_SR = 16000
 S3GEN_SR = 24000
 
-# What a clip is trimmed or padded to before anything looks at it. Ten seconds
-# is what the decoder's conditioning is shaped for — 250 tokens at 25 Hz — and
-# `export_voices.py` has always cut to it.
+# What the *mel decoder* reads: ten seconds, which is what its conditioning is
+# shaped for — 250 tokens at 25 Hz — and what `DEC_COND_LEN` cuts to in both
+# checkpoints.
 CLIP_SECONDS = 10
 CLIP_24K = CLIP_SECONDS * S3GEN_SR
 CLIP_16K = CLIP_SECONDS * S3_SR
 
-# The conditioning prompt is six seconds of the same clip: 150 tokens, which is
-# `T3Config.speech_cond_prompt_len`.
+# What the *T3* reads, and the one number that is not shared. The multilingual
+# checkpoint's `ENC_COND_LEN` is six seconds — 150 tokens, its
+# `speech_cond_prompt_len`. Nano is `ChatterboxTurboTTS`, whose `ENC_COND_LEN`
+# is fifteen, for a 375-token prompt. Getting this wrong does not fail: it
+# produces a voice built from a conditioning prompt two and a half times too
+# short, padded out with zeros, which is a worse clone rather than a broken one.
 COND_SECONDS = 6
 COND_16K = COND_SECONDS * S3_SR
+NANO_COND_SECONDS = 15
+
+# Nano also normalises the clip's loudness before any of this — see
+# `ChatterboxTurboTTS.norm_loudness`. That is a single gain, so it stays out of
+# the graph: `Loudness` in HuiverKit applies it before the model is called, and
+# `verify_clone.py` applies it here. Everything below assumes it has happened.
+TARGET_LUFS = -27.0
 
 
 def dft_basis(n_fft: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -397,40 +408,60 @@ class VoiceCloner(nn.Module):
     sides to disagree about what 16 kHz means.
     """
 
-    def __init__(self, model):
+    def __init__(self, model, cond_seconds: int = COND_SECONDS):
         super().__init__()
         from torchaudio.transforms import Resample
+
+        # The clip is however long the T3's conditioning window is, which is
+        # never shorter than the mel decoder's ten seconds. Both windows are
+        # taken from the front of the same recording, exactly as
+        # `prepare_conditionals` takes them.
+        self.cond_seconds = cond_seconds
+        self.input_24k = max(cond_seconds, CLIP_SECONDS) * S3GEN_SR
+        self.input_16k = max(cond_seconds, CLIP_SECONDS) * S3_SR
+        cond_16k = cond_seconds * S3_SR
 
         self.resample = Resample(S3GEN_SR, S3_SR)
         self.mel = S3GenMel()
         self.tokens = SpeechTokens(model.s3gen.tokenizer, CLIP_16K)
-        self.cond_tokens = SpeechTokens(model.s3gen.tokenizer, COND_16K)
-        self.speaker = SpeakerEmbedding(model.ve, CLIP_16K)
+        self.cond_tokens = SpeechTokens(model.s3gen.tokenizer, cond_16k)
+        # The voice encoder reads the whole reference, not the decoder's ten
+        # seconds: `ve.embeds_from_wavs([ref_16k_wav])` is handed the lot. For
+        # the multilingual clip those are the same thing; for Nano's fifteen
+        # seconds they are not, and using ten cost 0.03 of cosine.
+        self.speaker = SpeakerEmbedding(model.ve, self.input_16k)
         self.xvector = XVector(model.s3gen.speaker_encoder)
 
     def forward(self, wav24: torch.Tensor):
-        wav16 = self.resample(wav24)[:, :CLIP_16K]
+        wav16 = self.resample(wav24)[:, : self.input_16k]
         return (
             self.speaker(wav16),
-            self.cond_tokens(wav16[:, :COND_16K]),
-            self.tokens(wav16),
-            self.mel(wav24).transpose(1, 2),
-            self.xvector(wav16),
+            self.cond_tokens(wav16[:, : self.cond_seconds * S3_SR]),
+            self.tokens(wav16[:, :CLIP_16K]),
+            self.mel(wav24[:, :CLIP_24K]).transpose(1, 2),
+            self.xvector(wav16[:, :CLIP_16K]),
         )
 
 
 OUTPUTS = ("speaker_emb", "cond_prompt_tokens", "prompt_token", "prompt_feat", "embedding")
 
 
-def build(model) -> VoiceCloner:
-    cloner = VoiceCloner(model).eval()
+def build(model, cond_seconds: int = COND_SECONDS) -> VoiceCloner:
+    cloner = VoiceCloner(model, cond_seconds=cond_seconds).eval()
     for parameter in cloner.parameters():
         parameter.requires_grad_(False)
     return cloner
 
 
-def export(model, out, quant: str = "none", precision: str = "fp16"):
-    """Convert the cloner and write it beside the other packages."""
+def export(
+    model, out, quant: str = "none", precision: str = "fp16",
+    name: str = "MTLVoiceCloner", cond_seconds: int = COND_SECONDS,
+):
+    """Convert the cloner and write it beside the other packages.
+
+    `name` and `cond_prompt_len` are what differ between the two checkpoints;
+    everything below is shared. See `export_clone.py`, which is the CLI.
+    """
     import time
 
     import coremltools as ct
@@ -439,8 +470,8 @@ def export(model, out, quant: str = "none", precision: str = "fp16"):
     import mil_ops  # noqa: F401 — the ops coremltools is missing
     from export_mtl import quantize, save
 
-    cloner = build(model)
-    example = (torch.zeros(1, CLIP_24K),)
+    cloner = build(model, cond_seconds=cond_seconds)
+    example = (torch.zeros(1, cloner.input_24k),)
     print("clone: tracing")
     with torch.inference_mode():
         traced = torch.jit.trace(cloner, example, strict=False)
@@ -449,7 +480,7 @@ def export(model, out, quant: str = "none", precision: str = "fp16"):
     started = time.time()
     converted = ct.convert(
         traced,
-        inputs=[ct.TensorType(name="wav24", shape=(1, CLIP_24K), dtype=np.float32)],
+        inputs=[ct.TensorType(name="wav24", shape=(1, cloner.input_24k), dtype=np.float32)],
         outputs=[
             ct.TensorType(name="speaker_emb", dtype=np.float32),
             ct.TensorType(name="cond_prompt_tokens", dtype=np.int32),
@@ -457,7 +488,9 @@ def export(model, out, quant: str = "none", precision: str = "fp16"):
             ct.TensorType(name="prompt_feat", dtype=np.float32),
             ct.TensorType(name="embedding", dtype=np.float32),
         ],
-        minimum_deployment_target=ct.target.macOS15,
+        minimum_deployment_target=(
+            ct.target.macOS15 if name.startswith("MTL") else ct.target.iOS18
+        ),
         # Precision is a parameter, and the default is not the usual one. Two of
         # these five outputs are *tokens* — an argmin over a codebook — and
         # quantisation moves the encoder's output just enough to flip which
@@ -476,11 +509,17 @@ def export(model, out, quant: str = "none", precision: str = "fp16"):
     save(
         quantize(converted, quant),
         out,
-        "MTLVoiceCloner",
+        name,
         dict(
             sampleRate=S3GEN_SR,
-            clipSamples=CLIP_24K,
-            condPromptLen=150,
+            # How much audio the package is traced for, which is what the app
+            # has to hand it. Read out of the metadata rather than agreed by
+            # convention: the two checkpoints want different amounts.
+            clipSamples=cloner.input_24k,
+            condPromptLen=cond_seconds * 25,
+            # Nano's clip is loudness-normalised before it reaches the model.
+            # The app reads this and does it; nothing here can.
+            targetLufs=TARGET_LUFS if cond_seconds == NANO_COND_SECONDS else "",
             promptTokenLen=250,
             promptFeatLen=500,
             melDim=80,

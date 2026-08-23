@@ -6,22 +6,31 @@ import Foundation
 /// Until now cloning happened in Python: `export_voices.py` on the Mac, because
 /// a voice is five tensors and producing them needs three networks neither app
 /// carried — a speech tokenizer, an LSTM speaker encoder and an x-vector net —
-/// plus four different mel front-ends. `MTLVoiceCloner` is all of that in one
-/// Core ML package, so the app can do it itself.
+/// plus four different mel front-ends. The cloner package is all of that in one
+/// Core ML graph, so either app can do it itself.
 ///
 /// ```
-/// ten seconds at 24 kHz
-///   ├─ speaker_emb   (256)       who is speaking            → T3
-///   ├─ cond_prompt   (150)       six seconds, as tokens      → T3
-///   ├─ prompt_token  (250)       ten seconds, as tokens      → S3Gen
-///   ├─ prompt_feat   (500, 80)   the same ten as mel         → S3Gen
-///   └─ embedding     (192)       an x-vector                 → S3Gen
+/// ten seconds at 24 kHz (fifteen for Nano)
+///   ├─ speaker_emb   (256)       who is speaking             → T3
+///   ├─ cond_prompt   (150 / 375) the T3's window, as tokens   → T3
+///   ├─ prompt_token  (250)       the first ten, as tokens     → S3Gen
+///   ├─ prompt_feat   (500, 80)   the same ten as mel          → S3Gen
+///   └─ embedding     (192)       an x-vector                  → S3Gen
 /// ```
 ///
-/// The recording never leaves the Mac, and none of those five can be turned
-/// back into it.
+/// Two numbers differ between the checkpoints and both are read from the
+/// package rather than written down here: how long a clip it wants, and whether
+/// its pipeline normalises the clip's loudness first. Nano's wants fifteen
+/// seconds — its T3 asks for a 375-token conditioning prompt — and normalises
+/// to −27 LUFS.
+///
+/// The recording never leaves the device, and none of those five tensors can be
+/// turned back into it.
 public actor VoiceCloner {
-    public static let modelName = "MTLVoiceCloner.mlmodelc"
+    /// The two packages, in the order they are looked for. `VoiceCloner` is
+    /// Nano's and `MTLVoiceCloner` the multilingual one; an install has one or
+    /// the other, matching the engine beside it.
+    public static let modelNames = ["VoiceCloner.mlmodelc", "MTLVoiceCloner.mlmodelc"]
 
     public enum CloneError: Error, LocalizedError {
         case unavailable
@@ -33,15 +42,16 @@ public actor VoiceCloner {
             switch self {
             case .unavailable:
                 """
-                These models cannot clone a voice. Cloning needs the \
-                multilingual export — run bun run mac:models && bun run mac:install.
+                These models cannot clone a voice. Export the cloner beside \
+                them — run bun run ios:clone (or mac:clone) and install again.
                 """
             case .silent:
                 "That recording is silent. Check the input device and try again."
             case .tooShort(let seconds):
                 """
-                That is \(String(format: "%.1f", seconds)) seconds of speech; a \
-                voice needs about ten. Read a couple more sentences.
+                That is \(String(format: "%.1f", seconds)) seconds of speech, \
+                which is not enough to build a voice from. Read a few more \
+                sentences.
                 """
             case .badOutput(let what):
                 "The cloning model produced no \(what)."
@@ -49,24 +59,60 @@ public actor VoiceCloner {
         }
     }
 
-    /// Whether these installed models can clone at all. Nano's export has no
-    /// cloner, and neither did the multilingual one before this existed.
-    public static func isAvailable(in models: URL) -> Bool {
-        FileManager.default.fileExists(
-            atPath: models.appendingPathComponent(modelName).path
-        )
+    /// The cloner installed beside these models, if either is.
+    public static func installed(in models: URL) -> URL? {
+        modelNames
+            .map(models.appendingPathComponent)
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// Whether these installed models can clone at all. An export from before
+    /// the cloner existed has neither package.
+    public static func isAvailable(in models: URL) -> Bool { installed(in: models) != nil }
+
+    /// How long a clip the installed cloner wants, without loading it.
+    ///
+    /// A screen has to say "read for about fifteen seconds" before anyone has
+    /// pressed anything, and loading 262 MB to find out the number is fifteen
+    /// is not a reasonable way to find out. The compiled model's own
+    /// `metadata.json` has it, the same file `ComputeUnits` reads its ladder
+    /// from.
+    public static func clipSeconds(in models: URL) -> Int? {
+        guard let url = installed(in: models),
+              let data = try? Data(contentsOf: url.appendingPathComponent("metadata.json")),
+              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let metadata = entries.first?["userDefinedMetadata"] as? [String: String],
+              let samples = metadata["clipSamples"].flatMap(Int.init)
+        else { return nil }
+        return samples / ReferenceClip.sampleRate
     }
 
     private let model: MLModel
     /// Where the model ran, for the same reason the engine reports it.
-    public let placement: String
+    public nonisolated let placement: String
+    /// How much audio this package was traced for, in samples at 24 kHz. Read
+    /// out of the package rather than assumed: the multilingual cloner wants
+    /// ten seconds and Nano's wants fifteen, and handing either the wrong
+    /// number of samples is a shape error deep inside Core ML.
+    public nonisolated let clipSamples: Int
+    /// The loudness the clip must be at before the model sees it, when the
+    /// checkpoint's own pipeline normalises. Nano's does, to −27 LUFS; the
+    /// multilingual one does not, and this is nil.
+    public nonisolated let targetLufs: Double?
+
+    public nonisolated var clipSeconds: Int { clipSamples / ReferenceClip.sampleRate }
 
     public init(models: URL) async throws {
-        let url = models.appendingPathComponent(Self.modelName)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw CloneError.unavailable
-        }
-        (model, placement) = try await ComputeUnits.load("MTLVoiceCloner", url)
+        guard let url = Self.installed(in: models) else { throw CloneError.unavailable }
+        let name = url.deletingPathExtension().lastPathComponent
+        (model, placement) = try await ComputeUnits.load(name, url)
+
+        // The package describes itself; nothing here hardcodes a checkpoint.
+        let metadata = model.modelDescription.metadata[.creatorDefinedKey] as? [String: String]
+        clipSamples = metadata?["clipSamples"].flatMap(Int.init) ?? ReferenceClip.samples
+        // Written as an empty string by the export when it does not apply:
+        // Core ML metadata values are strings, and there is no null.
+        targetLufs = metadata?["targetLufs"].flatMap(Double.init)
     }
 
     /// An `MLMultiArray`'s logical contents, in order.
@@ -118,17 +164,24 @@ public actor VoiceCloner {
         persona: String? = nil,
         language: String? = nil
     ) throws -> Voice {
-        let choice = ReferenceClip.prepare(recording)
+        let choice = ReferenceClip.prepare(recording, seconds: clipSeconds)
         guard choice.peak > 0.005 else { throw CloneError.silent }
         guard choice.availableSeconds >= Self.minimumSeconds else {
             throw CloneError.tooShort(choice.availableSeconds)
         }
 
+        // Nano's pipeline normalises the clip's loudness first, and the mel the
+        // decoder conditions on is a log magnitude — so skipping this does not
+        // fail, it quietly makes a worse clone. See `Loudness`.
+        let clip = targetLufs.map {
+            Loudness.normalised(choice.samples, to: $0, sampleRate: ReferenceClip.sampleRate)
+        } ?? choice.samples
+
         let input = try MLMultiArray(
-            shape: [1, NSNumber(value: ReferenceClip.samples)], dataType: .float32
+            shape: [1, NSNumber(value: clipSamples)], dataType: .float32
         )
         input.withUnsafeMutableBufferPointer(ofType: Float.self) { buffer, _ in
-            _ = buffer.update(fromContentsOf: choice.samples)
+            _ = buffer.update(fromContentsOf: clip)
         }
         let out = try model.prediction(
             from: try MLDictionaryFeatureProvider(dictionary: ["wav24": input])

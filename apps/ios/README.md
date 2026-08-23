@@ -110,7 +110,8 @@ bun run ios:install
 ### Size
 
 The export quantises weights to int8 by default, which is what ships — about
-410 MB of compiled models. `--quantize none` keeps float16 at roughly twice
+410 MB of compiled models, plus 262 MB for the voice cloner if it is installed,
+for 674 MB in the app. `--quantize none` keeps float16 at roughly twice
 the size:
 
 ```bash
@@ -212,14 +213,12 @@ telling them apart afterwards is miserable.
 chatterbox pin in `apps/web/py/requirements-chatterbox.txt`; the constants in
 `common.py` are properties of the checkpoint, not of its config file.
 
-## Voices, and why there is no recording
+## Voices, and recording your own
 
 Chatterbox has no voice roster — it clones whatever ten-to-fifteen second clip
-it is given. Doing that on the phone would mean exporting three more networks: a
-speech tokenizer, a speaker encoder and an x-vector model.
-
-So the cloning happens on the Mac, once. `export_voices.py` reduces each
-reference clip to about 165 KB of conditionals, and that is what ships:
+it is given. The ten voices that ship were cloned on the Mac, once:
+`export_voices.py` reduces each reference clip to about 165 KB of conditionals,
+and that is what travels.
 
 ```
 speaker_emb    (256,)      who is speaking, for T3
@@ -229,13 +228,55 @@ prompt_feat    (500, 80)   and as mel frames
 embedding      (192,)      an x-vector
 ```
 
-The recording never leaves the Mac and none of these can be turned back into it.
-The lengths are fixed rather than per-voice — the clip is cut to exactly ten
-seconds — which is what leaves the mel decoder with one free dimension instead
-of three.
+The recording never leaves the device and none of these can be turned back into
+it. The lengths are fixed rather than per-voice, which is what leaves the mel
+decoder with one free dimension instead of three.
 
-**Recording a voice on the phone is not in this version.** Anything you record
-in the web app is picked up by `ios:voices` and shipped like the rest.
+### Recording one on the phone
+
+Settings › Voice › **Record your own voice**. Read the passage for about fifteen
+seconds, name it, and it joins the roster; swipe to delete it again. Everything
+happens on the phone.
+
+Doing this needed a fourth package. Cloning is three networks the engine does
+not otherwise carry — a speech tokenizer, an LSTM speaker encoder and an
+x-vector net — plus four mel front-ends, and `mtl_clone_export.py` had already
+made all of that convertible for the Mac. The graph is checkpoint-agnostic, so
+`bun run ios:clone` is the same export run against Nano's weights. It is
+**262 MB**, which is why the app's models went from 412 MB to 674 MB, and why
+`AppModel.cloneVoice` loads it for the clone and drops it again rather than
+holding it beside the engine: 736 MB of weights are already resident, and iOS
+answers a high-water mark it dislikes by killing the app with no crash report.
+
+Three things about Nano's cloning differ from the multilingual one, and every
+one of them produced a plausible voice rather than an error when it was wrong —
+which is why `verify_clone.py --nano` exists and what it checks:
+
+| | multilingual | Nano |
+| --- | --- | --- |
+| clip the cloner reads | 10 s | **15 s** (`ChatterboxTurboTTS.ENC_COND_LEN`) |
+| conditioning prompt | 150 tokens | **375** |
+| loudness | as recorded | **normalised to −27 LUFS** |
+
+The loudness one is the subtle one. The mel the decoder conditions on is a *log*
+magnitude, so the clip's level lands in it as an offset: cloning without
+normalising cost 0.977 speaker cosine and 0.998 mel cosine against the Python
+pipeline, where doing it gives 1.000000 for both. It is a single gain, so it
+stays out of the Core ML graph — Core ML has no IIR and BS.1770 is two of them —
+and lives in `Loudness`, held to `pyloudnorm` by `LoudnessTests`.
+
+Against a full fifteen seconds the exported cloner reproduces `prepare_conditionals`
+exactly in torch, and to six decimal places of cosine through Core ML at float16.
+A **short** clip is the one case that provably differs: upstream trims the
+silence before the voice encoder sees it and a fixed-shape graph cannot, which
+measured 0.977 rather than 1.000000. Hence the sheet's progress bar, and the
+warning it shows when a take falls short.
+
+```bash
+bun run ios:clone          # export the cloner (about 20 s, after the checkpoint loads)
+bun run ios:verify:clone   # against prepare_conditionals
+bun run ios:install
+```
 
 ## Languages
 

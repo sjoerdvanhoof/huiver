@@ -197,6 +197,7 @@
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "The camera is used only to scan the pairing code shown on your Mac.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Huiver finds your Mac on the local network to sync books, audio and listening positions. Nothing leaves your network.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "The microphone records a short passage so huiver can read your books in your own voice. The recording stays on this phone.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -225,6 +226,7 @@
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "The camera is used only to scan the pairing code shown on your Mac.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Huiver finds your Mac on the local network to sync books, audio and listening positions. Nothing leaves your network.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "The microphone records a short passage so huiver can read your books in your own voice. The recording stays on this phone.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

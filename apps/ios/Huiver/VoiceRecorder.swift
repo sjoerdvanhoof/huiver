@@ -4,11 +4,17 @@ import Observation
 
 /// The microphone, as the record sheet needs it.
 ///
-/// One responsibility: turn whatever the input device is doing into the mono
-/// 24 kHz float samples `VoiceCloner` wants, while reporting a level so the
-/// listener can see that it is hearing them. Everything about *which* ten
-/// seconds get used lives in `ReferenceClip`, which is tested; this is the part
-/// that cannot be.
+/// One responsibility: turn whatever the input is doing into the mono 24 kHz
+/// float samples `VoiceCloner` wants, while reporting a level so the reader can
+/// see that it is hearing them. Everything about *which* seconds get used lives
+/// in `ReferenceClip`, which is tested; this is the part that cannot be.
+///
+/// The Mac's copy of this is the same file without the audio session. On iOS
+/// the session is the whole difference: an app that has been playing a book is
+/// in `.playback`, which has no input at all, and an engine started against it
+/// records silence rather than failing. So the category is moved for the
+/// duration and put back afterwards — the narrator sets its own only once, on
+/// its first chapter, and would never restore it.
 @MainActor
 @Observable
 final class VoiceRecorder {
@@ -25,28 +31,26 @@ final class VoiceRecorder {
     private(set) var level: Double = 0
     private(set) var seconds: Double = 0
     private(set) var failure: String?
-    private(set) var sourceName: String?
 
     /// What was recorded, once stopped.
     private(set) var samples: [Float] = []
 
-    /// Long enough that ten seconds can be chosen from the middle, short enough
-    /// that nobody reads a chapter into it.
-    static let maximumSeconds: Double = 30
+    /// Long enough to fill Nano's fifteen-second window with room to spare,
+    /// short enough that nobody reads a chapter into it.
+    static let maximumSeconds: Double = 45
 
     private let engine = AVAudioEngine()
-    private var converter: AVAudioConverter?
     private var collected: [Float] = []
 
-    /// Ask for the microphone. macOS answers on a background queue.
+    /// Ask for the microphone.
     func requestAccess() async -> Bool {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized: return true
-        case .denied, .restricted:
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted: return true
+        case .denied:
             state = .denied
             return false
         default:
-            let granted = await AVCaptureDevice.requestAccess(for: .audio)
+            let granted = await AVAudioApplication.requestRecordPermission()
             if !granted { state = .denied }
             return granted
         }
@@ -59,15 +63,22 @@ final class VoiceRecorder {
         samples = []
         seconds = 0
         level = 0
-        sourceName = nil
+
+        do {
+            try beginSession()
+        } catch {
+            failure = error.localizedDescription
+            return
+        }
 
         let input = engine.inputNode
         let format = input.inputFormat(forBus: 0)
         guard format.sampleRate > 0 else {
-            failure = "No input device is available."
+            failure = "No microphone is available."
+            endSession()
             return
         }
-        // What the cloner wants, whatever the device offers: mono, 24 kHz,
+        // What the cloner wants, whatever the hardware offers: mono, 24 kHz,
         // float. The converter does the resampling so nothing downstream has to
         // care what the microphone's native rate is.
         guard let target = AVAudioFormat(
@@ -76,10 +87,10 @@ final class VoiceRecorder {
             channels: 1,
             interleaved: false
         ), let converter = AVAudioConverter(from: format, to: target) else {
-            failure = "Could not read from this input device."
+            failure = "Could not read from the microphone."
+            endSession()
             return
         }
-        self.converter = converter
 
         // AVAudioEngine calls a tap on its own realtime messenger queue, and a
         // closure written inside this `@MainActor` type inherits that
@@ -105,52 +116,8 @@ final class VoiceRecorder {
             state = .recording
         } catch {
             input.removeTap(onBus: 0)
+            endSession()
             failure = error.localizedDescription
-        }
-    }
-
-    /// Import an audio file through AVFoundation, using the same mono 24 kHz
-    /// conversion as the microphone so trimming and cloning have one format.
-    func importAudio(from url: URL) {
-        reset()
-        failure = nil
-
-        let accessing = url.startAccessingSecurityScopedResource()
-        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-
-        do {
-            let file = try AVAudioFile(forReading: url)
-            let format = file.processingFormat
-            guard let target = AVAudioFormat(
-                commonFormat: .pcmFormatFloat32,
-                sampleRate: Double(ReferenceClip.sampleRate),
-                channels: 1,
-                interleaved: false
-            ), let converter = AVAudioConverter(from: format, to: target) else {
-                throw ImportError.unreadable
-            }
-
-            var imported: [Float] = []
-            let chunkFrames: AVAudioFrameCount = 32_768
-            while file.framePosition < file.length {
-                guard let buffer = AVAudioPCMBuffer(
-                    pcmFormat: format,
-                    frameCapacity: min(chunkFrames, AVAudioFrameCount(file.length - file.framePosition))
-                ) else { throw ImportError.unreadable }
-                try file.read(into: buffer)
-                guard buffer.frameLength > 0 else { break }
-                if let converted = Self.convert(buffer, with: converter, to: target) {
-                    imported += converted
-                }
-            }
-            guard !imported.isEmpty else { throw ImportError.empty }
-            samples = imported
-            seconds = Double(imported.count) / Double(ReferenceClip.sampleRate)
-            sourceName = url.deletingPathExtension().lastPathComponent
-            state = .finished
-        } catch {
-            failure = error.localizedDescription
-            state = .idle
         }
     }
 
@@ -158,6 +125,7 @@ final class VoiceRecorder {
         guard state == .recording else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        endSession()
         samples = collected
         state = .finished
         level = 0
@@ -171,24 +139,36 @@ final class VoiceRecorder {
         seconds = 0
         state = .idle
         failure = nil
-        sourceName = nil
     }
 
-    private enum ImportError: LocalizedError {
-        case unreadable, empty
-
-        var errorDescription: String? {
-            switch self {
-            case .unreadable: "Huiver could not decode that audio file."
-            case .empty: "That audio file is empty."
-            }
-        }
+    /// What `ReferenceClip` makes of the take, for the given cloner's window —
+    /// how much speech there is, and whether it is loud enough to be worth
+    /// cloning.
+    func choice(seconds clipSeconds: Int) -> ReferenceClip.Choice? {
+        samples.isEmpty ? nil : ReferenceClip.prepare(samples, seconds: clipSeconds)
     }
 
-    /// What `ReferenceClip` makes of the take — how much speech there is, and
-    /// whether it is loud enough to be worth cloning.
-    var choice: ReferenceClip.Choice? {
-        samples.isEmpty ? nil : ReferenceClip.prepare(samples)
+    // MARK: - The session
+
+    /// `.playAndRecord` rather than `.record`: the sheet plays the take back,
+    /// and switching category between recording and previewing would tear the
+    /// session down twice for no reason.
+    private func beginSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(
+            .playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetooth]
+        )
+        try session.setActive(true)
+    }
+
+    /// Back to what the narrator expects. It configures the session once, on
+    /// the first chapter it plays, and never again — so leaving the session in
+    /// `.playAndRecord` would leave every later chapter quieter and routed to
+    /// the earpiece, with nothing to blame it on.
+    private func endSession() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .spokenAudio, policy: .longFormAudio)
+        try? session.setActive(true)
     }
 
     private func append(_ chunk: [Float]) {

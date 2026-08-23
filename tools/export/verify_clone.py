@@ -37,11 +37,29 @@ import torch
 import torchaudio
 
 from common import load_multilingual
-from mtl_clone_export import CLIP_24K, OUTPUTS, S3GEN_SR, VoiceCloner
+from mtl_clone_export import CLIP_24K, OUTPUTS, S3GEN_SR, TARGET_LUFS, VoiceCloner
 
 
-def load_clip(path: Path) -> np.ndarray:
-    """Ten seconds at 24 kHz, padded if the clip is short."""
+def normalise_loudness(audio: np.ndarray, target_lufs: float = TARGET_LUFS) -> np.ndarray:
+    """`ChatterboxTurboTTS.norm_loudness`, which Nano applies and the Mac's
+    checkpoint does not.
+
+    One gain over the whole clip, so it belongs outside the graph — the app does
+    it in Swift (`Loudness`) and this does it here, and the two are held together
+    by `LoudnessTests` rather than by hope.
+    """
+    import pyloudnorm as ln
+
+    meter = ln.Meter(S3GEN_SR)
+    loudness = meter.integrated_loudness(audio)
+    gain = 10.0 ** ((target_lufs - loudness) / 20.0)
+    if not np.isfinite(gain) or gain <= 0:
+        return audio
+    return (audio * gain).astype(np.float32)
+
+
+def load_clip(path: Path, seconds: int = 10) -> np.ndarray:
+    """`seconds` at 24 kHz, padded if the clip is short."""
     audio, rate = sf.read(str(path), dtype="float32")
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
@@ -57,8 +75,9 @@ def load_clip(path: Path) -> np.ndarray:
     import librosa
 
     audio, _ = librosa.effects.trim(audio, top_db=20)
-    clip = np.zeros(CLIP_24K, dtype=np.float32)
-    take = min(CLIP_24K, len(audio))
+    samples = seconds * S3GEN_SR
+    clip = np.zeros(samples, dtype=np.float32)
+    take = min(samples, len(audio))
     clip[:take] = audio[:take]
     return clip
 
@@ -100,38 +119,58 @@ def main():
     parser.add_argument(
         "--clip", type=Path, default=Path(__file__).resolve().parents[1] / "voices/clips/nl.wav"
     )
+    parser.add_argument(
+        "--nano", action="store_true",
+        help="check the phone's cloner against Chatterbox Nano instead",
+    )
     args = parser.parse_args()
 
     import coremltools as ct
 
     from verify_mtl import load_package
 
-    print("loading Chatterbox Multilingual")
-    model = load_multilingual()
-    clip = load_clip(args.clip)
+    if args.nano:
+        from common import load_nano
+        from export_clone import NANO_COND_SECONDS
 
-    # A file of exactly the ten seconds under test, so both sides see the same
-    # audio rather than the same intention.
+        print("loading Chatterbox Nano")
+        model = load_nano()
+        name = "VoiceCloner"
+        cond_seconds = NANO_COND_SECONDS
+    else:
+        print("loading Chatterbox Multilingual")
+        model = load_multilingual()
+        name = "MTLVoiceCloner"
+        cond_seconds = 6
+    clip = load_clip(args.clip, seconds=max(cond_seconds, 10))
+
+    # A file of exactly the seconds under test, so both sides see the same audio
+    # rather than the same intention.
     trimmed = Path("/tmp/huiver-clone-clip.wav")
     sf.write(trimmed, clip, S3GEN_SR)
 
+    # Upstream normalises inside `prepare_conditionals`, so it is handed the
+    # clip as recorded; the cloner is handed the normalised one, which is what
+    # the app will hand it. Comparing the two is therefore also a check that the
+    # normalisation is the same normalisation.
     want = upstream(model, clip, trimmed)
+    if args.nano:
+        clip = normalise_loudness(clip)
     wav = torch.tensor(clip)[None]
 
     print("torch:")
     with torch.inference_mode():
-        torch_out = VoiceCloner(model)(wav)
+        torch_out = VoiceCloner(model, cond_seconds=cond_seconds)(wav)
     ok = report(torch_out, want)
 
-    package = args.models / "MTLVoiceCloner.mlpackage"
+    package = args.models / f"{name}.mlpackage"
     if package.exists():
         print("core ml:")
         cloner = load_package(package)
         predicted = cloner.predict({"wav24": clip[None]})
         precision = cloner.user_defined_metadata.get("precision", "fp16")
-        ok &= report(
-            [torch.tensor(predicted[name]) for name in OUTPUTS], want, exact=precision == "fp32"
-        )
+        got = [torch.tensor(predicted[output]) for output in OUTPUTS]
+        ok &= report(got, want, exact=precision == "fp32")
         print(f"  ({precision}; tokens are only exact at fp32, and need not be)")
     else:
         print(f"no {package.name} — export it first")

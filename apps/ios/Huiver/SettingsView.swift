@@ -12,6 +12,8 @@ struct SettingsView: View {
     /// until the switch is confirmed — changing narrator re-renders those
     /// chapters, which is hours of compute worth a sentence of warning.
     @State private var pendingVoice: Voice?
+    /// The record sheet, which loads the cloner for as long as it is open.
+    @State private var recording = false
     /// Local mirrors of the UserDefaults-backed skip sizes: pickers need a
     /// value that view updates can observe.
     @State private var skipBack = SkipIntervals.backward
@@ -73,11 +75,32 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.plain)
                     }
+                    .swipeActions(edge: .trailing) {
+                        // Only the ones made here: a bundled voice would come
+                        // back with the next install anyway.
+                        if model.isRecorded(voice) {
+                            Button("Delete", role: .destructive) {
+                                model.deleteRecordedVoice(voice)
+                            }
+                        }
+                    }
+                }
+
+                if model.canCloneVoices {
+                    Button {
+                        // The model is the loud one in the room; a sheet that
+                        // opened over a chapter would record it too.
+                        if model.narrator?.state == .speaking { model.narrator?.pause() }
+                        preview.stop()
+                        recording = true
+                    } label: {
+                        Label("Record your own voice", systemImage: "mic.fill")
+                    }
                 }
             } header: {
                 Text("Voice")
             } footer: {
-                Text("Chatterbox has no voice roster — it clones a reference recording. These were cloned on your Mac and shipped with the app; changing voice re-renders a chapter rather than mixing two narrators. Samples are pre-rendered, so they play instantly instead of waking the model.")
+                Text("Chatterbox has no voice roster — it clones a reference recording. The ones here were cloned on your Mac and shipped with the app; changing voice re-renders a chapter rather than mixing two narrators. Samples are pre-rendered, so they play instantly instead of waking the model.")
             }
 
             Section {
@@ -178,6 +201,7 @@ struct SettingsView: View {
             await model.refreshStorage()
         }
         .onDisappear { preview.stop() }
+        .sheet(isPresented: $recording) { RecordVoiceSheet() }
         .confirmationDialog(
             "Change the voice to \(pendingVoice?.name ?? "")?",
             isPresented: .init(
