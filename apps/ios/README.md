@@ -293,10 +293,22 @@ seek a stream whose length it does not know, so the phone walks files instead.
 
 Those files are also the checkpoint. A render interrupted anywhere — the app was
 killed, you pressed stop — leaves a prefix of numbered WAVs, and starting again
-picks up at the first one missing. A prefix is only reused when the work is
-identical; change the voice and the audio is discarded rather than continued,
-because half a chapter in one voice and half in another is worse than
+picks up at the first one missing. A *prefix* is only reused when the work is
+identical; change the voice and the half-chapter is discarded rather than
+continued, because half a chapter in one voice and half in another is worse than
 re-rendering.
+
+**A finished chapter is a different question, and the rule there is about the
+audio rather than the voice.** `Narrator.route` decides it in one line: every
+chunk on disk means play the files, anything else means synthesise. That has to
+ignore `renderedVoice`, because audio rendered on the Mac arrives over sync
+labelled with one of *its* multilingual voices — voices the phone filters out of
+its own roster, since it cannot load those tensors — so "was this read by the
+voice I have selected?" is permanently false for everything synced. Asking it
+sent every synced chapter down the render path, which discarded the transfer
+first and then read the chapter again in Nano: hours of the Mac's work deleted by
+the play button. Re-reading a finished chapter in the current voice is "Render
+again" in its context menu, which is a choice rather than a side effect.
 
 There is no ffmpeg on the phone, so chapters stay as 24 kHz 16-bit WAV: about
 173 MB per hour, against roughly 29 MB for the desktop app's 64 kbps MP3.

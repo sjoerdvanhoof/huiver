@@ -281,14 +281,10 @@ struct LibraryView: View {
         guard let narrator = model.narrator, let voice = model.voice(for: target.book) else {
             return
         }
-        if target.chapter.isComplete, target.chapter.renderedVoice == voice.id {
-            narrator.replay(book: target.book, chapter: target.chapter, from: target.position)
-        } else {
-            narrator.play(
-                book: target.book, chapter: target.chapter, voice: voice,
-                options: model.options, from: target.position
-            )
-        }
+        narrator.listen(
+            book: target.book, chapter: target.chapter, voice: voice,
+            options: model.options, from: target.position
+        )
         navigation.showPlayer()
     }
 }

@@ -225,6 +225,59 @@ public final class Narrator {
     /// estimate and the scrubber has an edge before the end.
     public var isFullyRendered: Bool { chunkCount > 0 && renderedChunks >= chunkCount }
 
+    /// Which of the two ways into a chapter a tap on play should take.
+    public enum Route: Sendable {
+        /// Everything is on disk: play the files, engine untouched.
+        case replay
+        /// Something is missing: synthesise, picking up whatever prefix exists.
+        case render
+    }
+
+    /// Play what is there, or make what is not.
+    ///
+    /// The rule is deliberately about the audio and not about the voice.
+    /// Chapters rendered by the Mac arrive over sync labelled with one of *its*
+    /// voices — multilingual voices whose tensors this app cannot even load, so
+    /// they are filtered out of the phone's roster — and comparing that label
+    /// against the selected voice sent every synced chapter down the render
+    /// path, which discarded the audio that had just been transferred and read
+    /// the chapter again in Nano. Whoever read a finished chapter, it is
+    /// finished; re-reading one in the current voice is "Render again", an
+    /// explicit choice.
+    ///
+    /// The files are counted rather than trusted from the index, so a chapter
+    /// the index calls complete but whose audio has gone renders instead of
+    /// sitting in `.preparing` with nothing to schedule.
+    public nonisolated static func route(chapter: Chapter, chunksOnDisk: Int) -> Route {
+        chapter.isComplete && chunksOnDisk >= chapter.chunkCount ? .replay : .render
+    }
+
+    /// Start listening to a chapter, whichever way round it has to happen.
+    ///
+    /// The one entry point every play button should use: the choice between
+    /// `replay` and `play` was written out at six call sites across the two
+    /// apps, which is how it came to be wrong at all six.
+    public func listen(
+        book: Book,
+        chapter: Chapter,
+        voice: Voice,
+        options: SamplingOptions,
+        from startPosition: Double = 0
+    ) {
+        let onDisk = renderer.rendered(
+            book: book.id, chapter: chapter.id, of: chapter.chunkCount
+        )
+        switch Self.route(chapter: chapter, chunksOnDisk: onDisk.count) {
+        case .replay:
+            replay(book: book, chapter: chapter, from: startPosition)
+        case .render:
+            play(
+                book: book, chapter: chapter, voice: voice, options: options,
+                from: startPosition
+            )
+        }
+    }
+
     /// Render and play a chapter, reusing whatever is already on disk.
     ///
     /// `from` is where to pick up: the stored listening position, or zero to
@@ -464,6 +517,14 @@ public final class Narrator {
                 let urls = renderer.rendered(
                     book: book.id, chapter: chapter.id, of: chapter.chunkCount
                 )
+                // Nothing to schedule means nothing will ever leave
+                // `.preparing`, and a spinner that never resolves is the
+                // worst way to say "the audio is gone". `listen` routes
+                // around this; a direct caller gets told.
+                guard !urls.isEmpty else {
+                    state = .failed("This chapter's audio is no longer on disk.")
+                    return
+                }
                 for (index, url) in urls.enumerated() {
                     if stopping.isSet { break }
                     schedule(

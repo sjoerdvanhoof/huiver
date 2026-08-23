@@ -277,14 +277,10 @@ struct LibraryView: View {
 
     private func resume(_ target: (book: Book, chapter: Chapter, position: Double)) {
         guard let narrator = model.narrator, let voice = model.selectedVoice else { return }
-        if target.chapter.isComplete, target.chapter.renderedVoice == voice.id {
-            narrator.replay(book: target.book, chapter: target.chapter, from: target.position)
-        } else {
-            narrator.play(
-                book: target.book, chapter: target.chapter, voice: voice,
-                options: model.options, from: target.position
-            )
-        }
+        narrator.listen(
+            book: target.book, chapter: target.chapter, voice: voice,
+            options: model.options, from: target.position
+        )
         showingPlayer = true
     }
 

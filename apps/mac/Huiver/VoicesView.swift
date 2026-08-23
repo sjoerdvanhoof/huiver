@@ -131,8 +131,9 @@ struct VoicesView: View {
         } message: {
             Text(
                 "\(renderedByOthers(than: pendingVoice)) rendered chapter(s) were read "
-                    + "by another voice. Their audio stays playable as it is; playing or "
-                    + "converting one again re-renders it in the new voice."
+                    + "by another voice. Their audio stays playable as it is — "
+                    + "\"Render again\" on a chapter is how you have one re-read in the "
+                    + "new voice."
             )
         }
     }

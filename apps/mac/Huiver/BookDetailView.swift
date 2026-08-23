@@ -316,14 +316,10 @@ struct BookDetailView: View {
             ?? current.chapters.first.map { ($0, 0.0) }
         guard let (chapter, position) = target else { return }
 
-        if chapter.isComplete, chapter.renderedVoice == voice.id {
-            narrator.replay(book: current, chapter: chapter, from: position)
-        } else {
-            narrator.play(
-                book: current, chapter: chapter, voice: voice,
-                options: model.options, from: position
-            )
-        }
+        narrator.listen(
+            book: current, chapter: chapter, voice: voice,
+            options: model.options, from: position
+        )
         navigation.showPlayer()
     }
 }
@@ -510,13 +506,9 @@ private struct ChapterRow: View {
         // A chapter that was left part-way through picks up there. A finished
         // one starts again from the top — clicking it is how you re-listen.
         let from = listened ?? 0
-        if chapter.isComplete, chapter.renderedVoice == voice.id {
-            narrator.replay(book: book, chapter: chapter, from: from)
-        } else {
-            narrator.play(
-                book: book, chapter: chapter, voice: voice, options: model.options, from: from
-            )
-        }
+        narrator.listen(
+            book: book, chapter: chapter, voice: voice, options: model.options, from: from
+        )
         navigation.showPlayer()
     }
 
