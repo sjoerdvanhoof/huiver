@@ -408,7 +408,7 @@ private struct ChapterRow: View {
                         ListenedBar(fraction: listened / max(estimatedLength, 1))
                             .padding(.top, 2)
                     }
-                    if voiceSpans.count > 1 {
+                    if !voiceSpans.isEmpty {
                         VoiceSpanStrip(
                             spans: voiceSpans,
                             total: max(
@@ -594,8 +594,10 @@ private struct ChapterRow: View {
     }
 
     /// The chapter's narrators laid out along the row, each name sitting where
-    /// its voice drops in, with a hairline marking the handover. Quiet on
-    /// purpose: it shares the row with a progress bar and a detail line.
+    /// its voice drops in, with a hairline underneath marking the handover.
+    /// Names that would collide wrap onto a line of their own — the row grows
+    /// rather than the names overprinting each other. Quiet on purpose: it
+    /// shares the row with a progress bar and a detail line.
     private struct VoiceSpanStrip: View {
         let spans: [ChunkMap.VoiceSpan]
         let total: Double
@@ -604,31 +606,97 @@ private struct ChapterRow: View {
         @Environment(\.theme) private var theme
 
         var body: some View {
-            GeometryReader { geometry in
-                ZStack(alignment: .topLeading) {
-                    ForEach(spans) { span in
-                        HStack(spacing: 3) {
-                            // The first voice starts the chapter rather than
-                            // dropping into it, so it gets no handover mark.
-                            if span.start > 0 {
-                                Rectangle()
-                                    .fill(theme.colors.border)
-                                    .frame(width: 1, height: 10)
-                            }
-                            Text(name(span.voiceId))
-                                .font(.caption2)
-                                .foregroundStyle(theme.colors.mutedForeground)
-                                .lineLimit(1)
+            SpanLayout(fractions: spans.map { min(1, $0.start / max(total, 1)) }) {
+                ForEach(spans) { span in
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(name(span.voiceId))
+                            .font(.caption2)
+                            .foregroundStyle(theme.colors.mutedForeground)
+                            .lineLimit(1)
+                        // The handover mark, under the name rather than beside
+                        // it so it can never strike through the letters. The
+                        // first voice starts the chapter rather than dropping
+                        // into it, so it gets none.
+                        if span.start > 0 {
+                            Rectangle()
+                                .fill(theme.colors.border)
+                                .frame(width: 1, height: 4)
                         }
-                        .offset(x: geometry.size.width * min(1, span.start / max(total, 1)))
                     }
                 }
             }
-            .frame(height: 12)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(
                 "Read by " + spans.map { name($0.voiceId) }.joined(separator: ", then ")
             )
+        }
+    }
+
+    /// Places each label at its fraction of the row's width, dropping a label
+    /// down a lane whenever it would run into the one before it — the strip
+    /// reports the stacked height, so the chapter row grows to fit.
+    private struct SpanLayout: Layout {
+        let fractions: [Double]
+        /// Breathing room required between neighbouring labels in one lane.
+        private let gap: CGFloat = 8
+        private let laneSpacing: CGFloat = 1
+
+        private struct Placement {
+            let x: CGFloat
+            let lane: Int
+            let size: CGSize
+        }
+
+        private func placements(
+            width: CGFloat, subviews: Subviews
+        ) -> (placed: [Placement], laneHeight: CGFloat, lanes: Int) {
+            var laneEnds: [CGFloat] = []
+            var laneHeight: CGFloat = 0
+            var placed: [Placement] = []
+            for (index, subview) in subviews.enumerated() {
+                let size = subview.sizeThatFits(.unspecified)
+                laneHeight = max(laneHeight, size.height)
+                let fraction = index < fractions.count ? fractions[index] : 0
+                // Pinned inside the row: a voice dropping in near the end
+                // slides left rather than running off the edge.
+                let x = min(width * CGFloat(fraction), max(0, width - size.width))
+                let lane: Int
+                if let free = laneEnds.firstIndex(where: { $0 + gap <= x }) {
+                    lane = free
+                } else {
+                    lane = laneEnds.count
+                    laneEnds.append(0)
+                }
+                laneEnds[lane] = x + size.width
+                placed.append(Placement(x: x, lane: lane, size: size))
+            }
+            return (placed, laneHeight, max(laneEnds.count, 1))
+        }
+
+        func sizeThatFits(
+            proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
+        ) -> CGSize {
+            let width = proposal.replacingUnspecifiedDimensions().width
+            let (_, laneHeight, lanes) = placements(width: width, subviews: subviews)
+            return CGSize(
+                width: width,
+                height: laneHeight * CGFloat(lanes) + laneSpacing * CGFloat(lanes - 1)
+            )
+        }
+
+        func placeSubviews(
+            in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
+        ) {
+            let (placed, laneHeight, _) = placements(width: bounds.width, subviews: subviews)
+            for (subview, placement) in zip(subviews, placed) {
+                subview.place(
+                    at: CGPoint(
+                        x: bounds.minX + placement.x,
+                        y: bounds.minY + CGFloat(placement.lane) * (laneHeight + laneSpacing)
+                    ),
+                    proposal: .unspecified
+                )
+            }
         }
     }
 
