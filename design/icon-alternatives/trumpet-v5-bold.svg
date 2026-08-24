@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a2b697"/>
+      <stop offset="1" stop-color="#78917f"/>
+    </linearGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#31504b"/>
+      <stop offset="1" stop-color="#1d3432"/>
+    </linearGradient>
+    <linearGradient id="petal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f0d38b"/>
+      <stop offset="1" stop-color="#c69a49"/>
+    </linearGradient>
+    <linearGradient id="bell" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#c1913e"/>
+      <stop offset="1" stop-color="#eecd85"/>
+    </linearGradient>
+    <radialGradient id="cup" cx="0.6" cy="0.5" r="0.85">
+      <stop offset="0" stop-color="#7e561e"/>
+      <stop offset="1" stop-color="#b98a35"/>
+    </radialGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+    <clipPath id="waterClip"><rect x="0" y="730" width="1024" height="294"/></clipPath>
+
+    <path id="petalShape" d="M0,0 C40,-31 52,-104 0,-172 C-52,-104 -40,-31 0,0 Z"/>
+
+    <g id="head">
+      <g transform="scale(0.62,1)" fill="url(#petal)" stroke="#a57930" stroke-width="4">
+        <use xlink:href="#petalShape" transform="rotate(-90)"/>
+        <use xlink:href="#petalShape" transform="rotate(-135)"/>
+        <use xlink:href="#petalShape" transform="rotate(135)"/>
+        <use xlink:href="#petalShape" transform="rotate(-45)"/>
+        <use xlink:href="#petalShape" transform="rotate(45)"/>
+        <use xlink:href="#petalShape" transform="rotate(0)"/>
+        <use xlink:href="#petalShape" transform="rotate(180)"/>
+      </g>
+      <ellipse cx="2" cy="0" rx="30" ry="46" fill="url(#petal)" stroke="#a57930" stroke-width="4"/>
+      <path d="M6,-36 C60,-48 108,-66 148,-92 C160,-99 166,-92 158,-82 L158,82 C166,92 160,99 148,92 C108,66 60,48 6,36 Z"
+            fill="url(#bell)" stroke="#a57930" stroke-width="4"/>
+      <path d="M12,-38 C64,-50 110,-68 146,-88" fill="none" stroke="#f6e3a8" stroke-width="3" opacity="0.65"/>
+      <ellipse cx="156" cy="0" rx="30" ry="88" fill="url(#cup)" stroke="#eecd85" stroke-width="4"/>
+      <g fill="none" stroke="#e9cd82" stroke-linecap="round">
+        <path d="M163,0 C190,-18 210,-26 232,-30" stroke-width="3.5" opacity="0.95"/>
+        <path d="M163,0 C190,16 212,24 236,30" stroke-width="3.5" opacity="0.95"/>
+        <path d="M163,0 C230,-52 310,-72 415,-78" stroke-width="3.5" opacity="0.9"/>
+        <path d="M163,0 C240,-30 330,-36 448,-30" stroke-width="3.2" opacity="0.75"/>
+        <path d="M163,0 C245,4 340,10 460,18" stroke-width="3" opacity="0.62"/>
+        <path d="M163,0 C238,36 322,58 430,84" stroke-width="3" opacity="0.5"/>
+        <path d="M163,0 C222,62 292,102 372,138" stroke-width="3" opacity="0.42"/>
+      </g>
+      <g fill="#caa04a">
+        <circle cx="232" cy="-30" r="6"/>
+        <circle cx="236" cy="30" r="6"/>
+        <circle cx="415" cy="-78" r="5.5"/>
+        <circle cx="448" cy="-30" r="5.5"/>
+        <circle cx="460" cy="18" r="5.5"/>
+        <circle cx="430" cy="84" r="5.5"/>
+        <circle cx="372" cy="138" r="5.5"/>
+      </g>
+      <circle cx="162" cy="0" r="9" fill="#f4e3ae"/>
+    </g>
+
+    <g id="flowerV5">
+      <path d="M370,745 L370,470" fill="none" stroke="#587f55" stroke-width="32" stroke-linecap="round"/>
+      <use xlink:href="#head" transform="translate(370,400) scale(1.28)"/>
+    </g>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#sky)"/>
+  <rect x="0" y="730" width="1024" height="294" fill="url(#water)"/>
+  <rect x="0" y="728" width="1024" height="3" fill="#c7d6bf" opacity="0.5"/>
+
+  <g clip-path="url(#waterClip)" opacity="0.4">
+    <use xlink:href="#flowerV5" transform="translate(0,1460) scale(1,-1)" filter="url(#soft)"/>
+  </g>
+
+  <g fill="none" stroke="#b9cbb4">
+    <ellipse cx="370" cy="752" rx="56" ry="8" opacity="0.38"/>
+    <ellipse cx="370" cy="755" rx="112" ry="15" opacity="0.22"/>
+    <ellipse cx="800" cy="748" rx="80" ry="11" opacity="0.18"/>
+  </g>
+
+  <use xlink:href="#flowerV5"/>
+</svg>

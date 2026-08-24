@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="sky5" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9db393"/>
+      <stop offset="1" stop-color="#76907e"/>
+    </linearGradient>
+    <linearGradient id="water5" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#31504b"/>
+      <stop offset="1" stop-color="#1c3331"/>
+    </linearGradient>
+    <linearGradient id="petal5" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f0d38b"/>
+      <stop offset="1" stop-color="#c69a49"/>
+    </linearGradient>
+    <linearGradient id="bell5" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#c69a49"/>
+      <stop offset="1" stop-color="#eecd85"/>
+    </linearGradient>
+    <radialGradient id="cup5" cx="0.45" cy="0.5" r="0.8">
+      <stop offset="0" stop-color="#7e561e"/>
+      <stop offset="1" stop-color="#b98a35"/>
+    </radialGradient>
+    <filter id="soft5" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+    <clipPath id="waterClip5"><rect x="0" y="690" width="1024" height="334"/></clipPath>
+
+    <path id="petalShape5" d="M0,0 C36,-28 48,-92 0,-152 C-48,-92 -36,-28 0,0 Z"/>
+
+    <g id="flower5">
+      <!-- stem rising out of the water -->
+      <path d="M205,700 C238,565 300,455 378,402" fill="none" stroke="#587f55" stroke-width="28" stroke-linecap="round"/>
+      <g transform="rotate(12,430,390)">
+        <!-- back petal fan, seen edge-on -->
+        <g transform="translate(402,390) scale(0.72,1)">
+          <g fill="url(#petal5)" stroke="#a57930" stroke-width="4">
+            <use xlink:href="#petalShape5" transform="rotate(0)"/>
+            <use xlink:href="#petalShape5" transform="rotate(-45)"/>
+            <use xlink:href="#petalShape5" transform="rotate(-90)"/>
+            <use xlink:href="#petalShape5" transform="rotate(-135)"/>
+            <use xlink:href="#petalShape5" transform="rotate(180)"/>
+            <use xlink:href="#petalShape5" transform="rotate(45) scale(0.82)"/>
+            <use xlink:href="#petalShape5" transform="rotate(135) scale(0.82)"/>
+          </g>
+        </g>
+        <!-- corona bell, short and flared -->
+        <path d="M400,364 C455,358 500,344 540,308 L540,472 C500,436 455,422 400,416 Z" fill="url(#bell5)" stroke="#a57930" stroke-width="4"/>
+        <ellipse cx="540" cy="390" rx="32" ry="84" fill="url(#cup5)" stroke="#eecd85" stroke-width="4"/>
+        <circle cx="547" cy="390" r="10" fill="#f4e3ae"/>
+        <!-- stamens spilling out as sound, drooping toward the water -->
+        <g fill="none" stroke="#e9cd82" stroke-linecap="round">
+          <path d="M547,390 C625,340 705,320 812,330" stroke-width="3.5" opacity="0.9"/>
+          <path d="M547,390 C635,368 725,368 845,392" stroke-width="3.2" opacity="0.75"/>
+          <path d="M547,390 C640,402 735,420 852,452" stroke-width="3" opacity="0.62"/>
+          <path d="M547,390 C632,428 715,462 818,512" stroke-width="3" opacity="0.5"/>
+          <path d="M547,390 C620,448 685,502 765,566" stroke-width="3" opacity="0.42"/>
+        </g>
+        <g fill="#caa04a">
+          <circle cx="812" cy="330" r="5.5"/>
+          <circle cx="845" cy="392" r="5.5"/>
+          <circle cx="852" cy="452" r="5.5"/>
+          <circle cx="818" cy="512" r="5.5"/>
+          <circle cx="765" cy="566" r="5.5"/>
+        </g>
+      </g>
+    </g>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#sky5)"/>
+  <rect x="0" y="690" width="1024" height="334" fill="url(#water5)"/>
+  <rect x="0" y="688" width="1024" height="3" fill="#c7d6bf" opacity="0.5"/>
+
+  <g clip-path="url(#waterClip5)" opacity="0.38">
+    <use xlink:href="#flower5" transform="translate(0,1380) scale(1,-1)" filter="url(#soft5)"/>
+  </g>
+
+  <g fill="none" stroke="#b9cbb4">
+    <ellipse cx="205" cy="700" rx="46" ry="8" opacity="0.4"/>
+    <ellipse cx="205" cy="703" rx="92" ry="14" opacity="0.24"/>
+    <ellipse cx="700" cy="714" rx="80" ry="12" opacity="0.2"/>
+  </g>
+
+  <use xlink:href="#flower5"/>
+</svg>

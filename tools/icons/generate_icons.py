@@ -1,148 +1,99 @@
-"""Render the Narcisse app icons straight into both asset catalogs.
+"""Derive the Narcisse app icons from design/narcisse-app-icon.png.
 
-The artwork is "Narcisse at the water": a flat gold bloom on a stem, mirrored
-below a waterline as a faint squashed reflection with ripple gaps. Everything
-is drawn at 4x (4096) and downscaled with Lanczos, so the shipped PNGs stay
-crisp without any vector tooling.
+The design master is a rounded-rect card with white margins baked in. This
+script crops it to a full-bleed square for iOS (the system applies its own
+corner mask), paints the card's own white corner notches with the adjacent
+background so no white can ever peek through a mask, and composes the macOS
+set on Apple's inset rounded-rect plate with a transparent margin.
 
 Run via the repo venv:  bun run icons
 """
 
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw
 
 REPO = Path(__file__).resolve().parents[2]
+SOURCE = REPO / "design/narcisse-app-icon.png"
 IOS_SET = REPO / "apps/ios/Huiver/Assets.xcassets/AppIcon.appiconset"
 MAC_SET = REPO / "apps/mac/Huiver/Assets.xcassets/AppIcon.appiconset"
 
-S = 4  # supersample factor; all geometry below is at 1024 master scale
-
-FIELD_ABOVE = (0x12, 0x24, 0x1F, 255)
-FIELD_BELOW = (0x0B, 0x1A, 0x16, 255)
-WATERLINE = (0x7F, 0xB0, 0xA0, int(255 * 0.28))
-PETAL = (0xD9, 0xA4, 0x41, 255)
-TRUMPET = (0xB8, 0x80, 0x2B, 255)
-STEM = (0x3E, 0x6B, 0x5A, 255)
-
-WATER_Y = 594
-BLOOM = (512, 330)
-REFLECTION_TOP = 600  # canvas y where the mirrored stem meets the water
-SQUASH = 0.86
-RIPPLES = (48, 118, 200)  # gaps in the reflection, offsets below the waterline
+EDGE_LUMINANCE = 200  # anything darker than this counts as card, not margin
+RIM_INSET = 0.02      # fraction of card size cropped to clear its rim highlight
+CARD_RADIUS = 175     # the card's own corner radius at 1024, slightly padded
 
 
-def artwork_layer(mouth_color: tuple[int, int, int, int]) -> Image.Image:
-    """The bloom and stem on a transparent 1024x1024 layer (at 4x)."""
-    layer = Image.new("RGBA", (1024 * S, 1024 * S), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(layer)
+def card_bounds(img: Image.Image) -> tuple[int, int, int, int]:
+    """Locate the rounded card by scanning the midlines for non-white pixels."""
+    gray = img.convert("L")
+    px = gray.load()
+    w, h = img.size
 
-    # Stem first, so the trumpet sits over its top end.
-    draw.rounded_rectangle(
-        [(512 - 10) * S, 392 * S, (512 + 10) * S, WATER_Y * S],
-        radius=10 * S,
-        fill=STEM,
-    )
+    def scan(vals: list[int]) -> tuple[int, int]:
+        lo = next(i for i, v in enumerate(vals) if v < EDGE_LUMINANCE)
+        hi = len(vals) - 1 - next(i for i, v in enumerate(reversed(vals)) if v < EDGE_LUMINANCE)
+        return lo, hi
 
-    # Six petals: one ellipse (200 long x 84 wide, inner end at radius 70)
-    # rotated about the bloom center in 60-degree steps. Offset by 30 degrees
-    # so no petal points straight down — the stem stays visible in the gap.
-    petal = Image.new("RGBA", (1024 * S, 1024 * S), (0, 0, 0, 0))
-    cx, cy = BLOOM
-    ImageDraw.Draw(petal).ellipse(
-        [(cx - 42) * S, (cy - 270) * S, (cx + 42) * S, (cy - 70) * S],
-        fill=PETAL,
-    )
-    for k in range(6):
-        layer.alpha_composite(
-            petal.rotate(k * 60 + 30, center=(cx * S, cy * S), resample=Image.BICUBIC)
+    left, right = scan([px[x, h // 2] for x in range(w)])
+    top, bottom = scan([px[w // 2, y] for y in range(h)])
+    return left, top, right, bottom
+
+
+def full_bleed(img: Image.Image) -> Image.Image:
+    """1024x1024 full-bleed square with the card's white corner notches filled."""
+    left, top, right, bottom = card_bounds(img)
+    inset = round((right - left) * RIM_INSET)
+    sq = img.crop((left + inset, top + inset, right - inset, bottom - inset))
+    side = min(sq.size)
+    sq = sq.crop(
+        (
+            (sq.width - side) // 2,
+            (sq.height - side) // 2,
+            (sq.width + side) // 2,
+            (sq.height + side) // 2,
         )
-
-    # Trumpet: deeper gold cup with the field showing through its mouth.
-    draw = ImageDraw.Draw(layer)
-    draw.ellipse([(cx - 62) * S, (cy - 62) * S, (cx + 62) * S, (cy + 62) * S], fill=TRUMPET)
-    draw.ellipse([(cx - 26) * S, (cy - 26) * S, (cx + 26) * S, (cy + 26) * S], fill=mouth_color)
-
-    return layer
-
-
-def add_reflection(canvas: Image.Image, art: Image.Image) -> None:
-    """Composite the mirrored, squashed, faded copy with ripple gaps."""
-    squashed = ImageOps.flip(art).resize(
-        (1024 * S, int(1024 * S * SQUASH)), Image.LANCZOS
     )
-    squashed.putalpha(squashed.getchannel("A").point(lambda a: int(a * 0.34)))
+    out = sq.resize((1024, 1024), Image.LANCZOS)
 
-    # The flipped stem bottom sits at (1024 - WATER_Y) * SQUASH inside the
-    # squashed layer; place that point at REFLECTION_TOP on the canvas.
-    paste_y = REFLECTION_TOP - round((1024 - WATER_Y) * SQUASH)
+    mask = Image.new("L", (1024, 1024), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, 1023, 1023], radius=CARD_RADIUS, fill=255)
+    bg = Image.new("RGB", (1024, 1024))
+    draw = ImageDraw.Draw(bg)
+    for corner_x, corner_y, sample_x, sample_y in (
+        (0, 0, 120, 120),
+        (824, 0, 903, 120),
+        (0, 824, 120, 903),
+        (824, 824, 903, 903),
+    ):
+        draw.rectangle(
+            [corner_x, corner_y, corner_x + 199, corner_y + 199],
+            fill=out.getpixel((sample_x, sample_y)),
+        )
+    return Image.composite(out, bg, mask)
 
-    erase = ImageDraw.Draw(squashed)
-    for off in RIPPLES:
-        top = (REFLECTION_TOP + off - paste_y) * S
-        erase.rectangle([0, top, 1024 * S, top + 14 * S], fill=(0, 0, 0, 0))
 
-    canvas.alpha_composite(squashed, (0, paste_y * S))
-
-
-def compose_scene(transparent_field: bool) -> Image.Image:
-    """Full 1024 master: field, waterline, reflection, bloom (at 4x)."""
-    canvas = Image.new("RGBA", (1024 * S, 1024 * S), (0, 0, 0, 0))
-    if not transparent_field:
-        draw = ImageDraw.Draw(canvas)
-        draw.rectangle([0, 0, 1024 * S, WATER_Y * S], fill=FIELD_ABOVE)
-        draw.rectangle([0, WATER_Y * S, 1024 * S, 1024 * S], fill=FIELD_BELOW)
-
-    line = Image.new("RGBA", (1024 * S, 1024 * S), (0, 0, 0, 0))
-    ImageDraw.Draw(line).rectangle([0, 591 * S, 1024 * S, 597 * S], fill=WATERLINE)
-    canvas.alpha_composite(line)
-
-    mouth = (0, 0, 0, 0) if transparent_field else FIELD_ABOVE
-    art = artwork_layer(mouth)
-    add_reflection(canvas, art)
-    canvas.alpha_composite(art)
+def mac_plate(icon: Image.Image) -> Image.Image:
+    """macOS master: the icon on Apple's 824px rounded plate, margin transparent."""
+    canvas = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
+    art = icon.resize((824, 824), Image.LANCZOS)
+    mask = Image.new("L", (824, 824), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, 823, 823], radius=186, fill=255)
+    canvas.paste(art, (100, 100), mask)
     return canvas
-
-
-def down(image: Image.Image, size: int) -> Image.Image:
-    return image.resize((size, size), Image.LANCZOS)
-
-
-def rounded_plate_master(scene: Image.Image) -> Image.Image:
-    """macOS master: the scene on an inset rounded-rect plate, artwork x0.80."""
-    scaled = scene.resize((round(1024 * S * 0.80),) * 2, Image.LANCZOS)
-    offset = (1024 * S - scaled.width) // 2
-
-    # Field behind the slightly-inset scene, split at the scaled waterline so
-    # the sliver of plate showing around the scene matches the water tones.
-    filled = Image.new("RGBA", (1024 * S, 1024 * S), FIELD_ABOVE)
-    water_y = offset + round(WATER_Y * 0.80) * S
-    ImageDraw.Draw(filled).rectangle([0, water_y, 1024 * S, 1024 * S], fill=FIELD_BELOW)
-    filled.alpha_composite(scaled, (offset, offset))
-
-    mask = Image.new("L", (1024 * S, 1024 * S), 0)
-    ImageDraw.Draw(mask).rounded_rectangle(
-        [100 * S, 100 * S, 924 * S, 924 * S], radius=185 * S, fill=255
-    )
-    plate = Image.new("RGBA", (1024 * S, 1024 * S), (0, 0, 0, 0))
-    plate.paste(filled, (0, 0), mask)
-    return plate
 
 
 def main() -> None:
     IOS_SET.mkdir(parents=True, exist_ok=True)
     MAC_SET.mkdir(parents=True, exist_ok=True)
 
-    scene = compose_scene(transparent_field=False)
-    down(scene, 1024).convert("RGB").save(IOS_SET / "AppIcon.png")
+    icon = full_bleed(Image.open(SOURCE).convert("RGB"))
+    icon.save(IOS_SET / "AppIcon.png")
+    icon.save(IOS_SET / "AppIcon-dark.png")
 
-    dark = compose_scene(transparent_field=True)
-    down(dark, 1024).save(IOS_SET / "AppIcon-dark.png")
-
-    mac_master = rounded_plate_master(scene)
+    plate = mac_plate(icon)
     for size in (16, 32, 128, 256, 512):
-        down(mac_master, size).save(MAC_SET / f"icon_{size}.png")
-        down(mac_master, size * 2).save(MAC_SET / f"icon_{size}@2x.png")
+        plate.resize((size, size), Image.LANCZOS).save(MAC_SET / f"icon_{size}.png")
+        plate.resize((size * 2, size * 2), Image.LANCZOS).save(MAC_SET / f"icon_{size}@2x.png")
 
     print(f"wrote {IOS_SET}")
     print(f"wrote {MAC_SET}")
