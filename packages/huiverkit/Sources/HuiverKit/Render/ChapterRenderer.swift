@@ -61,22 +61,36 @@ public actor ChapterRenderer {
         AsyncThrowingStream { continuation in
             Task {
                 do {
-                    let chunks = Chunker.chunksWithSentenceLead(chapter.text)
                     let directory = library.audioDirectory(book: book.id, chapter: chapter.id)
+                    let locale = LocaleProfile(book.spokenLocaleIdentifier)
+                    let profile = LanguageProcessorRegistry.processor(for: book.languageCode)
+                        .chunkingProfile(locale: locale)
+                    let freshChunks = Chunker.chunksWithSentenceLead(chapter.text, profile: profile)
 
-                    // Audio left over from a different chunker cannot be
-                    // continued: `00007.wav` says something else under the new
-                    // boundaries, so carrying on from it would repeat one
-                    // stretch of the chapter and skip another. The check has
-                    // to live here, where every render path passes. Audio in
-                    // a different voice, though, *is* continued: a listener
-                    // who changes narrator mid-chapter keeps what they have
-                    // already heard, and the new voice takes over at the next
-                    // missing chunk — who read what is written down below.
-                    var existing = ChunkManifest.read(from: directory)
-                    if let stored = existing, stored.chunkerVersion != Chunker.version {
-                        try await library.discardAudio(chapterId: chapter.id, bookId: book.id)
-                        existing = nil
+                    // A stored manifest pins its source boundaries. That lets
+                    // a partial chapter continue across chunker, locale and
+                    // correction changes without changing what numbered audio
+                    // files mean. Audio in a different voice is continued too;
+                    // the new voice takes over at the next missing chunk.
+                    let existing = ChunkManifest.read(from: directory)
+                    let alreadyRendered = rendered(
+                        book: book.id, chapter: chapter.id,
+                        of: max(existing?.texts.count ?? 0, freshChunks.count)
+                    ).count
+                    // A partial chapter keeps the complete boundary list that
+                    // was pinned when its first chunk was rendered. Spoken
+                    // corrections are applied after these source boundaries.
+                    let chunks: [Chunker.Chunk]
+                    if alreadyRendered > 0, let stored = existing, !stored.texts.isEmpty {
+                        chunks = stored.texts.enumerated().map { index, text in
+                            Chunker.Chunk(
+                                text: text,
+                                beginsMidSentence: stored.beginsMidSentence?[safe: index] ?? false,
+                                endsMidSentence: stored.endsMidSentence?[safe: index] ?? false
+                            )
+                        }
+                    } else {
+                        chunks = freshChunks
                     }
 
                     try FileManager.default.createDirectory(
@@ -97,9 +111,17 @@ public actor ChapterRenderer {
                     chunkVoices += Array(
                         repeating: voice.id, count: max(0, chunks.count - chunkVoices.count)
                     )
-                    ChunkManifest(
-                        voice: voice.id, texts: chunks.map(\.text), chunkVoices: chunkVoices
-                    ).write(to: directory)
+                    var manifest = ChunkManifest(
+                        voice: voice.id, texts: chunks.map(\.text), chunkVoices: chunkVoices,
+                        spokenTexts: (0..<chunks.count).map { existing?.spokenTexts?[safe: $0] ?? nil },
+                        processorFingerprints: (0..<chunks.count).map {
+                            existing?.processorFingerprints?[safe: $0] ?? nil
+                        },
+                        chunkingProfile: existing?.chunkingProfile ?? profile.id,
+                        beginsMidSentence: chunks.map(\.beginsMidSentence),
+                        endsMidSentence: chunks.map(\.endsMidSentence)
+                    )
+                    manifest.write(to: directory)
 
                     // The mel decode runs off the engine actor, so chunk N's
                     // audio is decoded *while* chunk N+1's token loop holds
@@ -110,6 +132,7 @@ public actor ChapterRenderer {
                     let stack = await engine.s3Stack()
                     var inFlight: (
                         index: Int, url: URL, endsMidSentence: Bool,
+                        spokenText: String, processorFingerprint: String,
                         decode: Task<[Float], Error>
                     )?
                     // What synthesis actually costs on this device, measured
@@ -123,6 +146,7 @@ public actor ChapterRenderer {
                     func finish(
                         _ work: (
                             index: Int, url: URL, endsMidSentence: Bool,
+                            spokenText: String, processorFingerprint: String,
                             decode: Task<[Float], Error>
                         )
                     ) async throws {
@@ -130,6 +154,15 @@ public actor ChapterRenderer {
                         let pause = Self.pauseSamples(endsMidSentence: work.endsMidSentence)
                         let padded = samples + [Float](repeating: 0, count: pause)
                         try WavFile.data(from: padded).write(to: work.url, options: .atomic)
+                        if manifest.spokenTexts == nil {
+                            manifest.spokenTexts = Array(repeating: nil, count: chunks.count)
+                        }
+                        if manifest.processorFingerprints == nil {
+                            manifest.processorFingerprints = Array(repeating: nil, count: chunks.count)
+                        }
+                        manifest.spokenTexts?[work.index] = work.spokenText
+                        manifest.processorFingerprints?[work.index] = work.processorFingerprint
+                        manifest.write(to: directory)
                         let now = ContinuousClock.now
                         let spent = lastFinish.duration(to: now)
                         lastFinish = now
@@ -151,6 +184,8 @@ public actor ChapterRenderer {
                         updated.renderedChunks = work.index + 1
                         updated.renderedVoice = voice.id
                         updated.audioSource = nil
+                        updated.chunkingProfile = manifest.chunkingProfile
+                        if existing == nil { updated.chunkerVersion = Chunker.version }
                         try? await library.update(chapter: updated, in: book.id)
                     }
 
@@ -180,12 +215,14 @@ public actor ChapterRenderer {
                                 updated.chunkCount = chunks.count
                                 updated.renderedChunks = index + 1
                                 updated.renderedVoice = voice.id
+                                updated.chunkingProfile = manifest.chunkingProfile
                                 try? await library.update(chapter: updated, in: book.id)
                                 continue
                             }
 
+                            let processed = await TextPreprocessing.process(chunk, book: book)
                             let tokens = try await engine.speakTokens(
-                                chunk.text,
+                                processed.spokenText,
                                 voice: voice,
                                 options: options,
                                 // The book's own language, which is what the
@@ -210,7 +247,10 @@ public actor ChapterRenderer {
                                 inFlight = nil
                                 try await finish(work)
                             }
-                            inFlight = (index, url, chunk.endsMidSentence, decode)
+                            inFlight = (
+                                index, url, chunk.endsMidSentence, processed.spokenText,
+                                processed.fingerprint, decode
+                            )
                         }
                         if let work = inFlight {
                             inFlight = nil

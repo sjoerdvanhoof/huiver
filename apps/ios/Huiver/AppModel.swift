@@ -139,6 +139,8 @@ final class AppModel {
         do {
             let library = try Library(root: documents)
             self.library = library
+            await PronunciationStore.shared.configure(root: documents)
+            await PreflightStore.shared.configure(root: documents)
             books = await library.all()
             bytesOnDisk = await library.bytesOnDisk()
         } catch {
@@ -336,8 +338,12 @@ final class AppModel {
         // Re-chunk against the current chunker now the audio that pinned the
         // old boundaries is gone.
         if var updated = await library.book(book.id)?.chapters.first(where: { $0.id == chapter.id }) {
-            updated.chunkCount = Chunker.chunkWithSentenceLead(updated.text).count
+            let locale = LocaleProfile(book.spokenLocaleIdentifier)
+            let profile = LanguageProcessorRegistry.processor(for: book.languageCode)
+                .chunkingProfile(locale: locale)
+            updated.chunkCount = Chunker.chunkWithSentenceLead(updated.text, profile: profile).count
             updated.chunkerVersion = Chunker.version
+            updated.chunkingProfile = profile.id
             try? await library.update(chapter: updated, in: book.id)
             books = await library.all()
             if let fresh = await library.book(book.id) {

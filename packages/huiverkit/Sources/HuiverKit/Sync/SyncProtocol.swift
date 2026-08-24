@@ -90,17 +90,22 @@ public enum SyncMessage: Sendable, Equatable {
         public var voices: [VoiceManifest]
         public var progress: [ProgressRecord]
         public var convertRequests: [ConvertRequest]
+        /// Optional so peers predating pronunciation dictionaries continue to
+        /// decode the manifest and simply leave corrections local.
+        public var pronunciations: PronunciationSnapshot?
 
         public init(
             books: [BookManifest] = [],
             voices: [VoiceManifest] = [],
             progress: [ProgressRecord] = [],
-            convertRequests: [ConvertRequest] = []
+            convertRequests: [ConvertRequest] = [],
+            pronunciations: PronunciationSnapshot? = nil
         ) {
             self.books = books
             self.voices = voices
             self.progress = progress
             self.convertRequests = convertRequests
+            self.pronunciations = pronunciations
         }
     }
 
@@ -168,6 +173,7 @@ public struct BookManifest: Codable, Sendable, Equatable {
     public var title: String
     public var author: String?
     public var language: String
+    public var localeIdentifier: String?
     public var hasCover: Bool
     public var hasEpub: Bool
     public var chapters: [ChapterManifest]
@@ -177,6 +183,7 @@ public struct BookManifest: Codable, Sendable, Equatable {
         title: String,
         author: String? = nil,
         language: String,
+        localeIdentifier: String? = nil,
         hasCover: Bool = false,
         hasEpub: Bool = false,
         chapters: [ChapterManifest]
@@ -185,6 +192,7 @@ public struct BookManifest: Codable, Sendable, Equatable {
         self.title = title
         self.author = author
         self.language = language
+        self.localeIdentifier = localeIdentifier
         self.hasCover = hasCover
         self.hasEpub = hasEpub
         self.chapters = chapters
@@ -197,6 +205,7 @@ public struct ChapterManifest: Codable, Sendable, Equatable {
     public var textHash: String
     public var chunkCount: Int
     public var chunkerVersion: Int
+    public var chunkingProfile: String?
     /// The audio that exists for this chapter, if any.
     public var audio: AudioManifest?
 
@@ -206,6 +215,7 @@ public struct ChapterManifest: Codable, Sendable, Equatable {
         textHash: String,
         chunkCount: Int,
         chunkerVersion: Int,
+        chunkingProfile: String? = nil,
         audio: AudioManifest? = nil
     ) {
         self.index = index
@@ -213,6 +223,7 @@ public struct ChapterManifest: Codable, Sendable, Equatable {
         self.textHash = textHash
         self.chunkCount = chunkCount
         self.chunkerVersion = chunkerVersion
+        self.chunkingProfile = chunkingProfile
         self.audio = audio
     }
 }

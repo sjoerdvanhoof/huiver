@@ -22,6 +22,8 @@ public struct Chapter: Codable, Sendable, Identifiable, Hashable {
     /// Which chunker produced `chunkCount`. Audio is only interchangeable
     /// between devices that agree on where the chunk boundaries are.
     public var chunkerVersion: Int?
+    /// Language-specific boundary rules used with the core chunker.
+    public var chunkingProfile: String? = nil
     /// Why the last attempt to render this chapter stopped, if it stopped
     /// badly. The only part of conversion state worth storing: everything else
     /// — queued, converting, converted — is derivable from the queue and the
@@ -40,6 +42,9 @@ public struct Book: Codable, Sendable, Identifiable, Hashable {
     /// Optional so that a library written before languages existed still
     /// decodes; absent means English, which is what those books were read as.
     public var language: String?
+    /// BCP-47 locale for spoken numbers, dates and abbreviations. Optional for
+    /// libraries written before locale-aware preprocessing existed.
+    public var localeIdentifier: String? = nil
     /// File name of the cover inside `covers/`, if the book had one. A name
     /// rather than a path, so moving the library does not break it.
     public var coverFile: String?
@@ -59,6 +64,10 @@ public struct Book: Codable, Sendable, Identifiable, Hashable {
     public var voiceId: String?
 
     public var languageCode: String { language ?? Language.english.code }
+
+    public var spokenLocaleIdentifier: String {
+        localeIdentifier ?? LocaleProfile.defaultIdentifier(for: languageCode)
+    }
 
     public var characters: Int { chapters.reduce(0) { $0 + $1.characters } }
 }
@@ -119,6 +128,10 @@ public actor Library {
         var books = books
         var changed = false
         for bookIndex in books.indices {
+            let language = books[bookIndex].languageCode
+            let locale = LocaleProfile(books[bookIndex].spokenLocaleIdentifier)
+            let profile = LanguageProcessorRegistry.processor(for: language)
+                .chunkingProfile(locale: locale)
             for chapterIndex in books[bookIndex].chapters.indices {
                 if books[bookIndex].chapters[chapterIndex].textHash == nil {
                     let text = books[bookIndex].chapters[chapterIndex].text
@@ -133,12 +146,14 @@ public actor Library {
                 // would leave `chunkCount` describing audio that does not
                 // exist. `ChapterRenderer` discards the old audio if it is ever
                 // asked to extend it.
-                if books[bookIndex].chapters[chapterIndex].chunkerVersion != Chunker.version,
+                if (books[bookIndex].chapters[chapterIndex].chunkerVersion != Chunker.version
+                    || books[bookIndex].chapters[chapterIndex].chunkingProfile != profile.id),
                    books[bookIndex].chapters[chapterIndex].renderedChunks == 0 {
                     let text = books[bookIndex].chapters[chapterIndex].text
                     books[bookIndex].chapters[chapterIndex].chunkCount =
-                        Chunker.chunkWithSentenceLead(text).count
+                        Chunker.chunkWithSentenceLead(text, profile: profile).count
                     books[bookIndex].chapters[chapterIndex].chunkerVersion = Chunker.version
+                    books[bookIndex].chapters[chapterIndex].chunkingProfile = profile.id
                     changed = true
                 }
             }
@@ -180,6 +195,9 @@ public actor Library {
         let detected = language ?? Language.detect(
             in: extracted.chapters.prefix(3).map(\.text).joined(separator: " ")
         )
+        let declaredLanguage = extracted.localeIdentifier?
+            .split(separator: "-").first.map(String.init).map(Language.named)
+        let resolvedLanguage = language ?? declaredLanguage ?? detected
 
         var cover: String?
         if let image = extracted.cover {
@@ -205,14 +223,18 @@ public actor Library {
             }
         }
 
+        let profile = LanguageProcessorRegistry.processor(for: resolvedLanguage.code)
+            .chunkingProfile(locale: LocaleProfile(extracted.localeIdentifier
+                ?? LocaleProfile.defaultIdentifier(for: resolvedLanguage.code)))
         let chapters = extracted.chapters.enumerated().map { index, chapter in
             Chapter(
                 id: "\(bookId)-\(index)",
                 title: chapter.title,
                 text: chapter.text,
-                chunkCount: Chunker.chunkWithSentenceLead(chapter.text).count,
+                chunkCount: Chunker.chunkWithSentenceLead(chapter.text, profile: profile).count,
                 textHash: ContentIdentity.chapterHash(chapter.text),
-                chunkerVersion: Chunker.version
+                chunkerVersion: Chunker.version,
+                chunkingProfile: profile.id
             )
         }
         var book = Book(
@@ -220,7 +242,8 @@ public actor Library {
             title: extracted.title,
             author: extracted.author,
             added: Date(),
-            language: detected.code,
+            language: resolvedLanguage.code,
+            localeIdentifier: extracted.localeIdentifier,
             coverFile: cover,
             chapters: chapters,
             epubFile: epub
@@ -237,6 +260,15 @@ public actor Library {
     public func setLanguage(_ language: Language, for bookId: String) throws {
         guard let index = books.firstIndex(where: { $0.id == bookId }) else { return }
         books[index].language = language.code
+        if books[index].localeIdentifier?.hasPrefix(language.code) != true {
+            books[index].localeIdentifier = nil
+        }
+        try save()
+    }
+
+    public func setLocale(_ identifier: String?, for bookId: String) throws {
+        guard let index = books.firstIndex(where: { $0.id == bookId }) else { return }
+        books[index].localeIdentifier = identifier.flatMap(LocaleProfile.canonicalIdentifier)
         try save()
     }
 

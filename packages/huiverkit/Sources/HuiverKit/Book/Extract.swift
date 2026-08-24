@@ -10,6 +10,10 @@ public struct ExtractedChapter: Sendable, Hashable {
 public struct ExtractedBook: Sendable, Hashable {
     public let title: String
     public let author: String?
+    /// Canonical BCP-47 language/locale declared by the ebook, when present.
+    /// Kept separate from detection: `en-GB` carries number and date rules that
+    /// are lost if it is reduced to the model's two-letter language id.
+    public let localeIdentifier: String?
     public let chapters: [ExtractedChapter]
     /// The cover image as it was stored in the EPUB, if it had one, together
     /// with its file extension. Kept as bytes rather than decoded here so that
@@ -19,23 +23,27 @@ public struct ExtractedBook: Sendable, Hashable {
     public init(
         title: String,
         author: String?,
+        localeIdentifier: String? = nil,
         chapters: [ExtractedChapter],
         cover: (data: Data, extension: String)? = nil
     ) {
         self.title = title
         self.author = author
+        self.localeIdentifier = localeIdentifier
         self.chapters = chapters
         self.cover = cover
     }
 
     public static func == (a: ExtractedBook, b: ExtractedBook) -> Bool {
-        a.title == b.title && a.author == b.author && a.chapters == b.chapters
+        a.title == b.title && a.author == b.author
+            && a.localeIdentifier == b.localeIdentifier && a.chapters == b.chapters
             && a.cover?.data == b.cover?.data
     }
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(title)
         hasher.combine(author)
+        hasher.combine(localeIdentifier)
         hasher.combine(chapters)
     }
 }
@@ -131,9 +139,12 @@ public enum Extract {
         guard !chapters.isEmpty else { throw ExtractError.noChapters }
         let title = opf.first("title")?.allText.trimmingCharacters(in: .whitespacesAndNewlines)
         let author = opf.first("creator")?.allText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let declaredLocale = opf.first("language")?.allText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return ExtractedBook(
             title: title?.isEmpty == false ? title! : fallbackTitle,
             author: author?.isEmpty == false ? author : nil,
+            localeIdentifier: declaredLocale.flatMap(LocaleProfile.canonicalIdentifier),
             chapters: chapters,
             cover: coverImage(in: zip, opf: opf, manifest: manifest, base: base)
         )

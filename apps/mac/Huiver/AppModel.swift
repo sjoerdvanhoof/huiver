@@ -32,6 +32,14 @@ final class AppModel {
     private(set) var placement: [String: String] = [:]
     /// Languages the loaded models can actually read.
     private(set) var engineLanguages: [Language] = [.english]
+    private var speechEngine: ChatterboxEngine?
+
+    /// Derived, local-only pronunciation reports keyed by stable content id.
+    private(set) var preflightReports: [String: PreflightReport] = [:]
+    private(set) var analyzingPronunciation: Set<String> = []
+    private(set) var languagePacks: [LanguagePackDescriptor] = []
+    private var languagePackManager: LanguagePackManager?
+    var languagePackFailure: String?
 
     /// The one checkpoint this app runs. Nano stayed on the phone.
     let engineName = "Chatterbox Multilingual 500M"
@@ -263,6 +271,15 @@ final class AppModel {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             let library = try Library(root: root)
             self.library = library
+            await PronunciationStore.shared.configure(root: root)
+            await PreflightStore.shared.configure(root: root)
+            let configuredKeys = Bundle.main.object(forInfoDictionaryKey: "LanguagePackPublicKeys")
+                as? [String: String] ?? [:]
+            let keys: [String: Data] = configuredKeys.compactMapValues { encoded in
+                Data(base64Encoded: encoded)
+            }
+            languagePackManager = try LanguagePackManager(root: root, trustedPublicKeys: keys)
+            languagePacks = try await languagePackManager?.installed() ?? []
             books = await library.all()
             bytesOnDisk = await library.bytesOnDisk()
         } catch {
@@ -329,6 +346,7 @@ final class AppModel {
                     ]
                 )
             }
+            speechEngine = engine
             let narrator = Narrator(engine: engine, library: library!, progress: progressStore)
             self.narrator = narrator
             narrator.renderPassDidEnd = { [weak self] in self?.trimEngineMemoryIfIdle() }
@@ -360,6 +378,21 @@ final class AppModel {
         preparing = nil
         preparingSince = nil
         if autoCleanup { await sweepFinishedAudio() }
+        for book in books { schedulePronunciationAnalysis(for: book) }
+    }
+
+    func importLanguagePack(from url: URL) async {
+        guard let languagePackManager else { return }
+        do {
+            let descriptor = try await languagePackManager.install(archive: Data(contentsOf: url))
+            languagePacks = try await languagePackManager.installed()
+            languagePackFailure = nil
+            for book in books where book.languageCode == descriptor.languageCode {
+                schedulePronunciationAnalysis(for: book)
+            }
+        } catch {
+            languagePackFailure = error.localizedDescription
+        }
     }
 
     /// Delete the audio of chapters finished long enough ago to be done with.
@@ -399,6 +432,7 @@ final class AppModel {
             }.value
             let book = try await library.add(extracted, source: (data: data, filename: filename))
             books = await library.all()
+            schedulePronunciationAnalysis(for: book)
             // A language nobody has picked a voice for yet: ask, rather than
             // silently handing the book to whichever reader falls out of the
             // fallback. One prompt per language, however many books arrive.
@@ -433,6 +467,104 @@ final class AppModel {
         guard let library else { return }
         try? await library.setLanguage(language, for: book.id)
         books = await library.all()
+        if let fresh = books.first(where: { $0.id == book.id }) {
+            schedulePronunciationAnalysis(for: fresh)
+        }
+    }
+
+    func setLocale(_ identifier: String?, for book: Book) async {
+        guard let library else { return }
+        try? await library.setLocale(identifier, for: book.id)
+        books = await library.all()
+        if let fresh = books.first(where: { $0.id == book.id }) {
+            schedulePronunciationAnalysis(for: fresh)
+        }
+    }
+
+    func preflight(for book: Book) -> PreflightReport? {
+        preflightReports[book.contentId ?? book.derivedContentId]
+    }
+
+    func schedulePronunciationAnalysis(for book: Book) {
+        guard book.languageCode == "en" || book.languageCode == "nl" else { return }
+        let contentId = book.contentId ?? book.derivedContentId
+        guard !analyzingPronunciation.contains(contentId) else { return }
+        analyzingPronunciation.insert(contentId)
+        Task { [weak self] in
+            let report = await TextPreprocessing.analyze(book)
+            await PreflightStore.shared.store(report, contentId: contentId)
+            guard let self else { return }
+            self.preflightReports[contentId] = report
+            self.analyzingPronunciation.remove(contentId)
+        }
+    }
+
+    func savePronunciation(
+        candidate: PronunciationCandidate, replacement: String, spellLetters: Bool,
+        global: Bool, in book: Book
+    ) async throws {
+        guard let match = candidate.surfaceForms.first else { return }
+        let value = PronunciationOverride(
+            languageCode: book.languageCode,
+            bookContentId: global ? nil : (book.contentId ?? book.derivedContentId),
+            matchText: match,
+            replacement: replacement,
+            mode: spellLetters ? .spellLetters : .sayAs,
+            matchCase: candidate.category == .acronym ? .sensitive : .insensitive,
+            updatedByDevice: Host.current().localizedName ?? "mac"
+        )
+        try await PronunciationStore.shared.upsert(value)
+        schedulePronunciationAnalysis(for: book)
+    }
+
+    func ignorePronunciation(_ candidate: PronunciationCandidate, in book: Book) async {
+        let contentId = book.contentId ?? book.derivedContentId
+        try? await PronunciationStore.shared.ignore(
+            PronunciationDecision(
+                contentId: contentId, candidateId: candidate.id,
+                updatedByDevice: Host.current().localizedName ?? "mac"
+            )
+        )
+        schedulePronunciationAnalysis(for: book)
+    }
+
+    func markPreflightReviewed(_ report: PreflightReport, book: Book) async {
+        try? await PronunciationStore.shared.markReviewed(
+            contentId: book.contentId ?? book.derivedContentId,
+            fingerprint: report.fingerprint
+        )
+    }
+
+    func pronunciationPreview(
+        _ text: String, replacement: PronunciationOverride?, book: Book
+    ) async throws -> URL {
+        guard let speechEngine, let voice = voice(for: book) else {
+            throw NSError(domain: "Huiver", code: 2, userInfo: [NSLocalizedDescriptionKey: "The narrator is not ready."])
+        }
+        let chunk = Chunker.Chunk(text: text, beginsMidSentence: false, endsMidSentence: false)
+        let contentId = book.contentId ?? book.derivedContentId
+        var overrides = await PronunciationStore.shared.effective(
+            language: book.languageCode, contentId: contentId
+        )
+        if let replacement { overrides.insert(replacement, at: 0) }
+        let context = ProcessingContext(
+            language: .named(book.languageCode), locale: LocaleProfile(book.spokenLocaleIdentifier),
+            contentId: contentId, overrides: overrides
+        )
+        let processed = await LanguageProcessorRegistry.processor(for: book.languageCode)
+            .process(chunk: chunk, context: context)
+        let samples = try await speechEngine.speak(
+            processed.spokenText, voice: voice, options: options,
+            language: .named(book.languageCode)
+        )
+        let key = ProcessedChunk(
+            displayText: text, spokenText: processed.spokenText,
+            substitutions: processed.substitutions, fingerprint: processed.fingerprint
+        ).fingerprint
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("narcisse-pronunciation-\(key.prefix(16)).wav")
+        try WavFile.data(from: samples).write(to: url, options: .atomic)
+        return url
     }
 
     /// Can the engine read this book, or will it mispronounce it?
@@ -470,8 +602,12 @@ final class AppModel {
         // Re-chunk against the current chunker now the audio that pinned the
         // old boundaries is gone.
         if var updated = await library.book(book.id)?.chapters.first(where: { $0.id == chapter.id }) {
-            updated.chunkCount = Chunker.chunkWithSentenceLead(updated.text).count
+            let locale = LocaleProfile(book.spokenLocaleIdentifier)
+            let profile = LanguageProcessorRegistry.processor(for: book.languageCode)
+                .chunkingProfile(locale: locale)
+            updated.chunkCount = Chunker.chunkWithSentenceLead(updated.text, profile: profile).count
             updated.chunkerVersion = Chunker.version
+            updated.chunkingProfile = profile.id
             try? await library.update(chapter: updated, in: book.id)
             books = await library.all()
             if let fresh = await library.book(book.id) {

@@ -97,6 +97,18 @@ struct ChunkMapTests {
         #expect(ChunkManifest.read(from: directory) == manifest)
     }
 
+    @Test("a v1 manifest decodes without spoken preprocessing fields")
+    func legacyManifest() throws {
+        let directory = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let data = Data(#"{"version":1,"voice":"ruth","chunker":5,"texts":["Original."]}"#.utf8)
+        try data.write(to: directory.appendingPathComponent(ChunkManifest.filename))
+        let manifest = try #require(ChunkManifest.read(from: directory))
+        #expect(manifest.texts == ["Original."])
+        #expect(manifest.spokenTexts == nil)
+        #expect(manifest.processorFingerprints == nil)
+    }
+
     @Test("a missing manifest reads as nothing rather than throwing")
     func missingManifest() {
         let directory = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)

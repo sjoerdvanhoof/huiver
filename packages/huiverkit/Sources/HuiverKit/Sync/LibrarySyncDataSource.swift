@@ -100,7 +100,8 @@ public actor LibrarySyncDataSource: SyncDataSource {
             // Pruned against the library first: a chapter that has since been
             // rendered — here, or on the Mac in an earlier session — is not
             // something to keep asking for.
-            convertRequests: await requests?.pending(against: books) ?? []
+            convertRequests: await requests?.pending(against: books) ?? [],
+            pronunciations: await PronunciationStore.shared.all()
         )
     }
 
@@ -126,6 +127,9 @@ public actor LibrarySyncDataSource: SyncDataSource {
             uniquingKeysWith: { first, _ in first }
         )
         await peerManifestReceived?(peerManifest)
+        if let pronunciations = peerManifest.pronunciations {
+            try? await PronunciationStore.shared.merge(pronunciations)
+        }
     }
 
     private func voiceManifests() -> [VoiceManifest] {

@@ -29,6 +29,7 @@ public struct BookBundle: Codable, Sendable, Equatable {
         public var textHash: String
         public var chunkCount: Int
         public var chunkerVersion: Int
+        public var chunkingProfile: String?
 
         public init(
             index: Int,
@@ -36,7 +37,8 @@ public struct BookBundle: Codable, Sendable, Equatable {
             text: String,
             textHash: String,
             chunkCount: Int,
-            chunkerVersion: Int
+            chunkerVersion: Int,
+            chunkingProfile: String? = nil
         ) {
             self.index = index
             self.title = title
@@ -44,6 +46,7 @@ public struct BookBundle: Codable, Sendable, Equatable {
             self.textHash = textHash
             self.chunkCount = chunkCount
             self.chunkerVersion = chunkerVersion
+            self.chunkingProfile = chunkingProfile
         }
     }
 
@@ -51,6 +54,7 @@ public struct BookBundle: Codable, Sendable, Equatable {
     public var title: String
     public var author: String?
     public var language: String
+    public var localeIdentifier: String?
     public var added: Date
     public var chapters: [Chapter]
     /// The cover, inline. A cover is tens of kilobytes and a book without one
@@ -63,6 +67,7 @@ public struct BookBundle: Codable, Sendable, Equatable {
         title: String,
         author: String?,
         language: String,
+        localeIdentifier: String? = nil,
         added: Date,
         chapters: [Chapter],
         cover: Data? = nil,
@@ -72,6 +77,7 @@ public struct BookBundle: Codable, Sendable, Equatable {
         self.title = title
         self.author = author
         self.language = language
+        self.localeIdentifier = localeIdentifier
         self.added = added
         self.chapters = chapters
         self.cover = cover
@@ -88,6 +94,7 @@ public struct BookBundle: Codable, Sendable, Equatable {
             title: book.title,
             author: book.author,
             language: book.languageCode,
+            localeIdentifier: book.localeIdentifier,
             added: book.added,
             chapters: book.chapters.enumerated().map { index, chapter in
                 Chapter(
@@ -96,7 +103,8 @@ public struct BookBundle: Codable, Sendable, Equatable {
                     text: chapter.text,
                     textHash: chapter.textHash ?? ContentIdentity.chapterHash(chapter.text),
                     chunkCount: chapter.chunkCount,
-                    chunkerVersion: chapter.chunkerVersion ?? Chunker.version
+                    chunkerVersion: chapter.chunkerVersion ?? Chunker.version,
+                    chunkingProfile: chapter.chunkingProfile
                 )
             },
             cover: cover,
@@ -111,6 +119,7 @@ public struct BookBundle: Codable, Sendable, Equatable {
             title: book.title,
             author: book.author,
             language: book.languageCode,
+            localeIdentifier: book.localeIdentifier,
             hasCover: coverURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false,
             hasEpub: epubURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false,
             chapters: book.chapters.enumerated().map { index, chapter in
@@ -120,6 +129,7 @@ public struct BookBundle: Codable, Sendable, Equatable {
                     textHash: chapter.textHash ?? ContentIdentity.chapterHash(chapter.text),
                     chunkCount: chapter.chunkCount,
                     chunkerVersion: chapter.chunkerVersion ?? Chunker.version,
+                    chunkingProfile: chapter.chunkingProfile,
                     audio: chapter.renderedChunks > 0
                         ? AudioManifest(
                             voiceId: chapter.renderedVoice ?? "",
@@ -146,6 +156,7 @@ public struct BookBundle: Codable, Sendable, Equatable {
             author: author,
             added: added,
             language: language,
+            localeIdentifier: localeIdentifier,
             coverFile: coverFile,
             chapters: chapters.sorted { $0.index < $1.index }.map { chapter in
                 LibraryChapter(
@@ -154,7 +165,8 @@ public struct BookBundle: Codable, Sendable, Equatable {
                     text: chapter.text,
                     chunkCount: chapter.chunkCount,
                     textHash: chapter.textHash,
-                    chunkerVersion: chapter.chunkerVersion
+                    chunkerVersion: chapter.chunkerVersion,
+                    chunkingProfile: chapter.chunkingProfile
                 )
             }
         )
