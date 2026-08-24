@@ -150,6 +150,7 @@ public actor ChapterRenderer {
                         updated.chunkCount = chunks.count
                         updated.renderedChunks = work.index + 1
                         updated.renderedVoice = voice.id
+                        updated.audioSource = nil
                         try? await library.update(chapter: updated, in: book.id)
                     }
 

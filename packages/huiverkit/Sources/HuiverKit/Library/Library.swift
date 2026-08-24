@@ -11,6 +11,10 @@ public struct Chapter: Codable, Sendable, Identifiable, Hashable {
     public var renderedVoice: String?
     public var chunkCount: Int = 0
     public var renderedChunks: Int = 0
+    /// Set on a phone when this chapter's audio was received from its paired
+    /// Mac. Optional so libraries written before source preference existed
+    /// continue to decode.
+    public var audioSource: String?
     /// SHA-256 of `text`, the half of this chapter's cross-device identity that
     /// is not the book. Optional so a library written before sync existed still
     /// decodes; `Library` fills it in on load.
@@ -304,7 +308,8 @@ public actor Library {
     /// that keeps a large audio sync from rewriting library.json hundreds of
     /// times.
     public func storeChunks(
-        _ chunks: [(index: Int, data: Data)], bookId: String, chapterId: String, voiceId: String
+        _ chunks: [(index: Int, data: Data)], bookId: String, chapterId: String, voiceId: String,
+        audioSource: String? = nil
     ) throws {
         guard let bookIndex = books.firstIndex(where: { $0.id == bookId }),
               let chapterIndex = books[bookIndex].chapters.firstIndex(where: { $0.id == chapterId })
@@ -329,6 +334,7 @@ public actor Library {
         }
         books[bookIndex].chapters[chapterIndex].renderedChunks = contiguous
         books[bookIndex].chapters[chapterIndex].renderedVoice = voiceId
+        books[bookIndex].chapters[chapterIndex].audioSource = audioSource
         try save()
     }
 
@@ -348,6 +354,7 @@ public actor Library {
         guard var chapter = book(bookId)?.chapters.first(where: { $0.id == chapterId }) else { return }
         chapter.renderedChunks = 0
         chapter.renderedVoice = nil
+        chapter.audioSource = nil
         try update(chapter: chapter, in: bookId)
     }
 

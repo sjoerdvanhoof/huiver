@@ -47,6 +47,12 @@ struct BookView: View {
         }
         .navigationTitle(current.title)
         .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if sync.activity == .syncing {
+                syncCard
+                    .background(theme.colors.background)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -134,6 +140,49 @@ struct BookView: View {
             get: { language.code },
             set: { code in Task { await model.setLanguage(.named(code), for: current) } }
         )
+    }
+
+    private var syncCard: some View {
+        VStack(alignment: .leading, spacing: Palette.Space.sm) {
+            HStack {
+                Label("Syncing with Mac", systemImage: "desktopcomputer")
+                    .font(.huiverHeading)
+                Spacer()
+                ProgressView()
+            }
+            if let progress = sync.transferProgress {
+                ProgressView(value: progress.fractionCompleted)
+                Text(syncCardDetail(progress))
+                    .font(.huiverCaption)
+                    .foregroundStyle(theme.colors.mutedForeground)
+            } else {
+                Text("Connecting and comparing libraries…")
+                    .font(.huiverCaption)
+                    .foregroundStyle(theme.colors.mutedForeground)
+            }
+            Text("Keep Narcisse open for large transfers. iOS only guarantees a short completion window after you leave the app.")
+                .font(.huiverCaption)
+                .foregroundStyle(theme.colors.mutedForeground)
+        }
+        .padding(Palette.Space.md)
+        .background(theme.colors.muted, in: .rect(cornerRadius: Palette.Radius.lg))
+        .padding(.horizontal, Palette.Space.lg)
+    }
+
+    private func syncCardDetail(_ progress: SyncSession.TransferProgress) -> String {
+        let count = "\(min(progress.completedItems + 1, progress.totalItems)) of \(progress.totalItems)"
+        guard let item = progress.currentItem else { return "Finishing item \(count)" }
+        switch item {
+        case .audio(let contentId, let index, _, _):
+            if let book = model.books.first(where: { $0.contentId == contentId }),
+               book.chapters.indices.contains(index) {
+                return "Chapter \(index + 1): \(book.chapters[index].title) · item \(count)"
+            }
+            return "Receiving chapter audio · item \(count)"
+        case .bookBundle: return "Receiving a book · item \(count)"
+        case .epub: return "Receiving an EPUB · item \(count)"
+        case .voice, .voicePreview: return "Receiving a voice · item \(count)"
+        }
     }
 
     private var header: some View {
@@ -287,6 +336,15 @@ private struct ChapterRow: View {
     private var isFinished: Bool { model.isFinished(chapter) }
     /// Where the listener got to, when they got somewhere and are not done.
     private var listened: Double? { model.position(in: chapter) }
+    private var macAudio: AudioManifest? { sync.isPaired ? model.macAudio[chapter.id] : nil }
+    private var syncingFromMac: Bool {
+        guard sync.activity == .syncing,
+              let progress = sync.transferProgress,
+              case .audio(let contentId, let index, _, _) = progress.currentItem,
+              contentId == book.contentId
+        else { return false }
+        return book.chapters.indices.contains(index) && book.chapters[index].id == chapter.id
+    }
 
     var body: some View {
         HStack(spacing: Palette.Space.md) {
@@ -369,6 +427,10 @@ private struct ChapterRow: View {
 
     private var actionState: ChapterActionButton.State {
         if chapter.isComplete { return .done }
+        if syncingFromMac, let progress = sync.transferProgress {
+            return .rendering(progress.totalBytes > 0
+                ? Double(progress.currentBytes) / Double(progress.totalBytes) : nil)
+        }
         if isConverting { return .rendering(model.converter?.progress(for: chapter.id)) }
         // After the queue, so retrying a failed chapter shows it working again
         // rather than still showing the old complaint.
@@ -384,6 +446,12 @@ private struct ChapterRow: View {
             return "converting \(converter.renderedChunks)/\(max(converter.chunkCount, 1)) · \(Format.estimate(estimate))"
         }
         if isConverting { return "queued · \(Format.estimate(estimate))" }
+        if syncingFromMac, let macAudio {
+            return "syncing from Mac · \(macAudio.renderedChunks)/\(max(chapter.chunkCount, 1))"
+        }
+        if let macAudio, !chapter.isComplete {
+            return "available on Mac · \(macAudio.renderedChunks)/\(max(chapter.chunkCount, 1))"
+        }
         // Then the Mac, which is work in flight even though nothing is
         // happening on this device.
         if let offloaded { return macDetail(offloaded, estimate: estimate) }
@@ -436,6 +504,20 @@ private struct ChapterRow: View {
             opened()
             return
         }
+        // With a paired Mac, an incomplete chapter belongs to the Mac. Starting
+        // Nano here would make lower-quality local audio mask the Mac's render.
+        if sync.isPaired, !chapter.isComplete {
+            Task {
+                if offloaded == nil {
+                    await model.requestConversionOnMac(chapter: chapter, in: book)
+                }
+                guard let contentId = book.contentId,
+                      let index = book.chapters.firstIndex(where: { $0.id == chapter.id })
+                else { return }
+                await sync.syncChapter(contentId: contentId, chapterIndex: index, model: model)
+            }
+            return
+        }
         // A chapter that was left part-way through picks up there. A finished
         // one starts again from the top — tapping it is how you re-listen.
         let from = listened ?? 0
@@ -472,6 +554,18 @@ private struct ChapterRow: View {
     /// stops — a pause, not a discard: the chunks written so far are kept and
     /// picked up next time.
     private func toggleRender() {
+        if sync.isPaired {
+            Task {
+                if offloaded == nil {
+                    await model.requestConversionOnMac(chapter: chapter, in: book)
+                }
+                guard let contentId = book.contentId,
+                      let index = book.chapters.firstIndex(where: { $0.id == chapter.id })
+                else { return }
+                await sync.syncChapter(contentId: contentId, chapterIndex: index, model: model)
+            }
+            return
+        }
         guard let converter = model.converter, let voice = model.selectedVoice else { return }
         if isConverting {
             converter.cancel(chapter.id)

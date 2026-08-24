@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UserNotifications
 
 /// The phone's side of pairing and syncing, as the Connector screen sees it.
 ///
@@ -17,6 +18,7 @@ final class SyncModel {
     }
 
     private(set) var activity: Activity = .idle
+    private(set) var transferProgress: SyncSession.TransferProgress?
     private(set) var pairedMac: PairingStore.Peer?
     private(set) var lastSummary: SyncSession.Summary?
     /// When things last moved. Persisted, so "when did this last work?" has
@@ -35,6 +37,9 @@ final class SyncModel {
     /// When the last unattended sync started, so a Mac that flickers on and off
     /// the network does not mean a session every few seconds.
     private var lastAutoSyncAt: Date?
+    private var activeTransport: NWSyncTransport?
+    private var preferredAudio: SyncSession.PreferredAudio?
+    private var restartingForPriority = false
 
     /// Identifier registered in Info.plist under
     /// `BGTaskSchedulerPermittedIdentifiers`. Must match exactly or the
@@ -157,10 +162,12 @@ final class SyncModel {
     /// The button, and also what the watcher calls. Books both ways, audio
     /// Mac→phone, progress newest-wins.
     func syncNow(model: AppModel) async {
+        guard activity != .syncing else { return }
         guard let mac = pairedMac, let library = model.library,
               let progress = model.progressStore
         else { return }
         activity = .syncing
+        transferProgress = nil
         // A transfer that is in flight when the phone goes in a pocket gets a
         // few seconds to finish rather than being cut off mid-chapter. It is
         // not background sync — iOS has no background mode that would run this
@@ -177,6 +184,8 @@ final class SyncModel {
             let transport = try await SyncClient.connect(
                 to: endpoint, psk: mac.key, pskIdentity: deviceId
             )
+            activeTransport = transport
+            defer { activeTransport = nil }
             let source = LibrarySyncDataSource(
                 library: library,
                 progress: progress,
@@ -184,7 +193,11 @@ final class SyncModel {
                 voiceDirectory: URL.documentsDirectory.appendingPathComponent("voices"),
                 // The asks travel in the manifest, and the Mac's answers come
                 // back into the same store.
-                requests: model.convertRequests
+                requests: model.convertRequests,
+                incomingAudioWins: true,
+                peerManifestReceived: { [weak model] manifest in
+                    await MainActor.run { model?.recordMacManifest(manifest) }
+                }
             )
             let session = SyncSession(
                 transport: transport,
@@ -196,16 +209,58 @@ final class SyncModel {
                     appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"]
                         as? String ?? "0"
                 ),
-                wantsAudio: true
+                wantsAudio: true,
+                preferPeerAudio: true,
+                preferredAudio: preferredAudio,
+                progress: { [weak self] update in
+                    await MainActor.run { self?.transferProgress = update }
+                }
             )
             lastSummary = try await session.run()
             await transport.close()
+            preferredAudio = nil
             lastSyncedAt = Date()
             activity = .idle
+            transferProgress = nil
+            if let summary = lastSummary, summary.received > 0 {
+                notifyIfBackground(
+                    title: "Mac audio is ready",
+                    body: "Received \(summary.received) item\(summary.received == 1 ? "" : "s") from your Mac."
+                )
+            }
             await model.refresh()
         } catch {
-            activity = .failed(error.localizedDescription)
+            transferProgress = nil
+            if restartingForPriority {
+                restartingForPriority = false
+                activity = .idle
+            } else {
+                activity = .failed(error.localizedDescription)
+                notifyIfBackground(
+                    title: "Sync stopped",
+                    body: "Open Narcisse to reconnect to your Mac."
+                )
+            }
         }
+    }
+
+    /// Put one chapter at the front of the Mac's transfer list. If a broad
+    /// sync is already underway, close it at its safe file boundary and run a
+    /// fresh diff; completed items stay completed and the selected chapter is
+    /// requested first.
+    func syncChapter(contentId: String, chapterIndex: Int, model: AppModel) async {
+        preferredAudio = .init(contentId: contentId, chapterIndex: chapterIndex)
+        if activity == .syncing {
+            restartingForPriority = true
+            while activeTransport == nil, activity == .syncing {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            await activeTransport?.close()
+            while activity == .syncing {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
+        await syncNow(model: model)
     }
 
     func unpair() {
@@ -217,6 +272,21 @@ final class SyncModel {
 
     func clearFailure() {
         if case .failed = activity { activity = .idle }
+    }
+
+    private func notifyIfBackground(title: String, body: String) {
+        #if canImport(UIKit)
+        guard UIApplication.shared.applicationState != .active else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(
+                identifier: "huiver-sync-\(UUID().uuidString)", content: content, trigger: nil
+            )
+        )
+        #endif
     }
 
     private func deviceName() -> String {

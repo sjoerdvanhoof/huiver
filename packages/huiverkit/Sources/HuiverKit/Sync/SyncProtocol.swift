@@ -235,11 +235,17 @@ public struct AudioManifest: Codable, Sendable, Equatable {
     public var voiceId: String
     public var renderedChunks: Int
     public var codec: Codec
+    /// The preferred renderer produced this audio. Optional for compatibility
+    /// with builds from before Mac-authoritative syncing.
+    public var preferred: Bool?
 
-    public init(voiceId: String, renderedChunks: Int, codec: Codec) {
+    public init(
+        voiceId: String, renderedChunks: Int, codec: Codec, preferred: Bool? = nil
+    ) {
         self.voiceId = voiceId
         self.renderedChunks = renderedChunks
         self.codec = codec
+        self.preferred = preferred
     }
 }
 

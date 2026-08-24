@@ -46,6 +46,8 @@ final class AppModel {
     /// Drawn from `ConvertRequestStore` for the same reason `progress` is drawn
     /// from the progress store: a view body cannot await an actor.
     private(set) var offloaded: [String: OffloadState] = [:]
+    /// What the Mac offered in its most recent manifest, keyed by local chapter.
+    private(set) var macAudio: [String: AudioManifest] = [:]
     /// True on the run that actually compiles the models, which is the slow one
     /// worth explaining. Set once the first load finishes.
     var hasPreparedBefore: Bool {
@@ -91,6 +93,24 @@ final class AppModel {
         /// The last thing the Mac said, or nil when the two have not met since
         /// the ask was made.
         var status: SyncMessage.JobStatus?
+    }
+
+    func recordMacManifest(_ manifest: SyncMessage.Manifest) {
+        let localByContent = Dictionary(
+            books.compactMap { book in book.contentId.map { ($0, book) } },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var available: [String: AudioManifest] = [:]
+        for remoteBook in manifest.books {
+            guard let localBook = localByContent[remoteBook.contentId] else { continue }
+            for remoteChapter in remoteBook.chapters {
+                guard localBook.chapters.indices.contains(remoteChapter.index),
+                      let audio = remoteChapter.audio, audio.renderedChunks > 0
+                else { continue }
+                available[localBook.chapters[remoteChapter.index].id] = audio
+            }
+        }
+        macAudio = available
     }
 
     /// Also read directly by the player, to build the read-along map.

@@ -15,7 +15,8 @@ public enum SyncDiff {
     public static func want(
         mine: SyncMessage.Manifest,
         theirs: SyncMessage.Manifest,
-        audioIsWanted: Bool = true
+        audioIsWanted: Bool = true,
+        preferRemoteAudio: Bool = false
     ) -> [WantItem] {
         var items: [WantItem] = []
         let minesByContent = Dictionary(
@@ -29,7 +30,11 @@ public enum SyncDiff {
                 // on fifty multi-megabyte files before showing any of them.
                 items.append(.bookBundle(contentId: book.contentId))
                 if book.hasEpub { items.append(.epub(contentId: book.contentId)) }
-                if audioIsWanted { items.append(contentsOf: audioWants(for: book, having: nil)) }
+                if audioIsWanted {
+                    items.append(contentsOf: audioWants(
+                        for: book, having: nil, preferRemote: preferRemoteAudio
+                    ))
+                }
                 continue
             }
             // Known book, but the file itself never made it across.
@@ -37,7 +42,9 @@ public enum SyncDiff {
                 items.append(.epub(contentId: book.contentId))
             }
             if audioIsWanted {
-                items.append(contentsOf: audioWants(for: book, having: local))
+                items.append(contentsOf: audioWants(
+                    for: book, having: local, preferRemote: preferRemoteAudio
+                ))
             }
         }
 
@@ -55,7 +62,7 @@ public enum SyncDiff {
 
     /// Which chunks of which chapters are worth asking for.
     private static func audioWants(
-        for remote: BookManifest, having local: BookManifest?
+        for remote: BookManifest, having local: BookManifest?, preferRemote: Bool
     ) -> [WantItem] {
         var items: [WantItem] = []
         let localChapters = Dictionary(
@@ -79,8 +86,12 @@ public enum SyncDiff {
             // bandwidth; the local render, if any, wins.
             let alreadyHave: Int
             if let existing = mine?.audio, existing.voiceId == audio.voiceId {
-                alreadyHave = existing.renderedChunks
-            } else if mine?.audio != nil {
+                // A paired phone must replace Nano even when both renderers use
+                // the same voice id. Once the Mac copy has landed, `preferred`
+                // prevents it being requested again on every session.
+                alreadyHave = preferRemote && existing.preferred != true
+                    ? 0 : existing.renderedChunks
+            } else if mine?.audio != nil, !preferRemote {
                 // A different voice on this side. Taking theirs would mean
                 // discarding ours, which is the listener's call, not sync's.
                 continue

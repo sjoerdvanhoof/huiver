@@ -71,6 +71,16 @@ public actor SyncSession {
         case server
     }
 
+    public struct PreferredAudio: Sendable, Equatable {
+        public var contentId: String
+        public var chapterIndex: Int
+
+        public init(contentId: String, chapterIndex: Int) {
+            self.contentId = contentId
+            self.chapterIndex = chapterIndex
+        }
+    }
+
     /// What happened, for the UI and the log.
     public struct Summary: Sendable, Equatable {
         public var peerName: String = ""
@@ -87,6 +97,27 @@ public actor SyncSession {
         /// Set when the two devices' clocks disagree enough to make
         /// newest-wins the wrong answer.
         public var clockSkew: TimeInterval?
+    }
+
+    /// A live view of one direction of the transfer. The item count is known
+    /// as soon as the manifests are compared; byte progress becomes known when
+    /// the sender announces the current file.
+    public struct TransferProgress: Sendable, Equatable {
+        public enum Direction: Sendable { case receiving, sending }
+
+        public var direction: Direction
+        public var completedItems: Int
+        public var totalItems: Int
+        public var currentItem: WantItem?
+        public var currentBytes: Int64
+        public var totalBytes: Int64
+
+        public var fractionCompleted: Double {
+            guard totalItems > 0 else { return 1 }
+            let fileFraction = totalBytes > 0
+                ? min(1, Double(currentBytes) / Double(totalBytes)) : 0
+            return min(1, (Double(completedItems) + fileFraction) / Double(totalItems))
+        }
     }
 
     public enum SyncError: Error, LocalizedError, Equatable {
@@ -130,6 +161,9 @@ public actor SyncSession {
     /// Whether this side wants the other's audio. The phone does; the Mac,
     /// which can render anything faster than the phone can, does not.
     private let wantsAudio: Bool
+    private let preferPeerAudio: Bool
+    private let progress: (@Sendable (TransferProgress) async -> Void)?
+    private let preferredAudio: PreferredAudio?
     /// Set at the handshake: whether the other device can decode AAC. Audio is
     /// six times smaller compressed, and the only thing stopping every session
     /// using it is a peer old enough not to understand it.
@@ -140,13 +174,19 @@ public actor SyncSession {
         role: Role,
         source: SyncDataSource,
         identity: SyncMessage.Hello,
-        wantsAudio: Bool = true
+        wantsAudio: Bool = true,
+        preferPeerAudio: Bool = false,
+        preferredAudio: PreferredAudio? = nil,
+        progress: (@Sendable (TransferProgress) async -> Void)? = nil
     ) {
         self.transport = transport
         self.role = role
         self.source = source
         self.identity = identity
         self.wantsAudio = wantsAudio
+        self.preferPeerAudio = preferPeerAudio
+        self.preferredAudio = preferredAudio
+        self.progress = progress
     }
 
     public func run() async throws -> Summary {
@@ -190,7 +230,23 @@ public actor SyncSession {
         summary.convertRequestsAccepted = accepted.count
         for status in accepted { try await send(.jobStatus(status)) }
 
-        let want = SyncDiff.want(mine: mine, theirs: theirs, audioIsWanted: wantsAudio)
+        var want = SyncDiff.want(
+            mine: mine, theirs: theirs, audioIsWanted: wantsAudio,
+            preferRemoteAudio: preferPeerAudio
+        )
+        // A chapter tapped by the listener goes first. Transfers are whole,
+        // verified items, so reordering is enough; the wire protocol needs no
+        // special priority message.
+        if let preferredAudio,
+           let index = want.firstIndex(where: { item in
+               guard case .audio(let contentId, let chapterIndex, _, _) = item else {
+                   return false
+               }
+               return contentId == preferredAudio.contentId
+                   && chapterIndex == preferredAudio.chapterIndex
+           }) {
+            want.insert(want.remove(at: index), at: 0)
+        }
         switch role {
         case .client:
             try await send(.want(SyncMessage.Want(items: want)))
@@ -241,7 +297,7 @@ public actor SyncSession {
     // MARK: - Sending files
 
     private func serve(_ items: [WantItem], into summary: inout Summary) async throws {
-        for item in items {
+        for (index, item) in items.enumerated() {
             // Something asked for and then deleted between building the
             // manifest and being asked for it. Not an error: the next session's
             // manifest will not offer it.
@@ -285,6 +341,13 @@ public actor SyncSession {
                     ?? data.endIndex
                 try await transport.send(Frame(kind: .blob, payload: Data(data[offset..<end])))
                 offset = end
+                await progress?(
+                    TransferProgress(
+                        direction: .sending, completedItems: index, totalItems: items.count,
+                        currentItem: item, currentBytes: Int64(offset),
+                        totalBytes: Int64(data.count)
+                    )
+                )
             }
             try await send(.fileDone(SyncMessage.FileDone(item: item)))
             summary.sent += 1
@@ -304,12 +367,15 @@ public actor SyncSession {
     ) async throws {
         guard !want.isEmpty else { return }
         var outstanding = Set(want)
+        var completed = 0
 
         while !outstanding.isEmpty {
             let message = try await next()
             switch message {
             case .fileHeader(let header):
-                let data = try await receiveBlobs(for: header)
+                let data = try await receiveBlobs(
+                    for: header, completedItems: completed, totalItems: want.count
+                )
                 outstanding.remove(header.item)
                 // A file that arrives damaged is dropped rather than stored.
                 // The manifest diff will ask for it again, and a chapter of
@@ -332,6 +398,14 @@ public actor SyncSession {
                 try await source.receive(header.item, data: payload)
                 summary.received += 1
                 summary.bytesReceived += Int64(data.count)
+                completed += 1
+                await progress?(
+                    TransferProgress(
+                        direction: .receiving, completedItems: completed,
+                        totalItems: want.count, currentItem: nil,
+                        currentBytes: 0, totalBytes: 0
+                    )
+                )
 
             case .want, .bye:
                 // They have nothing more to send. Push the message back is not
@@ -351,13 +425,22 @@ public actor SyncSession {
     }
 
     /// Blob frames up to the matching `fileDone`.
-    private func receiveBlobs(for header: SyncMessage.FileHeader) async throws -> Data {
+    private func receiveBlobs(
+        for header: SyncMessage.FileHeader, completedItems: Int, totalItems: Int
+    ) async throws -> Data {
         var data = Data(capacity: Int(header.size))
         while true {
             guard let frame = try await transport.receive() else { throw SyncError.closed }
             switch frame.kind {
             case .blob:
                 data.append(frame.payload)
+                await progress?(
+                    TransferProgress(
+                        direction: .receiving, completedItems: completedItems,
+                        totalItems: totalItems, currentItem: header.item,
+                        currentBytes: Int64(data.count), totalBytes: header.size
+                    )
+                )
             case .control:
                 let message = try SyncMessage.decode(frame)
                 guard case .fileDone(let done) = message, done.item == header.item else {

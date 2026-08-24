@@ -17,6 +17,8 @@ public actor LibrarySyncDataSource: SyncDataSource {
     /// The asks this device has made, on the device that makes them. Absent on
     /// the Mac, which renders rather than asks.
     private let requests: ConvertRequestStore?
+    private let incomingAudioWins: Bool
+    private let peerManifestReceived: (@Sendable (SyncMessage.Manifest) async -> Void)?
     /// Where an ask from the other device goes. Absent on the phone, which has
     /// nowhere to put one.
     ///
@@ -32,6 +34,8 @@ public actor LibrarySyncDataSource: SyncDataSource {
         deviceId: String,
         voiceDirectory: URL? = nil,
         requests: ConvertRequestStore? = nil,
+        incomingAudioWins: Bool = false,
+        peerManifestReceived: (@Sendable (SyncMessage.Manifest) async -> Void)? = nil,
         acceptRequests: (@Sendable ([ConvertRequest]) async -> [SyncMessage.JobStatus])? = nil
     ) {
         self.library = library
@@ -39,6 +43,8 @@ public actor LibrarySyncDataSource: SyncDataSource {
         self.deviceId = deviceId
         self.voiceDirectory = voiceDirectory
         self.requests = requests
+        self.incomingAudioWins = incomingAudioWins
+        self.peerManifestReceived = peerManifestReceived
         self.acceptRequests = acceptRequests
     }
 
@@ -66,12 +72,29 @@ public actor LibrarySyncDataSource: SyncDataSource {
             }
         }
 
-        return SyncMessage.Manifest(
-            books: books.map {
-                BookBundle.manifest(
+        var bookManifests = books.map {
+            BookBundle.manifest(
                     for: $0, coverURL: library.coverURL($0), epubURL: library.epubURL($0)
                 )
-            },
+        }
+        // On the Mac every local render is authoritative. On a phone, only
+        // audio previously received from that Mac is, which distinguishes it
+        // from Nano even when the voice ids happen to match.
+        for bookIndex in bookManifests.indices {
+            for chapterIndex in bookManifests[bookIndex].chapters.indices {
+                guard bookIndex < books.count,
+                      chapterIndex < books[bookIndex].chapters.count,
+                      bookManifests[bookIndex].chapters[chapterIndex].audio != nil
+                else { continue }
+                bookManifests[bookIndex].chapters[chapterIndex].audio?.preferred =
+                    incomingAudioWins
+                        ? books[bookIndex].chapters[chapterIndex].audioSource == "mac"
+                        : true
+            }
+        }
+
+        return SyncMessage.Manifest(
+            books: bookManifests,
             voices: voiceManifests(),
             progress: records,
             // Pruned against the library first: a chapter that has since been
@@ -102,6 +125,7 @@ public actor LibrarySyncDataSource: SyncDataSource {
             peerManifest.voices.map { ($0.id, $0.name) },
             uniquingKeysWith: { first, _ in first }
         )
+        await peerManifestReceived?(peerManifest)
     }
 
     private func voiceManifests() -> [VoiceManifest] {
@@ -174,14 +198,17 @@ public actor LibrarySyncDataSource: SyncDataSource {
                   book.chapters.indices.contains(chapterIndex)
             else { return }
             let chapter = book.chapters[chapterIndex]
-            // Local audio in a different voice wins; the diff should not have
-            // asked, but the diff ran against a manifest that may have aged.
-            if let existing = chapter.renderedVoice, existing != voiceId,
-               chapter.renderedChunks > 0 {
+            // Ordinarily local audio wins. A paired phone reverses that policy:
+            // the Mac renderer is the higher-quality source of truth.
+            if chapter.renderedChunks > 0, incomingAudioWins,
+               (chapter.renderedVoice != voiceId || chapter.audioSource != "mac") {
+                try await library.discardAudio(chapterId: chapter.id, bookId: book.id)
+            } else if chapter.renderedChunks > 0, chapter.renderedVoice != voiceId {
                 return
             }
             try await library.storeChunks(
-                ChunkPack.unpack(data), bookId: book.id, chapterId: chapter.id, voiceId: voiceId
+                ChunkPack.unpack(data), bookId: book.id, chapterId: chapter.id, voiceId: voiceId,
+                audioSource: incomingAudioWins ? "mac" : nil
             )
 
         case .voice(let id):

@@ -252,6 +252,60 @@ struct SyncDiffTests {
         )
     }
 
+    @Test("a paired phone replaces Nano audio with the Mac render")
+    func macAudioReplacesNano() {
+        let theirs = SyncMessage.Manifest(books: [
+            book(chapters: [
+                chapter(0, audio: AudioManifest(
+                    voiceId: "v", renderedChunks: 10, codec: .wav, preferred: true
+                ))
+            ])
+        ])
+        let mine = SyncMessage.Manifest(books: [
+            book(chapters: [
+                chapter(0, audio: AudioManifest(
+                    voiceId: "v", renderedChunks: 3, codec: .wav, preferred: false
+                ))
+            ])
+        ])
+        let items = SyncDiff.want(
+            mine: mine, theirs: theirs, preferRemoteAudio: true
+        )
+        #expect(items == [
+            .audio(
+                contentId: "book", chapterIndex: 0, voiceId: "v",
+                chunks: Array(0..<10)
+            )
+        ])
+    }
+
+    @Test("Mac audio already received by the phone resumes from its tail")
+    func preferredAudioDoesNotRepeat() {
+        let theirs = SyncMessage.Manifest(books: [
+            book(chapters: [
+                chapter(0, audio: AudioManifest(
+                    voiceId: "v", renderedChunks: 10, codec: .wav, preferred: true
+                ))
+            ])
+        ])
+        let mine = SyncMessage.Manifest(books: [
+            book(chapters: [
+                chapter(0, audio: AudioManifest(
+                    voiceId: "v", renderedChunks: 4, codec: .wav, preferred: true
+                ))
+            ])
+        ])
+        let items = SyncDiff.want(
+            mine: mine, theirs: theirs, preferRemoteAudio: true
+        )
+        #expect(items == [
+            .audio(
+                contentId: "book", chapterIndex: 0, voiceId: "v",
+                chunks: Array(4..<10)
+            )
+        ])
+    }
+
     /// This is the resume mechanism. There is no separate resume path: an
     /// interrupted transfer simply produces a smaller diff next time.
     @Test("a re-run after a partial transfer asks for less")

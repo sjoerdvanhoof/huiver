@@ -20,6 +20,16 @@ struct ConnectorSection: View {
         .init(get: { sync.autoSync }, set: { sync.autoSync = $0 })
     }
 
+    private var connectorFooter: String {
+        if sync.isPaired {
+            return "Sync moves books both ways, audio from the Mac, and listening positions "
+                + "whichever is newer. Directly between the two devices — nothing leaves "
+                + "your network. Automatic sync starts a session when the Mac appears on "
+                + "the network, at most once a minute."
+        }
+        return "Open Narcisse on your Mac, choose Pair a phone, and scan the code it shows."
+    }
+
     var body: some View {
         Section {
             if let mac = sync.pairedMac {
@@ -35,6 +45,19 @@ struct ConnectorSection: View {
                     }
                 }
                 .disabled(sync.activity == .syncing)
+
+                if sync.activity == .syncing, let progress = sync.transferProgress {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ProgressView(value: progress.fractionCompleted)
+                        Text(progressDescription(progress))
+                            .font(.huiverCaption)
+                            .foregroundStyle(theme.colors.mutedForeground)
+                    }
+                } else if sync.activity == .syncing {
+                    Text("Connecting and comparing libraries…")
+                        .font(.huiverCaption)
+                        .foregroundStyle(theme.colors.mutedForeground)
+                }
 
                 if let summary = sync.lastSummary, let at = sync.lastSyncedAt {
                     LabeledContent(
@@ -71,14 +94,7 @@ struct ConnectorSection: View {
         } header: {
             Text("Connector")
         } footer: {
-            Text(
-                sync.isPaired
-                    ? "Sync moves books both ways, audio from the Mac, and listening positions "
-                        + "whichever is newer. Directly between the two devices — nothing leaves "
-                        + "your network. Automatic sync starts a session when the Mac appears on "
-                        + "the network, at most once a minute."
-                    : "Open Narcisse on your Mac, choose Pair a phone, and scan the code it shows."
-            )
+            Text(connectorFooter)
         }
         .sheet(isPresented: $showingScanner) {
             ScannerSheet { code in
@@ -86,6 +102,22 @@ struct ConnectorSection: View {
                 Task { await sync.pair(with: code) }
             }
         }
+    }
+
+    private func progressDescription(_ progress: SyncSession.TransferProgress) -> String {
+        let action = progress.direction == .receiving ? "Receiving" : "Sending"
+        let number = min(progress.completedItems + 1, progress.totalItems)
+        guard progress.totalItems > 0 else { return "Finishing sync…" }
+        if progress.totalBytes > 0 {
+            let bytes = ByteCountFormatter.string(
+                fromByteCount: progress.currentBytes, countStyle: .file
+            )
+            let total = ByteCountFormatter.string(
+                fromByteCount: progress.totalBytes, countStyle: .file
+            )
+            return "\(action) item \(number) of \(progress.totalItems) · \(bytes) of \(total)"
+        }
+        return "\(action) item \(number) of \(progress.totalItems)"
     }
 }
 

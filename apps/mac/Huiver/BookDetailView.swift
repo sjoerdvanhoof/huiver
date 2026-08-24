@@ -419,7 +419,10 @@ private struct ChapterRow: View {
                                 model.voices.first { $0.id == id }?.name ?? "Former voice"
                             }
                         )
-                        .padding(.top, 1)
+                        // Butted against the progress bar when there is one,
+                        // so the connectors actually reach it — their own
+                        // headroom is the visual joint.
+                        .padding(.top, listened != nil && chapter.chunkCount > 0 ? -2 : 1)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -593,11 +596,13 @@ private struct ChapterRow: View {
         }
     }
 
-    /// The chapter's narrators laid out along the row, each name sitting where
-    /// its voice drops in, with a hairline underneath marking the handover.
-    /// Names that would collide wrap onto a line of their own — the row grows
-    /// rather than the names overprinting each other. Quiet on purpose: it
-    /// shares the row with a progress bar and a detail line.
+    /// The chapter's narrators laid out along the row, each name hanging from
+    /// the progress bar by a hairline at the moment its voice drops in. Names
+    /// that would collide wrap onto a line of their own — the row grows rather
+    /// than the names overprinting each other — and a connector on its way to
+    /// a lower line passes *behind* any name it crosses rather than striking
+    /// through it. Quiet on purpose: it shares the row with a progress bar and
+    /// a detail line.
     private struct VoiceSpanStrip: View {
         let spans: [ChunkMap.VoiceSpan]
         let total: Double
@@ -607,22 +612,21 @@ private struct ChapterRow: View {
 
         var body: some View {
             SpanLayout(fractions: spans.map { min(1, $0.start / max(total, 1)) }) {
+                // Connectors first, so every name draws over — tunnels — a
+                // line passing it on the way down to its own name.
+                ForEach(spans) { _ in
+                    Rectangle().fill(theme.colors.border)
+                }
                 ForEach(spans) { span in
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(name(span.voiceId))
-                            .font(.caption2)
-                            .foregroundStyle(theme.colors.mutedForeground)
-                            .lineLimit(1)
-                        // The handover mark, under the name rather than beside
-                        // it so it can never strike through the letters. The
-                        // first voice starts the chapter rather than dropping
-                        // into it, so it gets none.
-                        if span.start > 0 {
-                            Rectangle()
-                                .fill(theme.colors.border)
-                                .frame(width: 1, height: 4)
-                        }
-                    }
+                    Text(name(span.voiceId))
+                        .font(.caption2)
+                        .foregroundStyle(theme.colors.mutedForeground)
+                        .lineLimit(1)
+                        // The chip that does the tunnelling: a sliver of row
+                        // background either side, so a crossing line breaks
+                        // cleanly around the name instead of touching it.
+                        .padding(.horizontal, 2)
+                        .background(theme.colors.background)
                 }
             }
             .accessibilityElement(children: .ignore)
@@ -632,14 +636,22 @@ private struct ChapterRow: View {
         }
     }
 
-    /// Places each label at its fraction of the row's width, dropping a label
-    /// down a lane whenever it would run into the one before it — the strip
-    /// reports the stacked height, so the chapter row grows to fit.
+    /// Places each name at its fraction of the row's width, dropping a name
+    /// down a lane whenever it would run into the one before it, and hangs a
+    /// hairline from the top of the strip — where the progress bar sits — down
+    /// to each name's own lane. The strip reports the stacked height, so the
+    /// chapter row grows to fit.
+    ///
+    /// Expects its children as all the connector lines followed by all the
+    /// name labels, one of each per fraction, in the same order.
     private struct SpanLayout: Layout {
         let fractions: [Double]
         /// Breathing room required between neighbouring labels in one lane.
         private let gap: CGFloat = 8
         private let laneSpacing: CGFloat = 1
+        /// The stretch between the bar above and the first lane of names,
+        /// which every connector travels to reach its name.
+        private let connectorHeight: CGFloat = 4
 
         private struct Placement {
             let x: CGFloat
@@ -647,14 +659,22 @@ private struct ChapterRow: View {
             let size: CGSize
         }
 
-        private func placements(
-            width: CGFloat, subviews: Subviews
+        private func split(_ subviews: Subviews) -> (lines: LayoutSubviews, labels: LayoutSubviews) {
+            let count = fractions.count
+            guard subviews.count == count * 2 else {
+                return (subviews.prefix(0), subviews[...])
+            }
+            return (subviews.prefix(count), subviews.suffix(count))
+        }
+
+        private func labelPlacements(
+            width: CGFloat, labels: LayoutSubviews
         ) -> (placed: [Placement], laneHeight: CGFloat, lanes: Int) {
             var laneEnds: [CGFloat] = []
             var laneHeight: CGFloat = 0
             var placed: [Placement] = []
-            for (index, subview) in subviews.enumerated() {
-                let size = subview.sizeThatFits(.unspecified)
+            for (index, label) in labels.enumerated() {
+                let size = label.sizeThatFits(.unspecified)
                 laneHeight = max(laneHeight, size.height)
                 let fraction = index < fractions.count ? fractions[index] : 0
                 // Pinned inside the row: a voice dropping in near the end
@@ -677,24 +697,47 @@ private struct ChapterRow: View {
             proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
         ) -> CGSize {
             let width = proposal.replacingUnspecifiedDimensions().width
-            let (_, laneHeight, lanes) = placements(width: width, subviews: subviews)
+            let (_, labels) = split(subviews)
+            let (_, laneHeight, lanes) = labelPlacements(width: width, labels: labels)
             return CGSize(
                 width: width,
-                height: laneHeight * CGFloat(lanes) + laneSpacing * CGFloat(lanes - 1)
+                height: connectorHeight
+                    + laneHeight * CGFloat(lanes)
+                    + laneSpacing * CGFloat(lanes - 1)
             )
         }
 
         func placeSubviews(
             in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
         ) {
-            let (placed, laneHeight, _) = placements(width: bounds.width, subviews: subviews)
-            for (subview, placement) in zip(subviews, placed) {
-                subview.place(
+            let (lines, labels) = split(subviews)
+            let (placed, laneHeight, _) = labelPlacements(width: bounds.width, labels: labels)
+
+            func laneTop(_ lane: Int) -> CGFloat {
+                connectorHeight + CGFloat(lane) * (laneHeight + laneSpacing)
+            }
+
+            for (label, placement) in zip(labels, placed) {
+                label.place(
                     at: CGPoint(
                         x: bounds.minX + placement.x,
-                        y: bounds.minY + CGFloat(placement.lane) * (laneHeight + laneSpacing)
+                        y: bounds.minY + laneTop(placement.lane)
                     ),
                     proposal: .unspecified
+                )
+            }
+            for (index, line) in lines.enumerated() {
+                guard index < placed.count else { break }
+                // From the bar down to this name's own lane. The first voice
+                // starts the chapter rather than dropping into it — no line.
+                // At the exact drop-in moment, not the label's possibly
+                // edge-clamped position: the line marks the bar, the name
+                // merely sits as close as it fits.
+                let height = index == 0 ? 0 : laneTop(placed[index].lane)
+                let x = min(bounds.width * CGFloat(fractions[index]), bounds.width - 1)
+                line.place(
+                    at: CGPoint(x: bounds.minX + x, y: bounds.minY),
+                    proposal: ProposedViewSize(width: 1, height: height)
                 )
             }
         }
