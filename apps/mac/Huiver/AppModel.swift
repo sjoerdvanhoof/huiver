@@ -980,6 +980,30 @@ final class AppModel {
         return voice
     }
 
+    /// Clone the recording into a throwaway voice and read a short passage
+    /// with it, so a trim can be judged by ear before anything is saved.
+    /// Neither the voice nor the audio is kept.
+    func previewClonedSpeech(
+        from recording: [Float],
+        text: String,
+        language: Language,
+        cancelled: @escaping @Sendable () -> Bool = { false }
+    ) async throws -> [Float] {
+        guard let cloner, let engine = speechEngine else {
+            throw VoiceCloner.CloneError.unavailable
+        }
+        let voice = try await cloner.clone(
+            recording,
+            id: "preview",
+            name: "Preview",
+            detail: "trim preview, never saved",
+            language: language.code
+        )
+        return try await engine.speak(
+            text, voice: voice, language: language, cancelled: cancelled
+        )
+    }
+
     /// Whether this voice was cloned here, and can therefore be deleted.
     func isRecorded(_ voice: Voice) -> Bool {
         guard let recordedVoices else { return false }
