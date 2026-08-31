@@ -66,7 +66,9 @@ struct DevLabView: View {
         .task(id: "\(language)|\(locale)") { await reprocess() }
         .task(id: "\(adHoc)|\(language)|\(locale)") {
             guard !adHoc.isEmpty else { adHocResult = nil; return }
-            adHocResult = await model.devProcess(adHoc, languageCode: language, localeIdentifier: locale)
+            let processed = await model.devProcess(adHoc, languageCode: language, localeIdentifier: locale)
+            guard !Task.isCancelled else { return }
+            adHocResult = processed
         }
         .onChange(of: language) { _, fresh in
             locale = fresh == "nl" ? "nl-NL" : "en-US"
@@ -138,6 +140,9 @@ struct DevLabView: View {
                 phrase.text, languageCode: language, localeIdentifier: locale
             )
         }
+        // Switching language re-fires this task with the locale mid-reset; a
+        // superseded pass must not overwrite the current one's results.
+        guard !Task.isCancelled else { return }
         results = fresh
     }
 
