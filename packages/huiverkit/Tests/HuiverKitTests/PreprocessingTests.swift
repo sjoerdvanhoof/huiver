@@ -127,6 +127,16 @@ struct PreprocessingTests {
         #expect(nl.spokenText.contains("twaalf maart negentienhonderd negenennegentig"))
     }
 
+    @Test("A locale that contradicts the language cannot leak another tongue")
+    func mismatchedLocale() async {
+        let result = await DutchProcessor().process(
+            chunk: .init(text: "De trein vertrekt om 14:30.", beginsMidSentence: false, endsMidSentence: false),
+            context: context(language: "nl", locale: "en-US")
+        )
+        #expect(result.spokenText.contains("veertien uur dertig"))
+        #expect(!result.spokenText.contains("fourteen"))
+    }
+
     @Test("Money with grouped thousands and cents reads as money")
     func money() async {
         let result = await EnglishProcessor().process(

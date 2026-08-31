@@ -615,7 +615,16 @@ private struct ProcessorRules: Sendable {
         substitutions: inout [TextSubstitution]
     ) -> String {
         var text = input
-        let locale = Locale(identifier: context.locale.identifier)
+        // A context can carry a locale that contradicts its language; numbers
+        // must never be spelled in another tongue, so the language wins and
+        // the locale falls back to that language's default.
+        let flavorLanguage = rules.flavor == .dutch ? "nl" : "en"
+        let identifier = context.locale.languageCode == flavorLanguage
+            ? context.locale.identifier
+            : LocaleProfile.defaultIdentifier(for: flavorLanguage)
+        let locale = Locale(identifier: identifier)
+        let monthFirst = identifier.replacingOccurrences(of: "_", with: "-")
+            .lowercased().hasPrefix("en-us")
 
         // Dates first: a spoken date must win before the number rules can
         // nibble at its parts. Only forms with a four-digit year are
@@ -625,7 +634,7 @@ private struct ProcessorRules: Sendable {
             guard groups.count == 4, let year = Int(groups[1]), let month = Int(groups[2]),
                   let day = Int(groups[3]),
                   let replacement = spokenDate(
-                      day: day, month: month, year: year, context: context,
+                      day: day, month: month, year: year, monthFirst: monthFirst,
                       locale: locale, flavor: rules.flavor
                   )
             else { return groups[0] }
@@ -639,12 +648,11 @@ private struct ProcessorRules: Sendable {
                   let year = Int(groups[3]) else { return groups[0] }
             // Day/month order follows the spoken locale; a month over twelve
             // can only be the day, whichever way the book writes it.
-            let monthFirst = monthLeadsDate(context)
             var day = monthFirst ? second : first
             var month = monthFirst ? first : second
             if month > 12, day <= 12 { swap(&day, &month) }
             guard let replacement = spokenDate(
-                day: day, month: month, year: year, context: context,
+                day: day, month: month, year: year, monthFirst: monthFirst,
                 locale: locale, flavor: rules.flavor
             ) else { return groups[0] }
             substitutions.append(.init(source: groups[0], replacement: replacement, kind: .date))
@@ -794,13 +802,8 @@ private struct ProcessorRules: Sendable {
         return "\(spellInteger(whole, locale: locale)) \(unit) and \(spellInteger(subunits, locale: locale)) \(cent)"
     }
 
-    private static func monthLeadsDate(_ context: ProcessingContext) -> Bool {
-        context.locale.identifier.replacingOccurrences(of: "_", with: "-")
-            .lowercased().hasPrefix("en-us")
-    }
-
     private static func spokenDate(
-        day: Int, month: Int, year: Int, context: ProcessingContext,
+        day: Int, month: Int, year: Int, monthFirst: Bool,
         locale: Locale, flavor: Flavor
     ) -> String? {
         guard (1...12).contains(month), (1...31).contains(day), (1000...2999).contains(year)
@@ -812,7 +815,7 @@ private struct ProcessorRules: Sendable {
             return "\(spellInteger(day, locale: locale)) \(monthName) \(dutchYear(year, locale: locale))"
         }
         let spokenYear = englishYear(year, locale: locale)
-        return monthLeadsDate(context)
+        return monthFirst
             ? "\(monthName) \(englishOrdinal(day, locale: locale)), \(spokenYear)"
             : "the \(englishOrdinal(day, locale: locale)) of \(monthName), \(spokenYear)"
     }
