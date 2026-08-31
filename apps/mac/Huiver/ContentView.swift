@@ -18,6 +18,10 @@ final class AppNavigation {
 struct ContentView: View {
     enum Destination: String, CaseIterable, Identifiable {
         case library, player, voices, queue, sync, settings
+        // Compiled out of Release with its view: listeners never see the lab.
+        #if DEBUG
+        case devLab
+        #endif
         var id: String { rawValue }
 
         var label: String {
@@ -28,6 +32,9 @@ struct ContentView: View {
             case .queue: "Queue"
             case .sync: "Sync"
             case .settings: "Settings"
+            #if DEBUG
+            case .devLab: "Pronunciation Lab"
+            #endif
             }
         }
 
@@ -39,6 +46,9 @@ struct ContentView: View {
             case .queue: "tray.full"
             case .sync: "iphone"
             case .settings: "gearshape"
+            #if DEBUG
+            case .devLab: "testtube.2"
+            #endif
             }
         }
     }
@@ -134,6 +144,9 @@ struct ContentView: View {
         case .queue: QueueView()
         case .sync: SyncView()
         case .settings: SettingsPane()
+        #if DEBUG
+        case .devLab: DevLabView()
+        #endif
         }
     }
 }

@@ -46,6 +46,114 @@ struct PreprocessingTests {
         #expect(result.spokenText.contains("procent"))
     }
 
+    @Test("Dotted acronyms are spelled as letters, spaced initials are not")
+    func dottedAcronyms() async {
+        let source = "The U.S. and the U.N. asked J. K. Rowling about the U.S.A. in the UK."
+        let result = await EnglishProcessor().process(
+            chunk: .init(text: source, beginsMidSentence: false, endsMidSentence: false),
+            context: context()
+        )
+        #expect(result.spokenText.contains("The U S and the U N"))
+        #expect(result.spokenText.contains("J. K. Rowling"))
+        #expect(result.spokenText.contains("the U S A in the U K."))
+    }
+
+    @Test("Dotted acronyms use Dutch letter names in Dutch books")
+    func dutchDottedAcronyms() async {
+        let result = await DutchProcessor().process(
+            chunk: .init(text: "De V.S. en de V.N. overleggen, d.w.z. morgen.", beginsMidSentence: false, endsMidSentence: false),
+            context: context(language: "nl", locale: "nl-NL")
+        )
+        #expect(result.spokenText.contains("De vee es en de vee en"))
+        #expect(result.spokenText.contains("dat wil zeggen"))
+    }
+
+    @Test("Latin abbreviations get spoken English expansions")
+    func latinAbbreviations() async {
+        let result = await EnglishProcessor().process(
+            chunk: .init(text: "Fruit, e.g. apples, i.e. not meat, etc.", beginsMidSentence: false, endsMidSentence: false),
+            context: context()
+        )
+        #expect(result.spokenText.contains("for example, apples"))
+        #expect(result.spokenText.contains("that is, not meat"))
+        #expect(result.spokenText.contains("et cetera"))
+
+        // A comma already in the source is consumed, never doubled.
+        let commas = await EnglishProcessor().process(
+            chunk: .init(text: "Fruit, e.g., apples.", beginsMidSentence: false, endsMidSentence: false),
+            context: context()
+        )
+        #expect(commas.spokenText.contains("for example, apples"))
+        #expect(!commas.spokenText.contains(",,"))
+    }
+
+    @Test("Ordinals above twenty are spelled out correctly")
+    func largeOrdinals() async {
+        let result = await EnglishProcessor().process(
+            chunk: .init(
+                text: "Her 21st birthday, his 32nd, their 30th, the 100th anniversary.",
+                beginsMidSentence: false, endsMidSentence: false
+            ),
+            context: context()
+        )
+        #expect(result.spokenText.contains("twenty-first"))
+        #expect(result.spokenText.contains("thirty-second"))
+        #expect(result.spokenText.contains("thirtieth"))
+        #expect(result.spokenText.contains("one hundredth"))
+    }
+
+    @Test("Numeric dates with a four-digit year are spoken in locale order")
+    func dates() async {
+        let us = await EnglishProcessor().process(
+            chunk: .init(
+                text: "Born on 12/03/1999; the deadline is 2026-08-30.",
+                beginsMidSentence: false, endsMidSentence: false
+            ),
+            context: context(locale: "en-US")
+        )
+        #expect(us.spokenText.contains("December third, nineteen ninety-nine"))
+        #expect(us.spokenText.contains("August thirtieth, twenty twenty-six"))
+
+        let gb = await EnglishProcessor().process(
+            chunk: .init(text: "Born on 12/03/1999.", beginsMidSentence: false, endsMidSentence: false),
+            context: context(locale: "en-GB")
+        )
+        #expect(gb.spokenText.contains("the twelfth of March, nineteen ninety-nine"))
+
+        let nl = await DutchProcessor().process(
+            chunk: .init(text: "Geboren op 12-03-1999.", beginsMidSentence: false, endsMidSentence: false),
+            context: context(language: "nl", locale: "nl-NL")
+        )
+        #expect(nl.spokenText.contains("twaalf maart negentienhonderd negenennegentig"))
+    }
+
+    @Test("Money with grouped thousands and cents reads as money")
+    func money() async {
+        let result = await EnglishProcessor().process(
+            chunk: .init(
+                text: "He wired €1,250.50, kept $1 and found £0.75.",
+                beginsMidSentence: false, endsMidSentence: false
+            ),
+            context: context()
+        )
+        #expect(result.spokenText.contains("one thousand two hundred fifty euros and fifty cents"))
+        #expect(result.spokenText.contains("one dollar"))
+        #expect(result.spokenText.contains("seventy-five pence"))
+    }
+
+    @Test("A user correction beats the built-in dotted acronym rule")
+    func overrideBeatsDottedRule() async {
+        let override = PronunciationOverride(
+            languageCode: "en", bookContentId: "book", matchText: "U.S.",
+            replacement: "United States", matchCase: .sensitive
+        )
+        let result = await EnglishProcessor().process(
+            chunk: .init(text: "Life in the U.S. today.", beginsMidSentence: false, endsMidSentence: false),
+            context: context(overrides: [override])
+        )
+        #expect(result.spokenText == "Life in the United States today.")
+    }
+
     @Test("Book correction wins over global and cannot be recursively normalized")
     func overridePrecedence() async {
         let global = PronunciationOverride(
@@ -67,6 +175,7 @@ struct PreprocessingTests {
     func candidateRanking() async {
         let terms = ["SQL", "1/2/2026", "Widget9000", "Sjoerd", "HyperLongFiction", "ABC", "XYZ", "QRS", "TUV", "LMN", "PQR", "RST"]
         let text = terms.map { "We discussed \($0) twice: \($0)." }.joined(separator: " ")
+            + String(repeating: " The stranger Zyxwverian arrived.", count: 8)
         let book = Book(
             id: "local", title: "Challenge", added: Date(), language: "en",
             localeIdentifier: "en-GB", chapters: [Chapter(id: "c", title: "One", text: text)],
@@ -77,7 +186,11 @@ struct PreprocessingTests {
         )
         #expect(report.candidates.count == 10)
         #expect(report.candidates.contains { $0.surfaceForms.contains("SQL") })
-        #expect(report.candidates.contains { $0.surfaceForms.contains("1/2/2026") })
+        // Full dates are spoken deterministically now — nothing to review.
+        #expect(!report.candidates.contains { $0.surfaceForms.contains("1/2/2026") })
+        // A name mentioned twice is not worth a review row; one that recurs is.
+        #expect(!report.candidates.contains { $0.surfaceForms.contains("Sjoerd") })
+        #expect(report.candidates.contains { $0.surfaceForms.contains("Zyxwverian") })
         #expect(zip(report.candidates, report.candidates.dropFirst()).allSatisfy {
             $0.riskScore >= $1.riskScore
         })

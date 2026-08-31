@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import NaturalLanguage
 
 // MARK: - Locale and language processors
 
@@ -347,7 +348,7 @@ public actor PreflightStore {
 
 public struct EnglishProcessor: LanguageProcessor {
     public let descriptor = LanguageProcessorDescriptor(
-        languageCode: "en", backend: "foundation+rules", version: "1.0.0",
+        languageCode: "en", backend: "foundation+rules", version: "1.2.0",
         locales: ["en-US", "en-GB"]
     )
 
@@ -372,7 +373,7 @@ public struct EnglishProcessor: LanguageProcessor {
 
 public struct DutchProcessor: LanguageProcessor {
     public let descriptor = LanguageProcessorDescriptor(
-        languageCode: "nl", backend: "foundation+rules", version: "1.0.0",
+        languageCode: "nl", backend: "foundation+rules", version: "1.2.0",
         locales: ["nl-NL", "nl-BE"]
     )
 
@@ -453,14 +454,31 @@ private struct ProcessorRules: Sendable {
 
     static let english = ProcessorRules(
         flavor: .english,
-        aliases: ["Dr": "Doctor", "Mr": "Mister", "Mrs": "Missus", "Ms": "Miz", "Prof": "Professor"],
-        initialisms: ["FBI": "F B I", "CIA": "C I A", "BBC": "B B C", "USA": "U S A", "NASA": "NASA"],
+        aliases: [
+            "Dr": "Doctor", "Mr": "Mister", "Mrs": "Missus", "Ms": "Miz", "Prof": "Professor",
+            "e.g": "for example,", "i.e": "that is,", "etc": "et cetera", "vs": "versus",
+            "Ph.D": "P H D",
+        ],
+        initialisms: [
+            "FBI": "F B I", "CIA": "C I A", "BBC": "B B C", "USA": "U S A", "NASA": "NASA",
+            "US": "U S", "UN": "U N", "UK": "U K", "EU": "E U", "USSR": "U S S R",
+            "CEO": "C E O", "TV": "T V", "DNA": "D N A", "AI": "A I", "PhD": "P H D",
+        ],
         ambiguous: ["sql", "st", "read", "lead", "wind", "live"]
     )
     static let dutch = ProcessorRules(
         flavor: .dutch,
-        aliases: ["dhr": "de heer", "mevr": "mevrouw", "dr": "doctor", "prof": "professor", "nr": "nummer"],
-        initialisms: ["EU": "E U", "VN": "V N", "VS": "V S", "NAVO": "NAVO"],
+        aliases: [
+            "dhr": "de heer", "mevr": "mevrouw", "mw": "mevrouw", "dr": "doctor",
+            "prof": "professor", "nr": "nummer", "bijv": "bijvoorbeeld", "enz": "enzovoort",
+            "o.a": "onder andere", "d.w.z": "dat wil zeggen,", "m.a.w": "met andere woorden,",
+            "e.d": "en dergelijke", "t/m": "tot en met",
+        ],
+        initialisms: [
+            "EU": "E U", "VN": "V N", "VS": "V S", "NAVO": "NAVO",
+            "tv": "tee vee", "cd": "see dee", "dvd": "dee vee dee", "wc": "wee see",
+            "btw": "bee tee wee",
+        ],
         ambiguous: ["sql", "st", "mr", "ds"]
     )
 
@@ -490,7 +508,10 @@ private struct ProcessorRules: Sendable {
         }
 
         for (source, replacement) in rules.aliases.sorted(by: { $0.key.count > $1.key.count }) {
-            let pattern = NSRegularExpression.escapedPattern(for: source) + #"\.?"#
+            // A replacement that carries its own comma ("for example,") also
+            // consumes one after the source, so "e.g., x" cannot double up.
+            var pattern = NSRegularExpression.escapedPattern(for: source) + #"\.?"#
+            if replacement.hasSuffix(",") { pattern += ",?" }
             text = replace(
                 pattern, in: text, with: replacement, caseSensitive: false,
                 protectedReplacements: &protectedReplacements, isRegex: true,
@@ -505,6 +526,18 @@ private struct ProcessorRules: Sendable {
                 substitution: .init(source: source, replacement: replacement, kind: .alias),
                 substitutions: &substitutions
             )
+        }
+
+        // Dotted initialisms — "U.S.", "U.N.", "J.R.R." — spelled as letters.
+        // The dictionary above cannot reach them: its keys carry no dots and
+        // the word-boundary lookarounds stop at the first period. Spaced
+        // initials ("J. K. Rowling") stay untouched. The optional bare capital
+        // at the end absorbs a missing final dot ("U.S.A" before a comma).
+        let dottedPattern = #"(?<![\p{L}\p{N}])(?:\p{Lu}\.){2,}\p{Lu}?(?![\p{L}\p{N}])"#
+        text = replacingMatches(dottedPattern, in: text) { groups in
+            let replacement = spell(groups[0], flavor: rules.flavor)
+            substitutions.append(.init(source: groups[0], replacement: replacement, kind: .alias))
+            return replacement
         }
 
         text = normalizeStructured(text, context: context, rules: rules, substitutions: &substitutions)
@@ -584,18 +617,47 @@ private struct ProcessorRules: Sendable {
         var text = input
         let locale = Locale(identifier: context.locale.identifier)
 
-        // Currency must run before bare numbers.
-        let currencyPattern = #"(?<![\p{L}\p{N}])([£€$])\s?(\d+(?:[.,]\d{1,2})?)(?![\p{L}\p{N}])"#
+        // Dates first: a spoken date must win before the number rules can
+        // nibble at its parts. Only forms with a four-digit year are
+        // unambiguous enough to speak; anything less stays verbatim.
+        let isoDatePattern = #"(?<![\p{L}\p{N}])(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?![\p{L}\p{N}])"#
+        text = replacingMatches(isoDatePattern, in: text) { groups in
+            guard groups.count == 4, let year = Int(groups[1]), let month = Int(groups[2]),
+                  let day = Int(groups[3]),
+                  let replacement = spokenDate(
+                      day: day, month: month, year: year, context: context,
+                      locale: locale, flavor: rules.flavor
+                  )
+            else { return groups[0] }
+            substitutions.append(.init(source: groups[0], replacement: replacement, kind: .date))
+            return replacement
+        }
+
+        let numericDatePattern = #"(?<![\p{L}\p{N}])(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?![\p{L}\p{N}])"#
+        text = replacingMatches(numericDatePattern, in: text) { groups in
+            guard groups.count == 4, let first = Int(groups[1]), let second = Int(groups[2]),
+                  let year = Int(groups[3]) else { return groups[0] }
+            // Day/month order follows the spoken locale; a month over twelve
+            // can only be the day, whichever way the book writes it.
+            let monthFirst = monthLeadsDate(context)
+            var day = monthFirst ? second : first
+            var month = monthFirst ? first : second
+            if month > 12, day <= 12 { swap(&day, &month) }
+            guard let replacement = spokenDate(
+                day: day, month: month, year: year, context: context,
+                locale: locale, flavor: rules.flavor
+            ) else { return groups[0] }
+            substitutions.append(.init(source: groups[0], replacement: replacement, kind: .date))
+            return replacement
+        }
+
+        // Currency must run before bare numbers. The amount body accepts
+        // grouped thousands in either typography; the locale decides what a
+        // lone mark means when it parses.
+        let currencyPattern = #"(?<![\p{L}\p{N}])([£€$])\s?("# + numberBody + #")(?![\p{L}\p{N}])"#
         text = replacingMatches(currencyPattern, in: text) { groups in
             guard groups.count == 3, let value = parsedNumber(groups[2], locale: locale) else { return groups[0] }
-            let spoken = spellNumber(value, locale: locale)
-            let unit: String = switch (groups[1], rules.flavor) {
-            case ("£", _): "pounds"
-            case ("$", _): "dollars"
-            case ("€", .dutch): "euro"
-            default: "euros"
-            }
-            let replacement = "\(spoken) \(unit)"
+            let replacement = spokenAmount(value, symbol: groups[1], locale: locale, flavor: rules.flavor)
             substitutions.append(.init(source: groups[0], replacement: replacement, kind: .currency))
             return replacement
         }
@@ -613,11 +675,14 @@ private struct ProcessorRules: Sendable {
         text = replacingMatches(timePattern, in: text) { groups in
             guard groups.count == 3, let hour = Int(groups[1]), let minute = Int(groups[2]) else { return groups[0] }
             let h = spellInteger(hour, locale: locale)
+            let m = minute < 10 && rules.flavor == .english
+                ? "oh \(spellInteger(minute, locale: locale))"
+                : spellInteger(minute, locale: locale)
             let replacement: String
             if rules.flavor == .dutch {
-                replacement = minute == 0 ? "\(h) uur" : "\(h) uur \(spellInteger(minute, locale: locale))"
+                replacement = minute == 0 ? "\(h) uur" : "\(h) uur \(m)"
             } else {
-                replacement = minute == 0 ? "\(h) o'clock" : "\(h) \(spellInteger(minute, locale: locale))"
+                replacement = minute == 0 ? "\(h) o'clock" : "\(h) \(m)"
             }
             substitutions.append(.init(source: groups[0], replacement: replacement, kind: .time))
             return replacement
@@ -627,16 +692,16 @@ private struct ProcessorRules: Sendable {
             let ordinalPattern = #"(?<![\p{L}\p{N}])(\d+)(st|nd|rd|th)(?![\p{L}\p{N}])"#
             text = replacingMatches(ordinalPattern, in: text) { groups in
                 guard groups.count == 3, let number = Int(groups[1]) else { return groups[0] }
-                let replacement = englishOrdinal(number)
+                let replacement = englishOrdinal(number, locale: locale)
                 substitutions.append(.init(source: groups[0], replacement: replacement, kind: .number))
                 return replacement
             }
         }
 
         // Do not touch digits adjacent to dots/slashes/hyphens: versions,
-        // dates, IP addresses and identifiers are review material, not safe
-        // cardinals. Decimal numbers are accepted as one unit.
-        let numberPattern = #"(?<![\p{L}\p{N}/.-])(\d+(?:[.,]\d+)?)(?![\p{L}\p{N}/.-])"#
+        // IP addresses and identifiers are review material, not safe
+        // cardinals. Decimals and grouped thousands are accepted as one unit.
+        let numberPattern = #"(?<![\p{L}\p{N}/.-])("# + numberBody + #")(?![\p{L}\p{N}/.-])"#
         text = replacingMatches(numberPattern, in: text) { groups in
             guard groups.count == 2, let value = parsedNumber(groups[1], locale: locale) else { return groups[0] }
             let replacement = spellNumber(value, locale: locale)
@@ -664,15 +729,119 @@ private struct ProcessorRules: Sendable {
         return output
     }
 
+    /// Digits with optional grouped thousands in either typography, or a
+    /// plain decimal. What a lone mark means is the locale's call at parse
+    /// time; this only bounds the span a number rule may claim.
+    private static let numberBody =
+        #"(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?)"#
+
     private static func parsedNumber(_ source: String, locale: Locale) -> Decimal? {
         let formatter = NumberFormatter()
         formatter.locale = locale
         formatter.numberStyle = .decimal
         if let number = formatter.number(from: source) { return number.decimalValue }
-        // EPUB typography is often locale-inconsistent. Accept the other
-        // decimal mark only when there is a single mark and 1-2 trailing digits.
-        let normalized = source.replacingOccurrences(of: ",", with: ".")
+        // EPUB typography is often locale-inconsistent. With both marks
+        // present the last one is the decimal separator; repeated marks are
+        // grouping; a lone comma reads as a decimal point.
+        let commas = source.filter { $0 == "," }.count
+        let dots = source.filter { $0 == "." }.count
+        let normalized: String
+        if commas > 0, dots > 0, let lastComma = source.lastIndex(of: ","),
+           let lastDot = source.lastIndex(of: ".") {
+            normalized = lastComma > lastDot
+                ? source.replacingOccurrences(of: ".", with: "").replacingOccurrences(of: ",", with: ".")
+                : source.replacingOccurrences(of: ",", with: "")
+        } else if commas > 1 {
+            normalized = source.replacingOccurrences(of: ",", with: "")
+        } else if dots > 1 {
+            normalized = source.replacingOccurrences(of: ".", with: "")
+        } else {
+            normalized = source.replacingOccurrences(of: ",", with: ".")
+        }
         return Decimal(string: normalized, locale: Locale(identifier: "en_US_POSIX"))
+    }
+
+    /// "€1,250.50" → "one thousand two hundred fifty euros and fifty cents".
+    /// Exact cent amounts are read as money; anything else falls back to the
+    /// plain number reading with a plural unit.
+    private static func spokenAmount(
+        _ value: Decimal, symbol: String, locale: Locale, flavor: Flavor
+    ) -> String {
+        let whole = NSDecimalNumber(decimal: value).intValue
+        let subunits = NSDecimalNumber(decimal: (value - Decimal(whole)) * 100).intValue
+        let exact = Decimal(whole) + Decimal(subunits) / 100 == value
+        if flavor == .dutch {
+            // Dutch units stay singular: "twaalf euro vijftig".
+            let unit = switch symbol { case "£": "pond"; case "$": "dollar"; default: "euro" }
+            guard exact else { return "\(spellNumber(value, locale: locale)) \(unit)" }
+            if whole == 0, subunits > 0 {
+                return "\(spellInteger(subunits, locale: locale)) cent"
+            }
+            return subunits == 0
+                ? "\(spellInteger(whole, locale: locale)) \(unit)"
+                : "\(spellInteger(whole, locale: locale)) \(unit) \(spellInteger(subunits, locale: locale))"
+        }
+        let units: (one: String, many: String, centOne: String, centMany: String) = switch symbol {
+        case "£": ("pound", "pounds", "penny", "pence")
+        case "$": ("dollar", "dollars", "cent", "cents")
+        default: ("euro", "euros", "cent", "cents")
+        }
+        guard exact else { return "\(spellNumber(value, locale: locale)) \(units.many)" }
+        let unit = whole == 1 ? units.one : units.many
+        guard subunits > 0 else { return "\(spellInteger(whole, locale: locale)) \(unit)" }
+        let cent = subunits == 1 ? units.centOne : units.centMany
+        if whole == 0 { return "\(spellInteger(subunits, locale: locale)) \(cent)" }
+        return "\(spellInteger(whole, locale: locale)) \(unit) and \(spellInteger(subunits, locale: locale)) \(cent)"
+    }
+
+    private static func monthLeadsDate(_ context: ProcessingContext) -> Bool {
+        context.locale.identifier.replacingOccurrences(of: "_", with: "-")
+            .lowercased().hasPrefix("en-us")
+    }
+
+    private static func spokenDate(
+        day: Int, month: Int, year: Int, context: ProcessingContext,
+        locale: Locale, flavor: Flavor
+    ) -> String? {
+        guard (1...12).contains(month), (1...31).contains(day), (1000...2999).contains(year)
+        else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        let monthName = formatter.monthSymbols[month - 1]
+        if flavor == .dutch {
+            return "\(spellInteger(day, locale: locale)) \(monthName) \(dutchYear(year, locale: locale))"
+        }
+        let spokenYear = englishYear(year, locale: locale)
+        return monthLeadsDate(context)
+            ? "\(monthName) \(englishOrdinal(day, locale: locale)), \(spokenYear)"
+            : "the \(englishOrdinal(day, locale: locale)) of \(monthName), \(spokenYear)"
+    }
+
+    /// Years read in pairs the way people say them: "nineteen ninety-nine",
+    /// "nineteen oh five", "twenty twenty-six" — not "one thousand nine
+    /// hundred ninety-nine".
+    private static func englishYear(_ year: Int, locale: Locale) -> String {
+        let remainder = year % 100
+        switch year {
+        case 1100...1999:
+            let head = spellInteger(year / 100, locale: locale)
+            if remainder == 0 { return "\(head) hundred" }
+            if remainder < 10 { return "\(head) oh \(spellInteger(remainder, locale: locale))" }
+            return "\(head) \(spellInteger(remainder, locale: locale))"
+        case 2000...2009:
+            return spellInteger(year, locale: locale)
+        case 2010...2099:
+            return "twenty \(spellInteger(remainder, locale: locale))"
+        default:
+            return spellInteger(year, locale: locale)
+        }
+    }
+
+    private static func dutchYear(_ year: Int, locale: Locale) -> String {
+        guard (1100...1999).contains(year) else { return spellInteger(year, locale: locale) }
+        let head = "\(spellInteger(year / 100, locale: locale))honderd"
+        let remainder = year % 100
+        return remainder == 0 ? head : "\(head) \(spellInteger(remainder, locale: locale))"
     }
 
     private static func spellNumber(_ value: Decimal, locale: Locale) -> String {
@@ -680,21 +849,30 @@ private struct ProcessorRules: Sendable {
         let formatter = NumberFormatter()
         formatter.locale = locale
         formatter.numberStyle = .spellOut
-        return formatter.string(from: number) ?? number.stringValue
+        // Dutch spell-out joins compounds with soft hyphens; the tokenizer
+        // must never see an invisible character.
+        return (formatter.string(from: number) ?? number.stringValue)
+            .replacingOccurrences(of: "\u{00AD}", with: "")
     }
 
     private static func spellInteger(_ value: Int, locale: Locale) -> String {
         spellNumber(Decimal(value), locale: locale)
     }
 
-    private static func englishOrdinal(_ number: Int) -> String {
-        let small = [
-            1:"first", 2:"second", 3:"third", 4:"fourth", 5:"fifth", 6:"sixth", 7:"seventh",
-            8:"eighth", 9:"ninth", 10:"tenth", 11:"eleventh", 12:"twelfth", 13:"thirteenth",
-            14:"fourteenth", 15:"fifteenth", 16:"sixteenth", 17:"seventeenth", 18:"eighteenth",
-            19:"nineteenth", 20:"twentieth"
+    /// Spell the cardinal, then ordinalize its last word, so any magnitude
+    /// works: 21 → "twenty-first", 30 → "thirtieth", 100 → "one hundredth".
+    private static func englishOrdinal(_ number: Int, locale: Locale) -> String {
+        let cardinal = spellInteger(number, locale: locale)
+        let irregular = [
+            "one": "first", "two": "second", "three": "third", "five": "fifth",
+            "eight": "eighth", "nine": "ninth", "twelve": "twelfth",
         ]
-        return small[number] ?? "\(number)th"
+        guard let last = cardinal.split(whereSeparator: { $0 == " " || $0 == "-" }).last
+        else { return cardinal }
+        let word = String(last)
+        let ordinal = irregular[word]
+            ?? (word.hasSuffix("y") ? word.dropLast() + "ieth" : word + "th")
+        return cardinal.dropLast(word.count) + ordinal
     }
 }
 
@@ -721,6 +899,9 @@ private enum CandidateAnalyzer {
             pattern: #"[\p{L}][\p{L}\p{M}\p{N}_'’\-]*|\d{1,4}[/-]\d{1,2}(?:[/-]\d{2,4})?"#
         )
         let covered = Set(context.processing.overrides.map { $0.matchText.lowercased() })
+        // The system lexicon: anything it knows — common words, countries,
+        // famous names — reads fine and is not worth a review row.
+        let lexicon = NLEmbedding.wordEmbedding(for: NLLanguage(rawValue: descriptor.languageCode))
 
         for (chapterIndex, chapter) in book.chapters.enumerated() {
             let ns = chapter.text as NSString
@@ -731,7 +912,8 @@ private enum CandidateAnalyzer {
                 ordinal += 1
                 let form = ns.substring(with: match.range)
                 let key = form.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: context.processing.locale.identifier))
-                guard !covered.contains(key), !looksLikeURLNeighbour(chapter.text, range: match.range) else { continue }
+                guard !covered.contains(key), !isFullDate(form),
+                      !looksLikeURLNeighbour(chapter.text, range: match.range) else { continue }
                 var category: PronunciationCandidate.Category?
                 var reasons: [String] = []
                 var points = 0.0
@@ -739,7 +921,8 @@ private enum CandidateAnalyzer {
                 let isUpper = letters.count >= 2 && letters.allSatisfy(\.isUppercase)
                 let hasDigit = form.contains(where: \.isNumber)
                 let camel = form.dropFirst().contains(where: \.isUppercase) && form.contains(where: \.isLowercase)
-                let ambiguousDate = form.contains("/") || form.contains("-") && hasDigit
+                let ambiguousDate = (form.contains("/") || form.contains("-") && hasDigit)
+                    && !isFullDate(form)
 
                 if rules.ambiguous.contains(key) || ambiguousDate {
                     category = .ambiguous; reasons.append("More than one common reading"); points += 6
@@ -750,11 +933,12 @@ private enum CandidateAnalyzer {
                 if hasDigit || camel {
                     category = .technical; reasons.append("Mixed-format term"); points += 5
                 }
-                let before = match.range.location > 0 ? ns.substring(with: NSRange(location: match.range.location - 1, length: 1)) : "."
-                if form.first?.isUppercase == true, !".!?\n".contains(before), form.count >= 4 {
+                if form.first?.isUppercase == true, form.count >= 4,
+                   midSentence(ns, before: match.range.location),
+                   lexicon?.contains(key) != true {
                     category = category ?? .name; reasons.append("Possible proper name"); points += 4
                 }
-                if form.count >= 12 {
+                if form.count >= 12, lexicon?.contains(key) != true {
                     category = category ?? .unusual; reasons.append("Unusually long word"); points += 2
                 }
                 guard let category else { continue }
@@ -785,7 +969,12 @@ private enum CandidateAnalyzer {
                 ), item.first
             )
         }
-        .filter { !ignoredIds.contains($0.0.id) && $0.0.riskScore >= 6 }
+        // A name a book only drops a handful of times is not worth a review
+        // row; the listener hears it wrong six times and moves on.
+        .filter {
+            !ignoredIds.contains($0.0.id) && $0.0.riskScore >= 6
+                && ($0.0.category != .name || $0.0.occurrenceCount > 6)
+        }
         .sorted {
             if $0.0.riskScore != $1.0.riskScore { return $0.0.riskScore > $1.0.riskScore }
             if $0.0.occurrenceCount != $1.0.occurrenceCount { return $0.0.occurrenceCount > $1.0.occurrenceCount }
@@ -811,6 +1000,28 @@ private enum CandidateAnalyzer {
         return ns.substring(with: NSRange(location: lower, length: upper - lower))
             .replacingOccurrences(of: "\n", with: " ")
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    /// Looks past whitespace and quotes for the previous printable character,
+    /// so a capital that merely opens a sentence is not mistaken for a name.
+    private static func midSentence(_ text: NSString, before location: Int) -> Bool {
+        var cursor = location - 1
+        while cursor >= 0 {
+            let character = Character(text.substring(with: NSRange(location: cursor, length: 1)))
+            if character.isWhitespace || "\"'“”‘’«»()[]".contains(character) {
+                cursor -= 1
+                continue
+            }
+            return !".!?…:;".contains(character)
+        }
+        return false
+    }
+
+    /// A three-part numeric token with a four-digit year is spoken
+    /// deterministically by the date rules — nothing left to review.
+    private static func isFullDate(_ form: String) -> Bool {
+        let parts = form.split(whereSeparator: { $0 == "/" || $0 == "-" })
+        return parts.count == 3 && (parts.first?.count == 4 || parts.last?.count == 4)
     }
 
     private static func looksLikeURLNeighbour(_ text: String, range: NSRange) -> Bool {

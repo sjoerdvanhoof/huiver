@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import Observation
 import UserNotifications
@@ -571,6 +572,41 @@ final class AppModel {
     func canSpeak(_ book: Book) -> Bool {
         engineLanguages.contains { $0.code == book.languageCode }
     }
+
+#if DEBUG
+    /// The Pronunciation Lab's book-less processing path: same processor,
+    /// same global corrections, a synthetic content id so no book-scoped
+    /// override can leak in.
+    func devProcess(_ text: String, languageCode: String, localeIdentifier: String) async -> ProcessedChunk {
+        let overrides = await PronunciationStore.shared.effective(
+            language: languageCode, contentId: "dev-lab"
+        )
+        let context = ProcessingContext(
+            language: .named(languageCode), locale: LocaleProfile(localeIdentifier),
+            contentId: "dev-lab", overrides: overrides
+        )
+        let chunk = Chunker.Chunk(text: text, beginsMidSentence: false, endsMidSentence: false)
+        return await LanguageProcessorRegistry.processor(for: languageCode)
+            .process(chunk: chunk, context: context)
+    }
+
+    /// Speak an already-processed spoken form through the engine and hand back
+    /// a temporary wav, so the lab can A/B what a rule actually sounds like.
+    func devSpeak(_ spokenText: String, languageCode: String) async throws -> URL {
+        guard let speechEngine, let voice = preferredVoice(for: languageCode) ?? selectedVoice else {
+            throw NSError(domain: "Huiver", code: 2, userInfo: [NSLocalizedDescriptionKey: "The narrator is not ready."])
+        }
+        let samples = try await speechEngine.speak(
+            spokenText, voice: voice, options: options, language: .named(languageCode)
+        )
+        let stamp = SHA256.hash(data: Data(spokenText.utf8))
+            .map { String(format: "%02x", $0) }.joined().prefix(16)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("narcisse-devlab-\(stamp).wav")
+        try WavFile.data(from: samples).write(to: url, options: .atomic)
+        return url
+    }
+#endif
 
     func delete(_ book: Book) async {
         guard let library else { return }
