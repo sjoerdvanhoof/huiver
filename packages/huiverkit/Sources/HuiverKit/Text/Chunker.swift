@@ -99,7 +99,9 @@ public enum Chunker {
     /// with "Mr." got a three-character first chunk. Decimal points, initials,
     /// abbreviations and runs of terminators now stay inside their sentence,
     /// and the fast-start lead is only taken when it is a real sentence.
-    public static let version = 5
+    /// v6: sentence-boundary abbreviations can come from the book's language
+    /// processor. Raw chunk boundaries remain independent of spoken aliases.
+    public static let version = 6
 
     /// Words a full stop does not end a sentence after. Lowercased for lookup.
     static let abbreviations: Set<String> = [
@@ -117,7 +119,10 @@ public enum Chunker {
     /// quarter-second of silence inside it. (The initials rule also swallows a
     /// sentence that genuinely ends on a single letter — "it was I." — which
     /// is the cheap side of that trade.)
-    static func isSentenceFinal(_ characters: [Character], at index: Int) -> Bool {
+    static func isSentenceFinal(
+        _ characters: [Character], at index: Int,
+        abbreviations: Set<String> = abbreviations
+    ) -> Bool {
         guard characters[index] == "." else { return true }
         if index > 0, index + 1 < characters.count,
            characters[index - 1].isNumber, characters[index + 1].isNumber {
@@ -136,7 +141,9 @@ public enum Chunker {
     ///
     /// A run of terminators — a literal "...", a "?!" — is one boundary at its
     /// end, not several: the flush is deferred while terminators keep coming.
-    static func sentences(in paragraph: String) -> [String] {
+    static func sentences(
+        in paragraph: String, abbreviations: Set<String> = abbreviations
+    ) -> [String] {
         let characters = Array(paragraph)
         var out: [String] = []
         var current = ""
@@ -150,7 +157,8 @@ public enum Chunker {
                 current = ""
                 closing = false
             }
-            if ".!?…".contains(character), isSentenceFinal(characters, at: index) {
+            if ".!?…".contains(character),
+               isSentenceFinal(characters, at: index, abbreviations: abbreviations) {
                 closing = true
             }
             current.append(character)
@@ -251,7 +259,9 @@ public enum Chunker {
     /// one-line paragraph costs the same to synthesise as a full one, and a
     /// dialogue-heavy chapter split per paragraph would take several times
     /// longer to render for no audible gain.
-    public static func chunks(_ text: String, max: Int = defaultMaxChars) -> [Chunk] {
+    public static func chunks(
+        _ text: String, max: Int = defaultMaxChars, profile: ChunkingProfile? = nil
+    ) -> [Chunk] {
         var chunks: [Chunk] = []
         var current = ""
         var beginsMid = false
@@ -291,7 +301,7 @@ public enum Chunker {
                 continue
             }
 
-            for sentence in sentences(in: clean) {
+            for sentence in sentences(in: clean, abbreviations: profile?.abbreviations ?? abbreviations) {
                 if sentence.count <= ceiling {
                     // Overshoots `max` when the sentence is between the target
                     // and the ceiling, and that is the point: one long sentence
@@ -321,6 +331,12 @@ public enum Chunker {
         chunks(text, max: max).map(\.text)
     }
 
+    public static func chunk(
+        _ text: String, max: Int = defaultMaxChars, profile: ChunkingProfile
+    ) -> [String] {
+        chunks(text, max: max, profile: profile).map(\.text)
+    }
+
     /// Collapse a paragraph's internal line breaks and runs of spaces.
     static func flatten(_ paragraph: String) -> String {
         paragraph.split(whereSeparator: \.isWhitespace).joined(separator: " ")
@@ -333,10 +349,12 @@ public enum Chunker {
 
     /// Give live playback a fast first chunk without cutting the opening
     /// sentence in half.
-    public static func chunksWithSentenceLead(_ text: String, max: Int = defaultMaxChars) -> [Chunk] {
-        let all = chunks(text, max: max)
+    public static func chunksWithSentenceLead(
+        _ text: String, max: Int = defaultMaxChars, profile: ChunkingProfile? = nil
+    ) -> [Chunk] {
+        let all = chunks(text, max: max, profile: profile)
         guard let first = all.first else { return all }
-        let lead = sentences(in: first.text)
+        let lead = sentences(in: first.text, abbreviations: profile?.abbreviations ?? abbreviations)
         guard lead.count >= 2, lead[0].count >= minimumLead else { return all }
         let rest = lead.dropFirst().joined(separator: " ")
         guard !rest.isEmpty else { return all }
@@ -352,6 +370,12 @@ public enum Chunker {
 
     public static func chunkWithSentenceLead(_ text: String, max: Int = defaultMaxChars) -> [String] {
         chunksWithSentenceLead(text, max: max).map(\.text)
+    }
+
+    public static func chunkWithSentenceLead(
+        _ text: String, max: Int = defaultMaxChars, profile: ChunkingProfile
+    ) -> [String] {
+        chunksWithSentenceLead(text, max: max, profile: profile).map(\.text)
     }
 }
 

@@ -1,5 +1,11 @@
 import Foundation
 
+extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}
+
 /// The text each rendered chunk says, stored beside the audio.
 ///
 /// Written once when a render starts. Chunking is deterministic today — the
@@ -10,7 +16,7 @@ import Foundation
 /// that impossible rather than unlikely.
 public struct ChunkManifest: Codable, Sendable, Equatable {
     public static let filename = "chunks.json"
-    public static let currentVersion = 1
+    public static let currentVersion = 2
 
     public var version: Int
     /// The voice of the most recent render pass — the one reading anything
@@ -21,6 +27,13 @@ public struct ChunkManifest: Codable, Sendable, Equatable {
     /// before the chunker was versioned, which by definition means v1.
     public var chunker: Int?
     public var texts: [String]
+    /// The model-facing text actually used for each rendered chunk. Nil entries
+    /// are unrendered and will use the processor active when they are made.
+    public var spokenTexts: [String?]?
+    public var processorFingerprints: [String?]?
+    public var chunkingProfile: String?
+    public var beginsMidSentence: [Bool]?
+    public var endsMidSentence: [Bool]?
     /// Who reads each chunk, one entry per chunk. A chapter used to have one
     /// narrator by construction — changing voice discarded the audio — but a
     /// voice change mid-listen now keeps what was already heard, so a chapter
@@ -43,13 +56,23 @@ public struct ChunkManifest: Codable, Sendable, Equatable {
         voice: String,
         chunker: Int? = Chunker.version,
         texts: [String],
-        chunkVoices: [String]? = nil
+        chunkVoices: [String]? = nil,
+        spokenTexts: [String?]? = nil,
+        processorFingerprints: [String?]? = nil,
+        chunkingProfile: String? = nil,
+        beginsMidSentence: [Bool]? = nil,
+        endsMidSentence: [Bool]? = nil
     ) {
         self.version = version
         self.voice = voice
         self.chunker = chunker
         self.texts = texts
         self.chunkVoices = chunkVoices
+        self.spokenTexts = spokenTexts
+        self.processorFingerprints = processorFingerprints
+        self.chunkingProfile = chunkingProfile
+        self.beginsMidSentence = beginsMidSentence
+        self.endsMidSentence = endsMidSentence
     }
 
     public func write(to directory: URL) {
@@ -62,7 +85,7 @@ public struct ChunkManifest: Codable, Sendable, Equatable {
     public static func read(from directory: URL) -> ChunkManifest? {
         guard let data = try? Data(contentsOf: directory.appendingPathComponent(filename)),
               let manifest = try? JSONDecoder().decode(ChunkManifest.self, from: data),
-              manifest.version == currentVersion
+              (1...currentVersion).contains(manifest.version)
         else { return nil }
         return manifest
     }

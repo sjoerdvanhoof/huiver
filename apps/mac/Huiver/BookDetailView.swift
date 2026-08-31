@@ -13,6 +13,9 @@ struct BookDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var confirmingDelete = false
+    @State private var showingPronunciations = false
+    @State private var pronunciationReviewed = false
+    @State private var convertAfterReview = false
 
     /// The book as the library currently has it, so language changes and render
     /// progress show up without leaving the screen.
@@ -35,6 +38,7 @@ struct BookDetailView: View {
                     header
                     if !model.canSpeak(current) { languageWarning }
                     if model.substitutesVoice(for: current) { voiceNote }
+                    pronunciationStatus
                     chapters
                 }
                 .padding(.vertical, Palette.Space.lg)
@@ -45,6 +49,16 @@ struct BookDetailView: View {
         // move with the narrator; the library only announces converter work,
         // so what the narrator writes is picked up here.
         .task(id: model.narrator?.renderedChunks) { await model.refresh() }
+        .task(id: model.preflight(for: current)?.fingerprint) {
+            guard let report = model.preflight(for: current) else { return }
+            let contentId = current.contentId ?? current.derivedContentId
+            let snapshot = await PronunciationStore.shared.all()
+            pronunciationReviewed = snapshot.reviewedFingerprints[contentId] == report.fingerprint
+            if !pronunciationReviewed, !report.candidates.isEmpty,
+               current.chapters.allSatisfy({ $0.renderedChunks == 0 }) {
+                showingPronunciations = true
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -65,6 +79,11 @@ struct BookDetailView: View {
                         // label the warning below can point at, not an option
                         // whose render would fail on the first chunk.
                         ForEach(pickableLanguages) { Text($0.name).tag($0.code) }
+                    }
+                    if !localeChoices.isEmpty {
+                        Picker("Locale", selection: localeBinding) {
+                            ForEach(localeChoices, id: \.self) { Text($0).tag($0) }
+                        }
                     }
                     Picker("Voice", selection: voiceBinding) {
                         // "" is "follow the preference"; anything else pins
@@ -118,6 +137,18 @@ struct BookDetailView: View {
         } message: {
             Text(model.exportFailure ?? "")
         }
+        .sheet(isPresented: $showingPronunciations) {
+            if let report = model.preflight(for: current) {
+                PronunciationPreflightSheet(book: current, report: report) {
+                    pronunciationReviewed = true
+                    showingPronunciations = false
+                    if convertAfterReview {
+                        convertAfterReview = false
+                        enqueueAll()
+                    }
+                }
+            }
+        }
     }
 
     /// The whole book as one chapter-marked `.m4b`, through the save panel.
@@ -167,6 +198,21 @@ struct BookDetailView: View {
         .init(
             get: { language.code },
             set: { code in Task { await model.setLanguage(.named(code), for: current) } }
+        )
+    }
+
+    private var localeChoices: [String] {
+        switch current.languageCode {
+        case "en": ["en-US", "en-GB"]
+        case "nl": ["nl-NL", "nl-BE"]
+        default: []
+        }
+    }
+
+    private var localeBinding: Binding<String> {
+        .init(
+            get: { current.spokenLocaleIdentifier },
+            set: { identifier in Task { await model.setLocale(identifier, for: current) } }
         )
     }
 
@@ -315,6 +361,32 @@ struct BookDetailView: View {
         .padding(.horizontal, Palette.Space.lg)
     }
 
+    @ViewBuilder private var pronunciationStatus: some View {
+        let contentId = current.contentId ?? current.derivedContentId
+        if model.analyzingPronunciation.contains(contentId) {
+            HStack(spacing: Palette.Space.sm) {
+                ProgressView().controlSize(.small)
+                Text("Analyzing pronunciation…")
+            }
+            .font(.huiverCaption)
+            .foregroundStyle(theme.colors.mutedForeground)
+            .padding(.horizontal, Palette.Space.lg)
+        } else if let report = model.preflight(for: current), !report.candidates.isEmpty {
+            Button {
+                showingPronunciations = true
+            } label: {
+                Label(
+                    "Pronunciations · \(report.candidates.count) to review",
+                    systemImage: "text.bubble"
+                )
+                .font(.huiverLabel)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(theme.colors.primary)
+            .padding(.horizontal, Palette.Space.lg)
+        }
+    }
+
     private var chapters: some View {
         VStack(spacing: 0) {
             ForEach(Array(current.chapters.enumerated()), id: \.element.id) { index, chapter in
@@ -329,6 +401,16 @@ struct BookDetailView: View {
     /// Queue everything that has not been rendered, in reading order. The
     /// converter works through it one chapter at a time.
     private func convertAll() {
+        if let report = model.preflight(for: current),
+           !report.candidates.isEmpty, !pronunciationReviewed {
+            convertAfterReview = true
+            showingPronunciations = true
+            return
+        }
+        enqueueAll()
+    }
+
+    private func enqueueAll() {
         guard let converter = model.converter, let voice = model.voice(for: current) else { return }
         for chapter in incomplete {
             converter.convert(book: current, chapter: chapter, voice: voice, options: model.options)

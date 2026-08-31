@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9db393"/>
+      <stop offset="1" stop-color="#76907e"/>
+    </linearGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#31504b"/>
+      <stop offset="1" stop-color="#1c3331"/>
+    </linearGradient>
+    <linearGradient id="petal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f0d38b"/>
+      <stop offset="1" stop-color="#c69a49"/>
+    </linearGradient>
+    <radialGradient id="cup" cx="0.5" cy="0.45" r="0.75">
+      <stop offset="0" stop-color="#7e561e"/>
+      <stop offset="1" stop-color="#b98a35"/>
+    </radialGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+    <clipPath id="waterClip"><rect x="0" y="660" width="1024" height="364"/></clipPath>
+
+    <path id="petalShape" d="M0,0 C42,-33 56,-112 0,-185 C-56,-112 -42,-33 0,0 Z"/>
+
+    <g id="flower1">
+      <path d="M130,-70 C210,70 290,185 375,285" fill="none" stroke="#587f55" stroke-width="28" stroke-linecap="round"/>
+      <g transform="translate(420,335) rotate(-35)">
+        <g transform="scale(1,0.85)" fill="url(#petal)" stroke="#a57930" stroke-width="4">
+          <use xlink:href="#petalShape" transform="rotate(30)"/>
+          <use xlink:href="#petalShape" transform="rotate(90)"/>
+          <use xlink:href="#petalShape" transform="rotate(150)"/>
+          <use xlink:href="#petalShape" transform="rotate(210)"/>
+          <use xlink:href="#petalShape" transform="rotate(270)"/>
+          <use xlink:href="#petalShape" transform="rotate(330)"/>
+        </g>
+        <ellipse cx="0" cy="36" rx="84" ry="68" fill="url(#petal)" stroke="#a57930" stroke-width="4"/>
+        <ellipse cx="0" cy="46" rx="62" ry="49" fill="url(#cup)"/>
+        <circle cx="0" cy="50" r="11" fill="#f4e3ae"/>
+      </g>
+    </g>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#sky)"/>
+  <rect x="0" y="660" width="1024" height="364" fill="url(#water)"/>
+  <rect x="0" y="658" width="1024" height="3" fill="#c7d6bf" opacity="0.5"/>
+
+  <!-- reflection -->
+  <g clip-path="url(#waterClip)" opacity="0.4">
+    <use xlink:href="#flower1" transform="translate(0,1320) scale(1,-1)" filter="url(#soft)"/>
+  </g>
+
+  <!-- ripples -->
+  <g fill="none" stroke="#b9cbb4">
+    <ellipse cx="470" cy="692" rx="52" ry="8" opacity="0.35"/>
+    <ellipse cx="470" cy="694" rx="100" ry="15" opacity="0.24"/>
+    <ellipse cx="470" cy="697" rx="158" ry="23" opacity="0.15"/>
+  </g>
+
+  <use xlink:href="#flower1"/>
+
+  <!-- stamens flowing out of the pistil, carrying on as sound toward the reflection -->
+  <g fill="none" stroke="#e9cd82" stroke-linecap="round">
+    <path d="M447,374 C560,450 600,600 530,872" stroke-width="4.5" opacity="0.85"/>
+    <path d="M447,374 C510,470 528,630 480,896" stroke-width="4" opacity="0.65"/>
+    <path d="M447,374 C452,490 450,650 442,916" stroke-width="3.5" opacity="0.5"/>
+    <path d="M447,374 C395,500 380,660 400,930" stroke-width="3.5" opacity="0.38"/>
+  </g>
+  <!-- anthers part-way along each filament -->
+  <g fill="#caa04a">
+    <circle cx="519" cy="466" r="6"/>
+    <circle cx="493" cy="486" r="6"/>
+    <circle cx="451" cy="495" r="6"/>
+    <circle cx="413" cy="497" r="6"/>
+  </g>
+</svg>

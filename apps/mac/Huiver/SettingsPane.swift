@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Sampling, storage and where the models landed — the parts of the iOS
 /// Settings screen that make sense on a Mac. Voices have a sidebar entry of
@@ -124,6 +125,21 @@ struct SettingsPane: View {
                 Text("An hour of audio is about 170 MB. A chapter you have listened all the way through has its audio removed a week later — the text always stays, and rendering it again brings the audio back. Whatever is playing or waiting to convert is left alone.")
             }
 
+            Section {
+                LabeledContent("English", value: packLabel("en"))
+                LabeledContent("Dutch", value: packLabel("nl"))
+                ForEach(model.languagePacks.filter { !["en", "nl"].contains($0.languageCode) }) { pack in
+                    LabeledContent(Language.named(pack.languageCode).name, value: pack.version)
+                }
+                Button("Import signed language pack…", systemImage: "shippingbox.and.arrow.backward") {
+                    importPack()
+                }
+            } header: {
+                Text("Language packs")
+            } footer: {
+                Text("English and Dutch processors are compiled into the app. Signed data packs can update their dictionaries, rules and eSpeak resources independently; installed packs remain usable offline.")
+            }
+
             if !model.placement.isEmpty {
                 Section {
                     ForEach(model.placement.sorted(by: { $0.key < $1.key }), id: \.key) { entry in
@@ -153,6 +169,11 @@ struct SettingsPane: View {
 
             if let failure = model.loadFailure {
                 Section("Engine") {
+                    Text(failure).font(.caption).foregroundStyle(.red)
+                }
+            }
+            if let failure = model.languagePackFailure {
+                Section("Language packs") {
                     Text(failure).font(.caption).foregroundStyle(.red)
                 }
             }
@@ -193,5 +214,22 @@ struct SettingsPane: View {
 
     private func size(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private func packLabel(_ language: String) -> String {
+        if let pack = model.languagePacks.first(where: { $0.languageCode == language && $0.active }) {
+            return "\(pack.version) · \(size(pack.installedSize))"
+        }
+        return "Built-in rules · no data pack"
+    }
+
+    private func importPack() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [UTType(filenameExtension: "narcissepack") ?? .zip]
+        panel.title = "Import language pack"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { await model.importLanguagePack(from: url) }
     }
 }

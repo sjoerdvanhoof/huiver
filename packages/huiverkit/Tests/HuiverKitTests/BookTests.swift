@@ -91,6 +91,7 @@ struct ExtractTests {
                 <?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0">\
                 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\
                 <dc:title>A Harbour Book</dc:title><dc:creator>A Narrator</dc:creator>\
+                <dc:language>en-GB</dc:language>\
                 <meta name="cover" content="cov"/></metadata>\
                 <manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>\
                 <item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/>\
@@ -119,6 +120,7 @@ struct ExtractTests {
         #expect(book.cover?.data == Data("not-really-a-jpeg".utf8))
         #expect(book.cover?.extension == "jpg")
         #expect(book.author == "A Narrator")
+        #expect(book.localeIdentifier == "en-GB")
         #expect(book.chapters.map(\.title) == ["The Jetty", "The Crossing"])
         #expect(book.chapters[0].text.hasPrefix("The quiet harbour town"))
     }

@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <clipPath id="waterClip3"><rect x="0" y="680" width="1024" height="344"/></clipPath>
+    <path id="petalShape3" d="M0,0 C44,-34 58,-112 0,-185 C-58,-112 -44,-34 0,0 Z"/>
+
+    <g id="flower3">
+      <path d="M340,680 C352,590 372,510 396,452" fill="none" stroke="#54794f" stroke-width="24" stroke-linecap="round"/>
+      <g transform="translate(410,380) rotate(-18) scale(1,0.9)">
+        <g fill="#dfba6b">
+          <use xlink:href="#petalShape3" transform="rotate(0)"/>
+          <use xlink:href="#petalShape3" transform="rotate(60)"/>
+          <use xlink:href="#petalShape3" transform="rotate(120)"/>
+          <use xlink:href="#petalShape3" transform="rotate(180)"/>
+          <use xlink:href="#petalShape3" transform="rotate(240)"/>
+          <use xlink:href="#petalShape3" transform="rotate(300)"/>
+        </g>
+        <circle cx="16" cy="18" r="84" fill="#c08f3a"/>
+        <circle cx="22" cy="26" r="60" fill="#7e5c22"/>
+        <circle cx="24" cy="28" r="11" fill="#f3e2ac"/>
+      </g>
+      <!-- three stamen curves = sound, flowing right -->
+      <g fill="none" stroke="#e5c476" stroke-width="7" stroke-linecap="round">
+        <path d="M448,394 C570,330 660,310 780,308"/>
+        <path d="M450,404 C575,390 675,395 800,412"/>
+        <path d="M448,414 C565,460 650,500 745,556"/>
+      </g>
+      <g fill="#e5c476">
+        <circle cx="780" cy="308" r="11"/>
+        <circle cx="800" cy="412" r="11"/>
+        <circle cx="745" cy="556" r="11"/>
+      </g>
+    </g>
+  </defs>
+
+  <rect width="1024" height="1024" fill="#8ca68b"/>
+  <rect x="0" y="680" width="1024" height="344" fill="#33524d"/>
+
+  <g clip-path="url(#waterClip3)" opacity="0.26">
+    <use xlink:href="#flower3" transform="translate(0,1360) scale(1,-1)"/>
+  </g>
+
+  <g fill="none" stroke="#c7d6bf" stroke-width="5" stroke-linecap="round">
+    <path d="M300,724 C360,712 420,712 480,724" opacity="0.4"/>
+    <path d="M255,762 C355,742 455,742 555,762" opacity="0.22"/>
+  </g>
+
+  <use xlink:href="#flower3"/>
+</svg>
