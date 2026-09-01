@@ -11,9 +11,13 @@ public actor LibrarySyncDataSource: SyncDataSource {
     private let library: Library
     private let progress: ProgressStore
     private let deviceId: String
-    /// Voices available to offer, with their file locations. Bundled voices on
-    /// the phone; the voice directory on the Mac.
+    /// Where voices live and where a voice from the other device lands. Must
+    /// be writable: the one place a synced voice is ever saved.
     private let voiceDirectory: URL?
+    /// Voices that ship inside the app bundle: offered and served, never
+    /// written. A recorded voice with the same id wins, the same rule
+    /// `VoicePack.load(from:plus:)` applies — that is what re-recording means.
+    private let bundledVoiceDirectory: URL?
     /// The asks this device has made, on the device that makes them. Absent on
     /// the Mac, which renders rather than asks.
     private let requests: ConvertRequestStore?
@@ -33,6 +37,7 @@ public actor LibrarySyncDataSource: SyncDataSource {
         progress: ProgressStore,
         deviceId: String,
         voiceDirectory: URL? = nil,
+        bundledVoiceDirectory: URL? = nil,
         requests: ConvertRequestStore? = nil,
         incomingAudioWins: Bool = false,
         peerManifestReceived: (@Sendable (SyncMessage.Manifest) async -> Void)? = nil,
@@ -42,6 +47,7 @@ public actor LibrarySyncDataSource: SyncDataSource {
         self.progress = progress
         self.deviceId = deviceId
         self.voiceDirectory = voiceDirectory
+        self.bundledVoiceDirectory = bundledVoiceDirectory
         self.requests = requests
         self.incomingAudioWins = incomingAudioWins
         self.peerManifestReceived = peerManifestReceived
@@ -120,10 +126,18 @@ public actor LibrarySyncDataSource: SyncDataSource {
     /// crosses as an id and a blob, and the manifest is the only place its
     /// name ever travels.
     private var peerVoiceNames: [String: String] = [:]
+    /// The peer's books as its manifest described them, kept for the audio
+    /// deliveries: a chapter taken whole adopts the sender's chunk layout,
+    /// and the manifest is where that layout travels.
+    private var peerBooks: [String: BookManifest] = [:]
 
     public func receive(peerManifest: SyncMessage.Manifest) async {
         peerVoiceNames = Dictionary(
             peerManifest.voices.map { ($0.id, $0.name) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        peerBooks = Dictionary(
+            peerManifest.books.map { ($0.contentId, $0) },
             uniquingKeysWith: { first, _ in first }
         )
         await peerManifestReceived?(peerManifest)
@@ -133,12 +147,29 @@ public actor LibrarySyncDataSource: SyncDataSource {
     }
 
     private func voiceManifests() -> [VoiceManifest] {
-        guard let directory = voiceDirectory,
-              let voices = try? VoicePack.load(from: directory)
-        else { return [] }
-        return voices.map {
+        let recorded = voiceDirectory.flatMap { try? VoicePack.load(from: $0) } ?? []
+        let shipped = bundledVoiceDirectory.flatMap { try? VoicePack.load(from: $0) } ?? []
+        // Bundled voices belong in the manifest even though the other device
+        // rarely wants them: a voice the manifest omits is a voice the diff
+        // asks the other side for, which is how the Mac would pull its own
+        // shipped voices back as "synced" copies.
+        let replaced = Set(recorded.map(\.id))
+        return (shipped.filter { !replaced.contains($0.id) } + recorded).map {
             VoiceManifest(id: $0.id, name: $0.name, hasPreview: $0.previewURL != nil)
         }
+    }
+
+    /// The file for a voice or its preview, wherever it lives: the writable
+    /// directory first — a re-recording shadows the shipped original — then
+    /// the bundle.
+    private func voiceFile(_ name: String) -> Data? {
+        for directory in [voiceDirectory, bundledVoiceDirectory] {
+            guard let url = directory?.appendingPathComponent(name),
+                  let data = try? Data(contentsOf: url)
+            else { continue }
+            return data
+        }
+        return nil
     }
 
     // MARK: - Serving
@@ -170,12 +201,10 @@ public actor LibrarySyncDataSource: SyncDataSource {
             )
 
         case .voice(let id):
-            guard let directory = voiceDirectory else { return nil }
-            return try? Data(contentsOf: directory.appendingPathComponent("\(id).voice"))
+            return voiceFile("\(id).voice")
 
         case .voicePreview(let id):
-            guard let directory = voiceDirectory else { return nil }
-            return try? Data(contentsOf: directory.appendingPathComponent("\(id).preview.wav"))
+            return voiceFile("\(id).preview.wav")
         }
     }
 
@@ -202,13 +231,29 @@ public actor LibrarySyncDataSource: SyncDataSource {
                   book.chapters.indices.contains(chapterIndex)
             else { return }
             let chapter = book.chapters[chapterIndex]
+            var startingFresh = chapter.renderedChunks == 0
             // Ordinarily local audio wins. A paired phone reverses that policy:
             // the Mac renderer is the higher-quality source of truth.
             if chapter.renderedChunks > 0, incomingAudioWins,
                (chapter.renderedVoice != voiceId || chapter.audioSource != "mac") {
                 try await library.discardAudio(chapterId: chapter.id, bookId: book.id)
+                startingFresh = true
             } else if chapter.renderedChunks > 0, chapter.renderedVoice != voiceId {
                 return
+            }
+            // Files cut by the sender's chunker replace this chapter's own
+            // idea of its boundaries; without this, `chunkCount` keeps
+            // describing files that will now never exist, and the chapter can
+            // never read as complete.
+            if startingFresh,
+               let peerChapter = peerBooks[contentId]?.chapters
+                   .first(where: { $0.index == chapterIndex }) {
+                try await library.adoptChunkLayout(
+                    bookId: book.id, chapterId: chapter.id,
+                    chunkCount: peerChapter.chunkCount,
+                    chunkerVersion: peerChapter.chunkerVersion,
+                    chunkingProfile: peerChapter.chunkingProfile
+                )
             }
             try await library.storeChunks(
                 ChunkPack.unpack(data), bookId: book.id, chapterId: chapter.id, voiceId: voiceId,

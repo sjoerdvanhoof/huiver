@@ -59,6 +59,16 @@ struct ConnectorSection: View {
                         .foregroundStyle(theme.colors.mutedForeground)
                 }
 
+                if sync.activity == .syncing {
+                    Button("Pause sync") {
+                        Task { await sync.pauseSync() }
+                    }
+                } else if sync.isPaused {
+                    Text("Sync is paused. Sync now resumes it; nothing already received is lost.")
+                        .font(.huiverCaption)
+                        .foregroundStyle(theme.colors.mutedForeground)
+                }
+
                 if let summary = sync.lastSummary, let at = sync.lastSyncedAt {
                     LabeledContent(
                         "Last sync",

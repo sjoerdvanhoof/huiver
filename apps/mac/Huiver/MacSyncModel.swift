@@ -119,12 +119,19 @@ final class MacSyncModel {
             server.stop()
             startAdvertising(model: model)
         } catch {
+            await transport.close()
             failure = error.localizedDescription
         }
     }
 
     private func serve(_ transport: NWSyncTransport, model: AppModel) async {
-        guard let library = model.library, let progress = model.progressStore else { return }
+        guard let library = model.library, let progress = model.progressStore else {
+            // Returning with the connection open would leave the phone talking
+            // to nobody until its timeout — close, so it hears the refusal now.
+            PlaybackLog.note("sync: refused a connection — the library is not open yet")
+            await transport.close()
+            return
+        }
         mode = .syncing
         defer { mode = .advertising }
         do {
@@ -132,7 +139,13 @@ final class MacSyncModel {
                 library: library,
                 progress: progress,
                 deviceId: deviceId,
-                voiceDirectory: Bundle.main.resourceURL?.appendingPathComponent("Voices"),
+                // The writable directory is where the phone's recordings land.
+                // Pointing this at the bundle looked the same in every test with
+                // no voice to deliver, then failed each real session: the bundle
+                // is read-only, so saving the phone's voice threw and took the
+                // session down with it.
+                voiceDirectory: model.recordedVoices,
+                bundledVoiceDirectory: Bundle.main.resourceURL?.appendingPathComponent("Voices"),
                 // The Mac asks for nothing and renders for the phone, so it has
                 // the accepting half of offload and not the asking one.
                 acceptRequests: { [weak model] requests in
@@ -155,6 +168,12 @@ final class MacSyncModel {
                 wantsAudio: false
             )
             lastSummary = try await session.run()
+            if let summary = lastSummary {
+                PlaybackLog.note(
+                    "sync: session complete — sent \(summary.sent), "
+                        + "received \(summary.received), progress \(summary.progressMerged)"
+                )
+            }
             lastSyncedAt = Date()
             await transport.close()
             await model.refresh()
@@ -164,7 +183,11 @@ final class MacSyncModel {
             model.placeDeferredRequests()
         } catch {
             // A dropped connection mid-sync is ordinary — the phone left the
-            // room. The next session's diff picks up the remainder.
+            // room. The next session's diff picks up the remainder. Closing
+            // here matters when the session died of a local error instead: a
+            // connection left half-open keeps the phone sending into a full
+            // buffer, stuck on "syncing" with nobody reading.
+            await transport.close()
             PlaybackLog.note("sync: session ended early: \(error.localizedDescription)")
         }
     }

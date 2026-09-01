@@ -620,6 +620,28 @@ final class AppModel {
         await refreshProgress()
     }
 
+    /// Throw away every chapter's rendered audio for a book, keeping the book.
+    ///
+    /// The space-back story: a finished book's audio is most of what the app
+    /// holds on disk, and deleting the whole book to reclaim it also deleted
+    /// the text and the positions.
+    func clearRenderedAudio(for book: Book) async {
+        guard let library else { return }
+        if narrator?.chapterId != nil,
+           book.chapters.contains(where: { $0.id == narrator?.chapterId }) {
+            narrator?.stop()
+        }
+        if let converter {
+            for chapter in book.chapters { converter.cancel(chapter.id) }
+            // Let a cancelled pass wind down before deleting its directory —
+            // discarding immediately races the chunk still being written.
+            await converter.waitUntilIdle()
+        }
+        try? await library.discardAudio(bookId: book.id)
+        await refresh()
+        bytesOnDisk = await library.bytesOnDisk()
+    }
+
     /// Throw away a chapter's audio and render it again.
     ///
     /// The way to pick up an improvement to the chunker or the sampler on a
@@ -766,6 +788,17 @@ final class AppModel {
         book.chapters
             .compactMap { chapter in progress[chapter.id].map { (chapter, $0.updatedAt) } }
             .max { $0.1 < $1.1 }?.0
+    }
+
+    /// What "convert from the listening position" means: the chapter the
+    /// listener is in and everything after it, skipping what is already
+    /// rendered and what has already been listened to the end. Chapters
+    /// *before* the listening position are left alone either way — going
+    /// back to one is a choice, and its row converts it.
+    func chaptersFromListeningPosition(in book: Book) -> [Chapter] {
+        let start = resumeTarget(for: book)
+            .flatMap { target in book.chapters.firstIndex { $0.id == target.chapter.id } } ?? 0
+        return book.chapters[start...].filter { !$0.isComplete && !isFinished($0) }
     }
 
     // MARK: - Export

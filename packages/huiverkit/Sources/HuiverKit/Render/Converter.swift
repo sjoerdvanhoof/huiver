@@ -284,6 +284,11 @@ public final class Converter {
             if done || failure != nil { queue.removeFirst() }
 
             active = nil
+            // Between chapters nothing is synthesizing — the one moment in a
+            // batch when the MLX pool's gigabyte can go back to the OS. The
+            // app's idle trim never fires here: a queued batch keeps the
+            // converter busy from the first chapter to the last.
+            EngineMemory.trim()
             persist()
             didChange?()
             if !done { break }

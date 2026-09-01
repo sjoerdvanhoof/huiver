@@ -386,6 +386,12 @@ final class MTLDecodeMLX {
         let logits = matmul(last, head.T)
             .reshaped([config.cfgRows * config.speechVocab])
             .asType(.float32)
+        // Materialise the cache writes together with the logits: attention
+        // reads `k`/`v` directly, so the logits graph alone leaves every
+        // layer's slice-assign pending — holding the previous cache buffers
+        // *and* this prefill's k/v until the first decode step forces them.
+        // `seed` evals its writes for the same reason.
+        MLX.eval(kCache + vCache + [logits])
         return logits.asArray(Float.self)
     }
 

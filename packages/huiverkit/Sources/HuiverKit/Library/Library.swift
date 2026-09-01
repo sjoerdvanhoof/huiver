@@ -339,6 +339,25 @@ public actor Library {
     /// One library save per call, not per chunk — this is the batch boundary
     /// that keeps a large audio sync from rewriting library.json hundreds of
     /// times.
+    /// Take over another device's idea of where a chapter's chunks begin.
+    ///
+    /// Belongs with receiving that device's audio from scratch: the files
+    /// arriving were cut by *its* chunker, so `chunkCount` has to describe
+    /// them, not what this device's chunker would have done with the text.
+    /// `stampIdentity` will not undo this — it leaves rendered chapters alone.
+    public func adoptChunkLayout(
+        bookId: String, chapterId: String,
+        chunkCount: Int, chunkerVersion: Int, chunkingProfile: String?
+    ) throws {
+        guard let bookIndex = books.firstIndex(where: { $0.id == bookId }),
+              let chapterIndex = books[bookIndex].chapters.firstIndex(where: { $0.id == chapterId })
+        else { return }
+        books[bookIndex].chapters[chapterIndex].chunkCount = chunkCount
+        books[bookIndex].chapters[chapterIndex].chunkerVersion = chunkerVersion
+        books[bookIndex].chapters[chapterIndex].chunkingProfile = chunkingProfile
+        try save()
+    }
+
     public func storeChunks(
         _ chunks: [(index: Int, data: Data)], bookId: String, chapterId: String, voiceId: String,
         audioSource: String? = nil
@@ -388,6 +407,20 @@ public actor Library {
         chapter.renderedVoice = nil
         chapter.audioSource = nil
         try update(chapter: chapter, in: bookId)
+    }
+
+    /// Throw away every chapter's rendered audio for one book, keeping the
+    /// book itself — the text, the cover, the positions all stay, and any
+    /// chapter can be rendered (or synced) again from nothing.
+    public func discardAudio(bookId: String) throws {
+        guard let index = books.firstIndex(where: { $0.id == bookId }) else { return }
+        try? FileManager.default.removeItem(at: audioDirectory(book: bookId))
+        for chapterIndex in books[index].chapters.indices {
+            books[index].chapters[chapterIndex].renderedChunks = 0
+            books[index].chapters[chapterIndex].renderedVoice = nil
+            books[index].chapters[chapterIndex].audioSource = nil
+        }
+        try save()
     }
 
     /// Throw away a chapter's audio from one chunk on, keeping what comes

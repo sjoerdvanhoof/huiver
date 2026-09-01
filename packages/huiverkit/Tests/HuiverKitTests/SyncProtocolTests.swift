@@ -252,6 +252,27 @@ struct SyncDiffTests {
         )
     }
 
+    @Test("audio requests are bounded transcoding batches")
+    func boundsAudioTransfers() {
+        let count = SyncDiff.audioChunksPerTransfer * 3 + 2
+        let theirs = SyncMessage.Manifest(books: [
+            book(chapters: [
+                chapter(0, audio: AudioManifest(
+                    voiceId: "v", renderedChunks: count, codec: .wav
+                ))
+            ])
+        ])
+
+        let chunks: [[Int]] = SyncDiff.want(mine: .init(), theirs: theirs).compactMap { item in
+            guard case .audio(_, _, _, let chunks) = item else { return nil }
+            return chunks
+        }
+
+        #expect(chunks.count == 4)
+        #expect(chunks.allSatisfy { $0.count <= SyncDiff.audioChunksPerTransfer })
+        #expect(chunks.flatMap { $0 } == Array(0..<count))
+    }
+
     @Test("a paired phone replaces Nano audio with the Mac render")
     func macAudioReplacesNano() {
         let theirs = SyncMessage.Manifest(books: [
@@ -274,8 +295,9 @@ struct SyncDiffTests {
         #expect(items == [
             .audio(
                 contentId: "book", chapterIndex: 0, voiceId: "v",
-                chunks: Array(0..<10)
-            )
+                chunks: Array(0..<8)
+            ),
+            .audio(contentId: "book", chapterIndex: 0, voiceId: "v", chunks: [8, 9])
         ])
     }
 
@@ -337,15 +359,44 @@ struct SyncDiffTests {
         }
     }
 
-    /// Chunk boundaries are file boundaries. Audio from a device that chunks
-    /// differently would play the wrong words at the wrong offsets.
-    @Test("audio is refused when the chunking does not match")
-    func refusesMismatchedChunking() {
+    /// Chunk boundaries are file boundaries, but they only have to agree when
+    /// local files are being *extended*. A chapter with no audio takes the
+    /// sender's whole set and adopts its boundaries — a chunker that moved on
+    /// locally used to refuse here, which quietly stopped every book rendered
+    /// before the bump from ever reaching the phone.
+    @Test("a chapter with no audio accepts a different chunker's files whole")
+    func acceptsMismatchedChunkingFromNothing() {
         let audio = AudioManifest(voiceId: "v", renderedChunks: 10, codec: .wav)
         let theirs = SyncMessage.Manifest(books: [
             book(chapters: [chapter(0, hash: "h", chunker: 2, audio: audio)])
         ])
         let mine = SyncMessage.Manifest(books: [book(chapters: [chapter(0, hash: "h", chunker: 1)])])
+        #expect(SyncDiff.want(mine: mine, theirs: theirs) == [
+            .audio(contentId: "book", chapterIndex: 0, voiceId: "v", chunks: Array(0..<8)),
+            .audio(contentId: "book", chapterIndex: 0, voiceId: "v", chunks: [8, 9]),
+        ])
+    }
+
+    /// Extending files already on disk with chunks cut by a different chunker
+    /// would splice mismatched boundaries; that is still refused.
+    @Test("partial audio is not extended across a chunker change")
+    func refusesExtendingMismatchedChunking() {
+        let theirs = SyncMessage.Manifest(books: [
+            book(chapters: [
+                chapter(
+                    0, hash: "h", chunker: 2,
+                    audio: AudioManifest(voiceId: "v", renderedChunks: 10, codec: .wav)
+                )
+            ])
+        ])
+        let mine = SyncMessage.Manifest(books: [
+            book(chapters: [
+                chapter(
+                    0, hash: "h", chunker: 1,
+                    audio: AudioManifest(voiceId: "v", renderedChunks: 4, codec: .wav)
+                )
+            ])
+        ])
         #expect(SyncDiff.want(mine: mine, theirs: theirs).isEmpty)
     }
 

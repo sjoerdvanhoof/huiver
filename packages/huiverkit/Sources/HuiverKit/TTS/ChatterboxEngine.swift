@@ -1086,9 +1086,16 @@ public actor ChatterboxEngine {
             // Position 0 belongs to the start-of-speech token, so the token
             // generated at step 0 sits at learned position 1.
             speechPositionInput[0] = NSNumber(value: Int32(step + 1))
-            let out = try decode.prediction(from: stepInput, using: state, options: stepOptions)
-            guard let next = out.featureValue(for: "logits")?.multiArrayValue else {
-                throw EngineError.badOutput("decode logits")
+            // The logits buffer is reused via the output backing — safe to
+            // read after the pool drains — but the provider wrapping it is a
+            // fresh autoreleased object per token, some twelve hundred per
+            // chunk, so drain them as they come.
+            let next = try autoreleasepool { () throws -> MLMultiArray in
+                let out = try decode.prediction(from: stepInput, using: state, options: stepOptions)
+                guard let next = out.featureValue(for: "logits")?.multiArrayValue else {
+                    throw EngineError.badOutput("decode logits")
+                }
+                return next
             }
             current = sample(&sampler, next, history: penalized)
         }
@@ -1428,46 +1435,54 @@ public struct S3Stack: @unchecked Sendable {
     }
 
     private func decodeWindow(_ window: [Int32], voice: Voice) throws -> [Float] {
-        // The smallest installed window that holds the tokens plus the three
-        // silence tokens below. A window's cost is paid in full however little
-        // of it is used — twenty estimator passes over every mel frame,
-        // rendered silence included — so a typical 400-token chunk through a
-        // fitted window is the single cheapest speedup S3 has.
-        let fitted = windows
-            .filter { $0.genTokens >= window.count + 3 }
-            .min { $0.genTokens < $1.genTokens }
-        let (flow, vocoder, capacity) = fitted.map { ($0.flow, $0.vocoder, $0.genTokens) }
-            ?? (self.flow, self.vocoder, genTokens)
+        // A pool per window, not per batch: everything Core ML hands back here
+        // — the mel, the waveform, the feature providers — is autoreleased,
+        // and this runs inside one long detached task per chunk, where the
+        // thread's own pool does not drain until the chunk returns. Without
+        // this, an overnight batch accumulates every window's few megabytes
+        // until the process is killed.
+        try autoreleasepool {
+            // The smallest installed window that holds the tokens plus the three
+            // silence tokens below. A window's cost is paid in full however little
+            // of it is used — twenty estimator passes over every mel frame,
+            // rendered silence included — so a typical 400-token chunk through a
+            // fitted window is the single cheapest speedup S3 has.
+            let fitted = windows
+                .filter { $0.genTokens >= window.count + 3 }
+                .min { $0.genTokens < $1.genTokens }
+            let (flow, vocoder, capacity) = fitted.map { ($0.flow, $0.vocoder, $0.genTokens) }
+                ?? (self.flow, self.vocoder, genTokens)
 
-        var padded = window
-        // Three tokens of silence before the padding, as the desktop pipeline
-        // appends, so the last word is not clipped by the window edge.
-        padded += [silenceToken, silenceToken, silenceToken]
-        let spoken = min(padded.count, capacity)
-        padded += Array(repeating: silenceToken, count: max(0, capacity - padded.count))
-        padded = Array(padded.prefix(capacity))
+            var padded = window
+            // Three tokens of silence before the padding, as the desktop pipeline
+            // appends, so the last word is not clipped by the window edge.
+            padded += [silenceToken, silenceToken, silenceToken]
+            let spoken = min(padded.count, capacity)
+            padded += Array(repeating: silenceToken, count: max(0, capacity - padded.count))
+            padded = Array(padded.prefix(capacity))
 
-        let melLength = (promptTokenLength + capacity) * tokenMelRatio
-        let melOut = try flow.prediction(from: try MLDictionaryFeatureProvider(dictionary: [
-            "prompt_tokens": try mlArray(voice.promptTokens, shape: [1, promptTokenLength]),
-            "gen_tokens": try mlArray(padded, shape: [1, capacity]),
-            "prompt_feat": try mlArray(
-                voice.promptFeatures, shape: [1, promptFeatureLength, melDimension]
-            ),
-            "embedding": try mlArray(voice.xvector, shape: [1, voice.xvector.count]),
-            "noise": try mlGaussian(shape: [1, melDimension, melLength]),
-        ]))
-        guard let mel = melOut.featureValue(for: "mel")?.multiArrayValue else {
-            throw ChatterboxEngine.EngineError.badOutput("mel")
+            let melLength = (promptTokenLength + capacity) * tokenMelRatio
+            let melOut = try flow.prediction(from: try MLDictionaryFeatureProvider(dictionary: [
+                "prompt_tokens": try mlArray(voice.promptTokens, shape: [1, promptTokenLength]),
+                "gen_tokens": try mlArray(padded, shape: [1, capacity]),
+                "prompt_feat": try mlArray(
+                    voice.promptFeatures, shape: [1, promptFeatureLength, melDimension]
+                ),
+                "embedding": try mlArray(voice.xvector, shape: [1, voice.xvector.count]),
+                "noise": try mlGaussian(shape: [1, melDimension, melLength]),
+            ]))
+            guard let mel = melOut.featureValue(for: "mel")?.multiArrayValue else {
+                throw ChatterboxEngine.EngineError.badOutput("mel")
+            }
+
+            let wavOut = try vocoder.prediction(from: try MLDictionaryFeatureProvider(dictionary: ["mel": mel]))
+            guard let waveform = wavOut.featureValue(for: "waveform")?.multiArrayValue else {
+                throw ChatterboxEngine.EngineError.badOutput("waveform")
+            }
+
+            let wanted = min(spoken * tokenMelRatio * hop, waveform.count)
+            return waveform.withUnsafeBufferPointer(ofType: Float.self) { Array($0.prefix(wanted)) }
         }
-
-        let wavOut = try vocoder.prediction(from: try MLDictionaryFeatureProvider(dictionary: ["mel": mel]))
-        guard let waveform = wavOut.featureValue(for: "waveform")?.multiArrayValue else {
-            throw ChatterboxEngine.EngineError.badOutput("waveform")
-        }
-
-        let wanted = min(spoken * tokenMelRatio * hop, waveform.count)
-        return waveform.withUnsafeBufferPointer(ofType: Float.self) { Array($0.prefix(wanted)) }
     }
 
     /// Chatterbox fades the first 40 ms of every render, to keep the tail of

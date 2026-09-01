@@ -320,6 +320,28 @@ final class AppModel {
         await refreshProgress()
     }
 
+    /// Throw away every chapter's rendered audio for a book, keeping the book.
+    ///
+    /// The space-back story: a finished book's audio is most of what the app
+    /// holds on disk, and deleting the whole book to reclaim it also deleted
+    /// the text and the positions.
+    func clearRenderedAudio(for book: Book) async {
+        guard let library else { return }
+        if narrator?.chapterId != nil,
+           book.chapters.contains(where: { $0.id == narrator?.chapterId }) {
+            narrator?.stop()
+        }
+        if let converter {
+            for chapter in book.chapters { converter.cancel(chapter.id) }
+            // Let a cancelled pass wind down before deleting its directory —
+            // discarding immediately races the chunk still being written.
+            await converter.waitUntilIdle()
+        }
+        try? await library.discardAudio(bookId: book.id)
+        books = await library.all()
+        bytesOnDisk = await library.bytesOnDisk()
+    }
+
     /// Throw away a chapter's audio and render it again.
     ///
     /// The way to pick up an improvement to the chunker or the sampler on a
@@ -613,6 +635,37 @@ final class AppModel {
         await refreshOffload()
     }
 
+    /// A chosen run of chapters, asked for at once — what "convert from the
+    /// listening position" sends to the Mac. Same posture as the whole-book
+    /// ask: the request store dedupes, so overlap with earlier asks is free.
+    func requestConversionOnMac(chapters: [Chapter], in book: Book) async {
+        guard let convertRequests,
+              let contentId = book.contentId,
+              let voice = selectedVoice
+        else { return }
+        for chapter in chapters where !chapter.isComplete {
+            guard let index = book.chapters.firstIndex(where: { $0.id == chapter.id }) else {
+                continue
+            }
+            await convertRequests.add(
+                contentId: contentId,
+                chapterIndex: index,
+                textHash: chapter.textHash ?? ContentIdentity.chapterHash(chapter.text),
+                voiceId: voice.id
+            )
+        }
+        await refreshOffload()
+    }
+
+    /// Queue a run of chapters on this phone's own converter, in the order
+    /// given — the unpaired cut of "convert from the listening position".
+    func convert(chapters: [Chapter], in book: Book) {
+        guard let converter, let voice = selectedVoice else { return }
+        for chapter in chapters {
+            converter.convert(book: book, chapter: chapter, voice: voice, options: options)
+        }
+    }
+
     /// Take the ask back. The Mac finds out at the next sync, by the request no
     /// longer being in the manifest; a chapter it has already started is its
     /// own business, and the audio is welcome if it arrives.
@@ -732,6 +785,17 @@ final class AppModel {
         book.chapters
             .compactMap { chapter in progress[chapter.id].map { (chapter, $0.updatedAt) } }
             .max { $0.1 < $1.1 }?.0
+    }
+
+    /// What "convert from the listening position" means: the chapter the
+    /// listener is in and everything after it, skipping what is already
+    /// rendered and what has already been listened to the end. Chapters
+    /// *before* the listening position are left alone either way — going
+    /// back to one is a choice, and its row converts it.
+    func chaptersFromListeningPosition(in book: Book) -> [Chapter] {
+        let start = resumeTarget(for: book)
+            .flatMap { target in book.chapters.firstIndex { $0.id == target.chapter.id } } ?? 0
+        return book.chapters[start...].filter { !$0.isComplete && !isFinished($0) }
     }
 
     func clearFailure() { loadFailure = nil }

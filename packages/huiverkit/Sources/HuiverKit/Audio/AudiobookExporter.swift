@@ -118,32 +118,37 @@ public enum AudiobookExporter {
         for chapter in spoken {
             var frames: Int64 = 0
             for url in chapter.chunkURLs {
-                let file = try AVAudioFile(forReading: url)
-                let capacity: AVAudioFrameCount = 32_768
-                // Guarded by position, not by a zero-length read: reading at
-                // EOF does not return empty, it throws a bare ObjC error.
-                while file.framePosition < file.length {
-                    guard let buffer = AVAudioPCMBuffer(
-                        pcmFormat: file.processingFormat, frameCapacity: capacity
-                    ) else { throw ExportError.writerFailed("buffer allocation") }
-                    try file.read(into: buffer, frameCount: capacity)
-                    guard buffer.frameLength > 0 else { break }
-                    let sample = try sampleBuffer(from: buffer, at: written)
-                    while !audioInput.isReadyForMoreMediaData {
-                        // The writer's pull model, without handing control to
-                        // a callback queue: this whole function is already off
-                        // the main thread and has nothing else to do.
-                        usleep(2_000)
-                    }
-                    guard audioInput.append(sample) else {
-                        throw ExportError.writerFailed(
-                            writer.error?.localizedDescription ?? "audio append"
-                        )
-                    }
-                    written += Int64(buffer.frameLength)
-                    frames += Int64(buffer.frameLength)
-                    if totalFrames > 0 {
-                        progress?(Double(written) / Double(totalFrames))
+                // A pool per chunk file: the buffers and sample wrappers are
+                // autoreleased, and this loop runs synchronously for minutes
+                // without ever returning to something that would drain them.
+                try autoreleasepool {
+                    let file = try AVAudioFile(forReading: url)
+                    let capacity: AVAudioFrameCount = 32_768
+                    // Guarded by position, not by a zero-length read: reading at
+                    // EOF does not return empty, it throws a bare ObjC error.
+                    while file.framePosition < file.length {
+                        guard let buffer = AVAudioPCMBuffer(
+                            pcmFormat: file.processingFormat, frameCapacity: capacity
+                        ) else { throw ExportError.writerFailed("buffer allocation") }
+                        try file.read(into: buffer, frameCount: capacity)
+                        guard buffer.frameLength > 0 else { break }
+                        let sample = try sampleBuffer(from: buffer, at: written)
+                        while !audioInput.isReadyForMoreMediaData {
+                            // The writer's pull model, without handing control to
+                            // a callback queue: this whole function is already off
+                            // the main thread and has nothing else to do.
+                            usleep(2_000)
+                        }
+                        guard audioInput.append(sample) else {
+                            throw ExportError.writerFailed(
+                                writer.error?.localizedDescription ?? "audio append"
+                            )
+                        }
+                        written += Int64(buffer.frameLength)
+                        frames += Int64(buffer.frameLength)
+                        if totalFrames > 0 {
+                            progress?(Double(written) / Double(totalFrames))
+                        }
                     }
                 }
             }
@@ -222,21 +227,24 @@ public enum AudiobookExporter {
         writer.startSession(atSourceTime: .zero)
         var written: Int64 = 0
         for url in chunkURLs {
-            let file = try AVAudioFile(forReading: url)
-            let capacity: AVAudioFrameCount = 32_768
-            // Guarded by position, not by a zero-length read — see writeM4B.
-            while file.framePosition < file.length {
-                guard let buffer = AVAudioPCMBuffer(
-                    pcmFormat: file.processingFormat, frameCapacity: capacity
-                ) else { throw ExportError.writerFailed("buffer allocation") }
-                try file.read(into: buffer, frameCount: capacity)
-                guard buffer.frameLength > 0 else { break }
-                let sample = try sampleBuffer(from: buffer, at: written)
-                while !audioInput.isReadyForMoreMediaData { usleep(2_000) }
-                guard audioInput.append(sample) else {
-                    throw ExportError.writerFailed(writer.error?.localizedDescription ?? "append")
+            // A pool per chunk file, for the same reason as writeM4B.
+            try autoreleasepool {
+                let file = try AVAudioFile(forReading: url)
+                let capacity: AVAudioFrameCount = 32_768
+                // Guarded by position, not by a zero-length read — see writeM4B.
+                while file.framePosition < file.length {
+                    guard let buffer = AVAudioPCMBuffer(
+                        pcmFormat: file.processingFormat, frameCapacity: capacity
+                    ) else { throw ExportError.writerFailed("buffer allocation") }
+                    try file.read(into: buffer, frameCount: capacity)
+                    guard buffer.frameLength > 0 else { break }
+                    let sample = try sampleBuffer(from: buffer, at: written)
+                    while !audioInput.isReadyForMoreMediaData { usleep(2_000) }
+                    guard audioInput.append(sample) else {
+                        throw ExportError.writerFailed(writer.error?.localizedDescription ?? "append")
+                    }
+                    written += Int64(buffer.frameLength)
                 }
-                written += Int64(buffer.frameLength)
             }
         }
         audioInput.markAsFinished()

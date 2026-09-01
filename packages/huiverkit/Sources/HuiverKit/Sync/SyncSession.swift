@@ -126,6 +126,7 @@ public actor SyncSession {
         case unexpectedMessage(String)
         case corruptTransfer(String)
         case closed
+        case timedOut
 
         public var errorDescription: String? {
             switch self {
@@ -142,6 +143,11 @@ public actor SyncSession {
                 return "\(key) arrived damaged and was discarded."
             case .closed:
                 return "The other device disconnected."
+            case .timedOut:
+                return """
+                    The other device went quiet mid-sync — it may have gone to sleep. \
+                    The next sync picks up where this one left off.
+                    """
             }
         }
     }
@@ -153,6 +159,18 @@ public actor SyncSession {
 
     /// Clocks further apart than this make "newest wins" meaningless.
     static let tolerableSkew: TimeInterval = 120
+
+    /// How long a silent connection is trusted before the session gives up.
+    ///
+    /// Generous, because the other side can legitimately go quiet for a
+    /// while — the Mac AAC-encodes a whole chapter *before* the first byte of
+    /// it is sent, and a long chapter on a Mini that is also rendering takes
+    /// minutes, in observed fact more than the sixty seconds this started
+    /// as (which cut every session off after roughly one chapter). But a
+    /// peer that fell asleep or dropped off Wi-Fi leaves the socket open
+    /// with nothing coming, and without a limit that reads as "connecting"
+    /// for ever on the other device.
+    static let idleTimeout: Duration = .seconds(300)
 
     private let transport: SyncTransport
     private let role: Role
@@ -247,6 +265,15 @@ public actor SyncSession {
            }) {
             want.insert(want.remove(at: index), at: 0)
         }
+        // One line per session about the diff's verdict. "0 items" is as
+        // telling as a list: it is how "connects fine, nothing arrives"
+        // stops being invisible.
+        let audioCount = want.filter {
+            if case .audio = $0 { return true } else { return false }
+        }.count
+        PlaybackLog.note(
+            "sync: asking \(peer.deviceName) for \(want.count) item(s), \(audioCount) audio"
+        )
         switch role {
         case .client:
             try await send(.want(SyncMessage.Want(items: want)))
@@ -430,7 +457,7 @@ public actor SyncSession {
     ) async throws -> Data {
         var data = Data(capacity: Int(header.size))
         while true {
-            guard let frame = try await transport.receive() else { throw SyncError.closed }
+            guard let frame = try await receiveFrame() else { throw SyncError.closed }
             switch frame.kind {
             case .blob:
                 data.append(frame.payload)
@@ -485,11 +512,41 @@ public actor SyncSession {
             self.pushedBack = nil
             return pushedBack
         }
-        guard let frame = try await transport.receive() else { throw SyncError.closed }
+        guard let frame = try await receiveFrame() else { throw SyncError.closed }
         guard frame.kind == .control else {
             throw SyncError.unexpectedMessage("a blob with no file open")
         }
         return try SyncMessage.decode(frame)
+    }
+
+    /// `transport.receive()` with a patience limit.
+    ///
+    /// A vanished peer — a Mac asleep, Wi-Fi that dropped without closing the
+    /// socket — leaves a bare receive waiting for ever. On timeout the
+    /// transport is closed *before* throwing, both to tear the connection down
+    /// and to resume the pending read so the task group can wind up.
+    private func receiveFrame() async throws -> Frame? {
+        enum Outcome: Sendable {
+            case frame(Frame?)
+            case timedOut
+        }
+        return try await withThrowingTaskGroup(of: Outcome.self) { group in
+            group.addTask { [transport] in .frame(try await transport.receive()) }
+            group.addTask {
+                try await Task.sleep(for: Self.idleTimeout)
+                return .timedOut
+            }
+            defer { group.cancelAll() }
+            switch try await group.next() {
+            case .frame(let frame):
+                return frame
+            case .timedOut:
+                await transport.close()
+                throw SyncError.timedOut
+            case nil:
+                throw SyncError.closed
+            }
+        }
     }
 
     private func expectManifest() async throws -> SyncMessage.Manifest {

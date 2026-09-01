@@ -7,6 +7,13 @@ import Foundation
 /// here, so it is written as a function of two manifests rather than as
 /// something that happens while sockets are open.
 public enum SyncDiff {
+    /// Audio is transcoded before it crosses the wire. Keep each request small
+    /// enough that packing WAV, decoding it to floats and handing it to
+    /// AVAudioFile cannot put several chapter-sized copies in memory at once.
+    /// Eight normal speech chunks are only a few minutes of audio, while still
+    /// amortising the fixed MPEG-4 container overhead well.
+    static let audioChunksPerTransfer = 8
+
     /// What one side wants from the other.
     ///
     /// `audioIsWanted` is a policy knob rather than a constant because the two
@@ -73,13 +80,9 @@ public enum SyncDiff {
             guard let audio = chapter.audio, audio.renderedChunks > 0 else { continue }
             let mine = localChapters[chapter.index]
 
-            // Two devices can only trade audio if they agree on where the
-            // chunks begin. Different text, or a different chunker, means the
-            // files are not interchangeable however similar the chapter looks.
+            // Same words, or the files mean nothing here.
             if let mine {
-                guard mine.textHash == chapter.textHash,
-                      mine.chunkerVersion == chapter.chunkerVersion
-                else { continue }
+                guard mine.textHash == chapter.textHash else { continue }
             }
 
             // Audio rendered in a voice we are not using is not worth the
@@ -99,15 +102,36 @@ public enum SyncDiff {
                 alreadyHave = 0
             }
 
+            // Agreeing on where the chunks begin only matters for *extending*
+            // files already here — chunk 12 by one chunker is not chunk 12 by
+            // another. Taking a chapter whole is different: the receiver
+            // adopts the sender's boundaries along with the audio, so a
+            // chunker that has moved on locally is no reason to refuse. It
+            // used to be one, which is how a chunker bump quietly stopped
+            // every already-rendered book from ever reaching the phone.
+            if alreadyHave > 0, let mine {
+                guard mine.chunkerVersion == chapter.chunkerVersion,
+                      mine.chunkingProfile == chapter.chunkingProfile
+                else { continue }
+            }
+
             guard audio.renderedChunks > alreadyHave else { continue }
-            items.append(
-                .audio(
+            // A WantItem is also the sender's transcoding boundary. Asking for
+            // a whole chapter here made the Mac materialise the entire chapter
+            // as WAV, Float and AVAudioPCMBuffer simultaneously; long chapters
+            // drove the process into tens of gigabytes. Separate items remain
+            // independently resumable because each one is committed before
+            // the next starts.
+            let missing = Array(alreadyHave..<audio.renderedChunks)
+            for start in stride(from: 0, to: missing.count, by: audioChunksPerTransfer) {
+                let end = min(start + audioChunksPerTransfer, missing.count)
+                items.append(.audio(
                     contentId: remote.contentId,
                     chapterIndex: chapter.index,
                     voiceId: audio.voiceId,
-                    chunks: Array(alreadyHave..<audio.renderedChunks)
-                )
-            )
+                    chunks: Array(missing[start..<end])
+                ))
+            }
         }
         return items
     }

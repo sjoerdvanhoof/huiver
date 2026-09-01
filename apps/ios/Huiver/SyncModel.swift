@@ -19,6 +19,10 @@ final class SyncModel {
 
     private(set) var activity: Activity = .idle
     private(set) var transferProgress: SyncSession.TransferProgress?
+    /// The user asked a running sync to stand down. Auto-sync stays quiet
+    /// until they resume — any deliberate sync (the card's Resume, Sync now,
+    /// tapping a chapter) clears it. Not persisted: a fresh launch syncs.
+    private(set) var isPaused = false
     private(set) var pairedMac: PairingStore.Peer?
     private(set) var lastSummary: SyncSession.Summary?
     /// When things last moved. Persisted, so "when did this last work?" has
@@ -40,6 +44,9 @@ final class SyncModel {
     private var activeTransport: NWSyncTransport?
     private var preferredAudio: SyncSession.PreferredAudio?
     private var restartingForPriority = false
+    /// Set while a pause is bringing the session down, so the resulting
+    /// transport error reads as "paused", not as a failure.
+    private var pausing = false
 
     /// Identifier registered in Info.plist under
     /// `BGTaskSchedulerPermittedIdentifiers`. Must match exactly or the
@@ -150,7 +157,9 @@ final class SyncModel {
         // `library` is nil until the app has finished opening it, which can be
         // after the Mac has already been seen. Declining without starting the
         // throttle means the next sighting still counts.
-        guard autoSync, let model = watching, model.library != nil, activity != .syncing else {
+        guard autoSync, !isPaused, let model = watching, model.library != nil,
+              activity != .syncing
+        else {
             return
         }
         if let last = lastAutoSyncAt,
@@ -166,6 +175,9 @@ final class SyncModel {
         guard let mac = pairedMac, let library = model.library,
               let progress = model.progressStore
         else { return }
+        // Starting a sync on purpose is also the resume button.
+        isPaused = false
+        pausing = false
         activity = .syncing
         transferProgress = nil
         // A transfer that is in flight when the phone goes in a pocket gets a
@@ -181,11 +193,15 @@ final class SyncModel {
                     + "(key \(mac.key.count)B, \(mac.key.prefix(4).map { String(format: "%02x", $0) }.joined()))"
             )
             let endpoint = try await SyncClient.find(serviceName: mac.deviceId)
+            PlaybackLog.note("sync: found the Mac on Bonjour, opening a connection")
             let transport = try await SyncClient.connect(
                 to: endpoint, psk: mac.key, pskIdentity: deviceId
             )
+            PlaybackLog.note("sync: connected, starting the session")
             activeTransport = transport
-            defer { activeTransport = nil }
+            // Paused while still finding or connecting: there was no transport
+            // to close yet, so stand down here instead of starting the session.
+            if pausing { throw SyncSession.SyncError.closed }
             let source = LibrarySyncDataSource(
                 library: library,
                 progress: progress,
@@ -212,12 +228,25 @@ final class SyncModel {
                 wantsAudio: true,
                 preferPeerAudio: true,
                 preferredAudio: preferredAudio,
-                progress: { [weak self] update in
+                progress: { [weak self, weak model] update in
                     await MainActor.run { self?.transferProgress = update }
+                    // The update with no current item is a whole item landed.
+                    // Re-reading the library here is what flips that chapter's
+                    // row to done now rather than when the session ends.
+                    if update.direction == .receiving, update.currentItem == nil {
+                        await model?.refresh()
+                    }
                 }
             )
             lastSummary = try await session.run()
+            if let summary = lastSummary {
+                PlaybackLog.note(
+                    "sync: session complete — received \(summary.received), "
+                        + "sent \(summary.sent), progress \(summary.progressMerged)"
+                )
+            }
             await transport.close()
+            activeTransport = nil
             preferredAudio = nil
             lastSyncedAt = Date()
             activity = .idle
@@ -230,18 +259,44 @@ final class SyncModel {
             }
             await model.refresh()
         } catch {
+            // The success path closes before it clears; here the session died
+            // with the connection still (half-)open, and a socket left behind
+            // is what the next session finds a stale Bonjour entry for.
+            await activeTransport?.close()
+            activeTransport = nil
             transferProgress = nil
             if restartingForPriority {
                 restartingForPriority = false
                 activity = .idle
+                PlaybackLog.note("sync: session closed to restart with a priority chapter")
+            } else if pausing {
+                pausing = false
+                activity = .idle
+                PlaybackLog.note("sync: session paused by the listener")
             } else {
+                PlaybackLog.note("sync: failed: \(PlaybackLog.detail(of: error))")
                 activity = .failed(error.localizedDescription)
                 notifyIfBackground(
                     title: "Sync stopped",
                     body: "Open Narcisse to reconnect to your Mac."
                 )
             }
+            // Chapters that landed before the interruption are already in the
+            // library; show them rather than the pre-sync rows.
+            await model.refresh()
         }
+    }
+
+    /// Stand the running sync down at the user's ask.
+    ///
+    /// Closing the transport is the whole mechanism: the session ends, the
+    /// next diff asks only for what is still missing. `isPaused` keeps
+    /// auto-sync from undoing the gesture a minute later.
+    func pauseSync() async {
+        guard activity == .syncing else { return }
+        isPaused = true
+        pausing = true
+        await activeTransport?.close()
     }
 
     /// Put one chapter at the front of the Mac's transfer list. If a broad
@@ -249,6 +304,7 @@ final class SyncModel {
     /// fresh diff; completed items stay completed and the selected chapter is
     /// requested first.
     func syncChapter(contentId: String, chapterIndex: Int, model: AppModel) async {
+        PlaybackLog.note("sync: chapter \(chapterIndex) of \(contentId.prefix(13))… prioritized")
         preferredAudio = .init(contentId: contentId, chapterIndex: chapterIndex)
         if activity == .syncing {
             restartingForPriority = true
@@ -267,6 +323,7 @@ final class SyncModel {
         if let mac = pairedMac { store.remove(mac.deviceId) }
         pairedMac = nil
         lastSummary = nil
+        isPaused = false
         watcher.stop()
     }
 
@@ -369,7 +426,7 @@ final class SyncModel {
             // `watching` is set when the app comes to the foreground, so this
             // finds a model when the app is suspended rather than terminated.
             guard let sync = SyncModel.current, let model = sync.watching,
-                  sync.isPaired, sync.autoSync
+                  sync.isPaired, sync.autoSync, !sync.isPaused
             else {
                 scheduled.value.setTaskCompleted(success: false)
                 return

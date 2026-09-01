@@ -15,6 +15,7 @@ struct BookView: View {
 
     @State private var showingPlayer = false
     @State private var confirmingDelete = false
+    @State private var confirmingClearAudio = false
     /// A finished export waiting for the share sheet.
     @State private var sharing: ShareItem?
 
@@ -51,6 +52,9 @@ struct BookView: View {
             if sync.activity == .syncing {
                 syncCard
                     .background(theme.colors.background)
+            } else if sync.isPaused {
+                pausedCard
+                    .background(theme.colors.background)
             }
         }
         .toolbar {
@@ -66,6 +70,24 @@ struct BookView: View {
                             Task { await model.requestBookConversionOnMac(current) }
                         }
                     }
+                    // The rest of the book from where the listener is, skipping
+                    // chapters already heard to the end — "make sure what I am
+                    // about to listen to is ready", not the whole backlist.
+                    if !model.chaptersFromListeningPosition(in: current).isEmpty {
+                        Button("Convert from listening position", systemImage: "text.append") {
+                            Task {
+                                let chapters = model.chaptersFromListeningPosition(in: current)
+                                if sync.isPaired {
+                                    await model.requestConversionOnMac(
+                                        chapters: chapters, in: current
+                                    )
+                                } else {
+                                    model.convert(chapters: chapters, in: current)
+                                }
+                            }
+                        }
+                        .disabled(!sync.isPaired && model.converter == nil)
+                    }
                     Divider()
                     Button("Share audiobook", systemImage: "square.and.arrow.up") {
                         Task {
@@ -76,6 +98,13 @@ struct BookView: View {
                     }
                     .disabled(renderedCount == 0 || model.exporting != nil)
                     Divider()
+                    Button("Clear rendered audio", systemImage: "waveform.slash") {
+                        confirmingClearAudio = true
+                    }
+                    .disabled(
+                        current.chapters.allSatisfy { $0.renderedChunks == 0 }
+                            || model.exporting != nil
+                    )
                     Button("Delete book", systemImage: "trash", role: .destructive) {
                         confirmingDelete = true
                     }
@@ -105,6 +134,23 @@ struct BookView: View {
             }
         } message: {
             Text("Its text and any audio rendered for it will be removed.")
+        }
+        .confirmationDialog(
+            "Clear this book's rendered audio?",
+            isPresented: $confirmingClearAudio,
+            titleVisibility: .visible
+        ) {
+            Button("Clear audio", role: .destructive) {
+                Task { await model.clearRenderedAudio(for: current) }
+            }
+        } message: {
+            Text(
+                sync.isPaired
+                    ? "Every chapter's audio will be removed; the book and its text stay. "
+                        + "The next sync may fetch the Mac's copy again."
+                    : "Every chapter's audio will be removed. The book and its text stay, "
+                        + "and any chapter can be rendered again."
+            )
         }
         .sheet(item: $sharing) { item in
             ActivityView(url: item.url)
@@ -149,6 +195,15 @@ struct BookView: View {
                     .font(.huiverHeading)
                 Spacer()
                 ProgressView()
+                Button {
+                    Task { await sync.pauseSync() }
+                } label: {
+                    Image(systemName: "pause.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(theme.colors.mutedForeground)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Pause sync")
             }
             if let progress = sync.transferProgress {
                 ProgressView(value: progress.fractionCompleted)
@@ -163,6 +218,31 @@ struct BookView: View {
             Text("Keep Narcisse open for large transfers. iOS only guarantees a short completion window after you leave the app.")
                 .font(.huiverCaption)
                 .foregroundStyle(theme.colors.mutedForeground)
+        }
+        .padding(Palette.Space.md)
+        .background(theme.colors.muted, in: .rect(cornerRadius: Palette.Radius.lg))
+        .padding(.horizontal, Palette.Space.lg)
+    }
+
+    /// What the sync card becomes after its pause button: the same slot, the
+    /// way back. Anything already received is on disk; resuming asks only for
+    /// the rest.
+    private var pausedCard: some View {
+        HStack {
+            Label("Sync paused", systemImage: "pause.circle")
+                .font(.huiverHeading)
+            Spacer()
+            Button {
+                Task { await sync.syncNow(model: model) }
+            } label: {
+                Text("Resume")
+                    .font(.huiverLabel)
+                    .foregroundStyle(theme.colors.primaryForeground)
+                    .padding(.horizontal, Palette.Space.md)
+                    .padding(.vertical, Palette.Space.xs)
+                    .background(theme.colors.primary, in: .capsule)
+            }
+            .buttonStyle(.plain)
         }
         .padding(Palette.Space.md)
         .background(theme.colors.muted, in: .rect(cornerRadius: Palette.Radius.lg))
@@ -435,6 +515,11 @@ private struct ChapterRow: View {
         // After the queue, so retrying a failed chapter shows it working again
         // rather than still showing the old complaint.
         if chapter.lastRenderError != nil { return .failed }
+        // Chunks on disk but nothing running: a paused render, or a sync that
+        // stopped partway. The ring shows how far it got.
+        if chapter.renderedChunks > 0, chapter.chunkCount > 0 {
+            return .partial(Double(chapter.renderedChunks) / Double(chapter.chunkCount))
+        }
         return .none
     }
 

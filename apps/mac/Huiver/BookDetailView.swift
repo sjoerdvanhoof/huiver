@@ -13,9 +13,13 @@ struct BookDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var confirmingDelete = false
+    @State private var confirmingClearAudio = false
     @State private var showingPronunciations = false
     @State private var pronunciationReviewed = false
-    @State private var convertAfterReview = false
+    /// Chapters waiting for the pronunciation review to finish before they are
+    /// queued — the whole book for Convert book, the tail of it for Convert
+    /// from the listening position.
+    @State private var chaptersAwaitingReview: [Chapter] = []
 
     /// The book as the library currently has it, so language changes and render
     /// progress show up without leaving the screen.
@@ -27,6 +31,13 @@ struct BookDetailView: View {
     private var renderedCount: Int { current.chapters.filter(\.isComplete).count }
     private var incomplete: [Chapter] {
         current.chapters.filter { !$0.isComplete && !(model.converter?.isQueued($0.id) ?? false) }
+    }
+    /// What "Convert from listening position" would queue: the resume chapter
+    /// and everything after it that is neither rendered, queued, nor already
+    /// listened to the end.
+    private var incompleteFromPosition: [Chapter] {
+        model.chaptersFromListeningPosition(in: current)
+            .filter { !(model.converter?.isQueued($0.id) ?? false) }
     }
 
     var body: some View {
@@ -95,6 +106,21 @@ struct BookDetailView: View {
                         }
                     }
                     Divider()
+                    // The rest of the book from where the listener is, skipping
+                    // chapters already heard to the end — "make sure what I am
+                    // about to listen to is ready", not the whole backlist.
+                    Button("Convert from listening position", systemImage: "text.append") {
+                        convert(incompleteFromPosition)
+                    }
+                    .disabled(
+                        model.converter == nil || incompleteFromPosition.isEmpty
+                            || !model.canSpeak(current)
+                    )
+                    .help(model.canSpeak(current)
+                        ? "Queue the chapter being listened to and everything after it, "
+                            + "skipping chapters already heard to the end"
+                        : "The model cannot read \(language.name)")
+                    Divider()
                     Button("Export audiobook…", systemImage: "square.and.arrow.up") {
                         exportAudiobook()
                     }
@@ -104,6 +130,13 @@ struct BookDetailView: View {
                     }
                     .disabled(renderedCount == 0 || model.exporting != nil)
                     Divider()
+                    Button("Clear rendered audio…", systemImage: "waveform.slash") {
+                        confirmingClearAudio = true
+                    }
+                    .disabled(
+                        current.chapters.allSatisfy { $0.renderedChunks == 0 }
+                            || model.exporting != nil
+                    )
                     Button("Delete book", systemImage: "trash", role: .destructive) {
                         confirmingDelete = true
                     }
@@ -126,6 +159,20 @@ struct BookDetailView: View {
         } message: {
             Text("Its text and any audio rendered for it will be removed.")
         }
+        .confirmationDialog(
+            "Clear this book's rendered audio?",
+            isPresented: $confirmingClearAudio,
+            titleVisibility: .visible
+        ) {
+            Button("Clear audio", role: .destructive) {
+                Task { await model.clearRenderedAudio(for: current) }
+            }
+        } message: {
+            Text(
+                "Every chapter's audio will be removed. The book and its text stay, "
+                    + "and any chapter can be converted again."
+            )
+        }
         .alert(
             "Could not export",
             isPresented: .init(
@@ -142,9 +189,9 @@ struct BookDetailView: View {
                 PronunciationPreflightSheet(book: current, report: report) {
                     pronunciationReviewed = true
                     showingPronunciations = false
-                    if convertAfterReview {
-                        convertAfterReview = false
-                        enqueueAll()
+                    if !chaptersAwaitingReview.isEmpty {
+                        enqueue(chaptersAwaitingReview)
+                        chaptersAwaitingReview = []
                     }
                 }
             }
@@ -401,18 +448,23 @@ struct BookDetailView: View {
     /// Queue everything that has not been rendered, in reading order. The
     /// converter works through it one chapter at a time.
     private func convertAll() {
+        convert(incomplete)
+    }
+
+    /// Queue chapters, by way of the pronunciation review when one is due.
+    private func convert(_ chapters: [Chapter]) {
         if let report = model.preflight(for: current),
            !report.candidates.isEmpty, !pronunciationReviewed {
-            convertAfterReview = true
+            chaptersAwaitingReview = chapters
             showingPronunciations = true
             return
         }
-        enqueueAll()
+        enqueue(chapters)
     }
 
-    private func enqueueAll() {
+    private func enqueue(_ chapters: [Chapter]) {
         guard let converter = model.converter, let voice = model.voice(for: current) else { return }
-        for chapter in incomplete {
+        for chapter in chapters {
             converter.convert(book: current, chapter: chapter, voice: voice, options: model.options)
         }
     }
