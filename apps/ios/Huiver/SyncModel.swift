@@ -19,6 +19,12 @@ final class SyncModel {
 
     private(set) var activity: Activity = .idle
     private(set) var transferProgress: SyncSession.TransferProgress?
+    /// Continuous chapter progress for the audio transfer currently in flight.
+    ///
+    /// Wire items are deliberately small batches. The UI must not mistake a
+    /// batch boundary for the chapter starting over, or briefly turn its stop
+    /// button back into a resume button while the Mac prepares the next batch.
+    private(set) var audioChapterProgress: [String: Double] = [:]
     /// The user asked a running sync to stand down. Auto-sync stays quiet
     /// until they resume — any deliberate sync (the card's Resume, Sync now,
     /// tapping a chapter) clears it. Not persisted: a fresh launch syncs.
@@ -180,6 +186,7 @@ final class SyncModel {
         pausing = false
         activity = .syncing
         transferProgress = nil
+        audioChapterProgress.removeAll()
         // A transfer that is in flight when the phone goes in a pocket gets a
         // few seconds to finish rather than being cut off mid-chapter. It is
         // not background sync — iOS has no background mode that would run this
@@ -229,7 +236,10 @@ final class SyncModel {
                 preferPeerAudio: true,
                 preferredAudio: preferredAudio,
                 progress: { [weak self, weak model] update in
-                    await MainActor.run { self?.transferProgress = update }
+                    await MainActor.run {
+                        self?.transferProgress = update
+                        self?.recordAudioProgress(update, model: model)
+                    }
                     // The update with no current item is a whole item landed.
                     // Re-reading the library here is what flips that chapter's
                     // row to done now rather than when the session ends.
@@ -251,6 +261,7 @@ final class SyncModel {
             lastSyncedAt = Date()
             activity = .idle
             transferProgress = nil
+            audioChapterProgress.removeAll()
             if let summary = lastSummary, summary.received > 0 {
                 notifyIfBackground(
                     title: "Mac audio is ready",
@@ -265,6 +276,7 @@ final class SyncModel {
             await activeTransport?.close()
             activeTransport = nil
             transferProgress = nil
+            audioChapterProgress.removeAll()
             if restartingForPriority {
                 restartingForPriority = false
                 activity = .idle
@@ -285,6 +297,27 @@ final class SyncModel {
             // library; show them rather than the pre-sync rows.
             await model.refresh()
         }
+    }
+
+    /// Turn progress within one wire batch into progress through the chapter.
+    /// Keep the last value while the Mac encodes the following batch; a new
+    /// chapter replaces it, and the session cleanup removes it.
+    private func recordAudioProgress(
+        _ update: SyncSession.TransferProgress, model: AppModel?
+    ) {
+        guard update.direction == .receiving,
+              case .audio(let contentId, let index, _, let chunks) = update.currentItem,
+              !chunks.isEmpty,
+              let book = model?.books.first(where: { $0.contentId == contentId }),
+              book.chapters.indices.contains(index)
+        else { return }
+
+        let chapter = book.chapters[index]
+        let batchFraction = update.totalBytes > 0
+            ? min(1, Double(update.currentBytes) / Double(update.totalBytes)) : 0
+        let throughChunk = Double(chunks[0]) + batchFraction * Double(chunks.count)
+        let total = max(max(chapter.chunkCount, (chunks.last ?? 0) + 1), 1)
+        audioChapterProgress = [chapter.id: min(1, throughChunk / Double(total))]
     }
 
     /// Stand the running sync down at the user's ask.

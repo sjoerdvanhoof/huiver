@@ -194,7 +194,14 @@ struct BookView: View {
                 Label("Syncing with Mac", systemImage: "desktopcomputer")
                     .font(.huiverHeading)
                 Spacer()
-                ProgressView()
+                if let progress = sync.transferProgress {
+                    Text(progress.fractionCompleted, format: .percent.precision(.fractionLength(0)))
+                        .font(.huiverCaption.monospacedDigit())
+                        .foregroundStyle(theme.colors.mutedForeground)
+                        .contentTransition(.numericText())
+                } else {
+                    ProgressView()
+                }
                 Button {
                     Task { await sync.pauseSync() }
                 } label: {
@@ -207,9 +214,12 @@ struct BookView: View {
             }
             if let progress = sync.transferProgress {
                 ProgressView(value: progress.fractionCompleted)
-                Text(syncCardDetail(progress))
-                    .font(.huiverCaption)
-                    .foregroundStyle(theme.colors.mutedForeground)
+                    .animation(.linear(duration: 0.18), value: progress.fractionCompleted)
+                if let detail = syncCardDetail(progress) {
+                    Text(detail)
+                        .font(.huiverCaption)
+                        .foregroundStyle(theme.colors.mutedForeground)
+                }
             } else {
                 Text("Connecting and comparing libraries…")
                     .font(.huiverCaption)
@@ -249,19 +259,33 @@ struct BookView: View {
         .padding(.horizontal, Palette.Space.lg)
     }
 
-    private func syncCardDetail(_ progress: SyncSession.TransferProgress) -> String {
-        let count = "\(min(progress.completedItems + 1, progress.totalItems)) of \(progress.totalItems)"
-        guard let item = progress.currentItem else { return "Finishing item \(count)" }
+    private func syncCardDetail(_ progress: SyncSession.TransferProgress) -> String? {
+        guard let item = progress.currentItem else {
+            // Between wire batches the chapter is still the useful thing to
+            // show. SyncModel deliberately retains its continuous progress
+            // while the Mac prepares the next batch.
+            guard let (chapterId, fraction) = sync.audioChapterProgress.first,
+                  let book = model.books.first(where: {
+                      $0.chapters.contains { $0.id == chapterId }
+                  }),
+                  let index = book.chapters.firstIndex(where: { $0.id == chapterId })
+            else { return nil }
+            return "Chapter \(index + 1): \(book.chapters[index].title) · "
+                + fraction.formatted(.percent.precision(.fractionLength(0)))
+        }
         switch item {
         case .audio(let contentId, let index, _, _):
             if let book = model.books.first(where: { $0.contentId == contentId }),
                book.chapters.indices.contains(index) {
-                return "Chapter \(index + 1): \(book.chapters[index].title) · item \(count)"
+                let chapter = book.chapters[index]
+                let fraction = sync.audioChapterProgress[chapter.id] ?? 0
+                return "Chapter \(index + 1): \(chapter.title) · "
+                    + fraction.formatted(.percent.precision(.fractionLength(0)))
             }
-            return "Receiving chapter audio · item \(count)"
-        case .bookBundle: return "Receiving a book · item \(count)"
-        case .epub: return "Receiving an EPUB · item \(count)"
-        case .voice, .voicePreview: return "Receiving a voice · item \(count)"
+            return "Receiving chapter audio…"
+        case .bookBundle: return "Receiving a book…"
+        case .epub: return "Receiving an EPUB…"
+        case .voice, .voicePreview: return "Receiving a voice…"
         }
     }
 
@@ -418,12 +442,7 @@ private struct ChapterRow: View {
     private var listened: Double? { model.position(in: chapter) }
     private var macAudio: AudioManifest? { sync.isPaired ? model.macAudio[chapter.id] : nil }
     private var syncingFromMac: Bool {
-        guard sync.activity == .syncing,
-              let progress = sync.transferProgress,
-              case .audio(let contentId, let index, _, _) = progress.currentItem,
-              contentId == book.contentId
-        else { return false }
-        return book.chapters.indices.contains(index) && book.chapters[index].id == chapter.id
+        sync.activity == .syncing && sync.audioChapterProgress[chapter.id] != nil
     }
 
     var body: some View {
@@ -507,9 +526,8 @@ private struct ChapterRow: View {
 
     private var actionState: ChapterActionButton.State {
         if chapter.isComplete { return .done }
-        if syncingFromMac, let progress = sync.transferProgress {
-            return .rendering(progress.totalBytes > 0
-                ? Double(progress.currentBytes) / Double(progress.totalBytes) : nil)
+        if syncingFromMac, let progress = sync.audioChapterProgress[chapter.id] {
+            return .rendering(progress)
         }
         if isConverting { return .rendering(model.converter?.progress(for: chapter.id)) }
         // After the queue, so retrying a failed chapter shows it working again

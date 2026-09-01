@@ -49,6 +49,7 @@ struct ConnectorSection: View {
                 if sync.activity == .syncing, let progress = sync.transferProgress {
                     VStack(alignment: .leading, spacing: 6) {
                         ProgressView(value: progress.fractionCompleted)
+                            .animation(.linear(duration: 0.18), value: progress.fractionCompleted)
                         Text(progressDescription(progress))
                             .font(.huiverCaption)
                             .foregroundStyle(theme.colors.mutedForeground)
@@ -116,18 +117,9 @@ struct ConnectorSection: View {
 
     private func progressDescription(_ progress: SyncSession.TransferProgress) -> String {
         let action = progress.direction == .receiving ? "Receiving" : "Sending"
-        let number = min(progress.completedItems + 1, progress.totalItems)
         guard progress.totalItems > 0 else { return "Finishing sync…" }
-        if progress.totalBytes > 0 {
-            let bytes = ByteCountFormatter.string(
-                fromByteCount: progress.currentBytes, countStyle: .file
-            )
-            let total = ByteCountFormatter.string(
-                fromByteCount: progress.totalBytes, countStyle: .file
-            )
-            return "\(action) item \(number) of \(progress.totalItems) · \(bytes) of \(total)"
-        }
-        return "\(action) item \(number) of \(progress.totalItems)"
+        return "\(action) · "
+            + progress.fractionCompleted.formatted(.percent.precision(.fractionLength(0)))
     }
 }
 
